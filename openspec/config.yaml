@@ -1,0 +1,48 @@
+schema: spec-driven
+
+context: |
+  Product: reusable Telegram group "team secretary" bot (multi-team capable).
+  First deployment: zer0-knowledge team; org/team specifics MUST live in config/data, not code.
+  Stack (planned, not yet scaffolded): TypeScript, Cloudflare Workers, Hono router,
+  D1 (storage), Workers AI, Cron Triggers.
+  Test runner (planned): Vitest + @cloudflare/vitest-pool-workers, `npm test`.
+  Package manager: npm (default; no lockfile/config found yet to override).
+  Status: greenfield — repo contains only LICENSE and README.md, no code scaffolded.
+
+strict_tdd: true
+
+testing:
+  status: not_installed
+  planned_runner: vitest (@cloudflare/vitest-pool-workers)
+  planned_test_command: npm test
+  note: Test runner is not installed yet; strict TDD is enabled by explicit user directive ahead of scaffolding. First implementation work must scaffold the Vitest + vitest-pool-workers setup before writing feature code.
+
+rules:
+  proposal:
+    - Keep org/team-specific values (zer0-knowledge team id, chat ids, member lists, role names) out of proposal text; reference them as config/data concerns.
+    - Include rollback plan for risky changes (e.g. Cron Trigger schedule changes, D1 schema migrations).
+  specs:
+    - Use Given/When/Then for scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - Model Telegram group behaviors (commands, permissions, scheduled reminders) as domain requirements independent of any single team's configuration.
+  design:
+    - Document Hono route structure, D1 schema/migrations, Workers AI usage, and Cron Trigger jobs explicitly.
+    - Document how team/org-specific configuration is loaded (env vars, D1 config table, or KV) without hardcoding zer0-knowledge specifics in source.
+    - Include sequence diagrams for complex flows (e.g. scheduled digest generation, AI-assisted summarization).
+  tasks:
+    - Group by phase, use hierarchical numbering.
+    - Keep tasks completable in one session.
+    - First tasks list MUST include scaffolding the TypeScript/Hono/Wrangler project and the Vitest + vitest-pool-workers test runner before feature tasks.
+  apply:
+    guidelines:
+      - Follow Cloudflare Workers + Hono best practices.
+      - Keep org/team-specific data in config/data (env vars, D1 rows, KV), never hardcoded in source.
+      - Write tests before implementation (RED-GREEN-REFACTOR) once the runner is scaffolded.
+    tdd: true
+    test_command: npm test
+  verify:
+    test_command: npm test
+    build_command: npm run build
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas (e.g. D1 schema drops, Cron schedule removals).
