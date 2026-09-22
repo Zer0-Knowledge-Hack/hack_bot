@@ -11,3 +11,4 @@ export class AlreadyExistsError extends DomainError {}
 export class LastAdminError extends DomainError {}
 export class ChatAdminCheckFailedError extends DomainError {}
 export class DmSelectionRequiredError extends DomainError {}
+export class FieldUnreadableError extends DomainError {}

@@ -80,6 +80,21 @@ export interface DmSelectionRepo {
   set(selection: DmSelection): Promise<void>;
 }
 
+// design.md "Interfaces / Contracts" — the crypto adapter (`adapters/crypto`)
+// implements this. AAD binds a ciphertext to its table+team+row+field so a
+// value copied to another row/tenant fails to decrypt (design.md "Ciphertext
+// binding"). Values stay opaque to the domain: callers compute plaintext and
+// AAD, adapters own the key material.
+export interface FieldCipher {
+  encrypt(
+    plain: string,
+    aad: string,
+  ): Promise<{ value: Uint8Array; keyVersion: number }>;
+  // Throws FieldUnreadableError on wrong AAD, unknown key version, or any
+  // other reason the ciphertext cannot be recovered.
+  decrypt(value: Uint8Array, keyVersion: number, aad: string): Promise<string>;
+}
+
 export interface ChatAdminChecker {
   // MUST throw (never resolve false-on-error) so callers can distinguish
   // "verified non-admin" from "verification failed".
