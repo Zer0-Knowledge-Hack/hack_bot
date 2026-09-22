@@ -48,9 +48,9 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Crypto & D1 Adapters (PR3)
 
-- [ ] 2.1 `migrations/0001_init.sql` per design schema (teams, members, memberships, profile_fields, audit_log, dm_selections).
-- [ ] 2.2 RED (vitest-pool-workers): AES-GCM round trip, AAD mismatch fails, old key version still decrypts (spec: pii-protection versioned key).
-- [ ] 2.3 GREEN: `src/adapters/crypto/{key-ring,aes-gcm-cipher}.ts`, fail-closed on missing/malformed `PII_KEYRING`.
+- [x] 2.1 `migrations/0001_init.sql` per design schema (teams, members, memberships, profile_fields, audit_log, dm_selections). Verified via `test/adapters/migrations.test.ts` (table list, FK, UNIQUE, CHECK enforcement) applied through `readD1Migrations`/`applyD1Migrations` wired in `vitest.config.ts` + `test/setup/apply-migrations.ts`.
+- [x] 2.2 RED (vitest-pool-workers): AES-GCM round trip, AAD mismatch fails, old key version still decrypts (spec: pii-protection versioned key).
+- [x] 2.3 GREEN: `src/adapters/crypto/{key-ring,aes-gcm-cipher}.ts`, fail-closed on missing/malformed `PII_KEYRING`. Added `FieldCipher` port (`src/domain/ports.ts`) and `FieldUnreadableError` (`src/domain/errors.ts`) — design-specified but missing from Phase 1 (same task-generation-gap pattern as REL-001).
 - [ ] 2.4 RED: D1 repo tests — FK rejection, cross-team isolation on membership/profile/audit reads+writes, `DB.batch()` audit+data atomicity (spec: Cross-tenant read/write impossible).
 - [ ] 2.5 GREEN: `src/adapters/d1/*-repo.ts`, all queries scoped by `team_id`.
 - [ ] 2.6 RED: raw-row test — full_name/emails/social_links ciphertext, github_username plaintext.
