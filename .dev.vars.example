@@ -1,0 +1,7 @@
+# Copy to .dev.vars and fill in local values. Never commit .dev.vars.
+BOT_TOKEN=000000000:REPLACE_WITH_TELEGRAM_BOT_TOKEN
+WEBHOOK_SECRET=REPLACE_WITH_RANDOM_SECRET
+# JSON keyring: {"active":1,"keys":{"1":"<base64 32-byte key>"}}
+PII_KEYRING={"active":1,"keys":{"1":"REPLACE_WITH_BASE64_32B_KEY"}}
+# grammY botInfo JSON, avoids a getMe call per request (see docs/key-backup.md)
+BOT_INFO={}
