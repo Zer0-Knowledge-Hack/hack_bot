@@ -51,10 +51,10 @@ Chain strategy: stacked-to-main
 - [x] 2.1 `migrations/0001_init.sql` per design schema (teams, members, memberships, profile_fields, audit_log, dm_selections). Verified via `test/adapters/migrations.test.ts` (table list, FK, UNIQUE, CHECK enforcement) applied through `readD1Migrations`/`applyD1Migrations` wired in `vitest.config.ts` + `test/setup/apply-migrations.ts`.
 - [x] 2.2 RED (vitest-pool-workers): AES-GCM round trip, AAD mismatch fails, old key version still decrypts (spec: pii-protection versioned key).
 - [x] 2.3 GREEN: `src/adapters/crypto/{key-ring,aes-gcm-cipher}.ts`, fail-closed on missing/malformed `PII_KEYRING`. Added `FieldCipher` port (`src/domain/ports.ts`) and `FieldUnreadableError` (`src/domain/errors.ts`) — design-specified but missing from Phase 1 (same task-generation-gap pattern as REL-001).
-- [ ] 2.4 RED: D1 repo tests — FK rejection, cross-team isolation on membership/profile/audit reads+writes, `DB.batch()` audit+data atomicity (spec: Cross-tenant read/write impossible).
-- [ ] 2.5 GREEN: `src/adapters/d1/*-repo.ts`, all queries scoped by `team_id`.
-- [ ] 2.6 RED: raw-row test — full_name/emails/social_links ciphertext, github_username plaintext.
-- [ ] 2.7 GREEN: wire cipher into profile/audit upserts.
+- [x] 2.4 RED: D1 repo tests — FK rejection, cross-team isolation on membership/profile/audit reads+writes, `DB.batch()` audit+data atomicity (spec: Cross-tenant read/write impossible). See `test/adapters/d1/{team,member,membership,profile}-repo.test.ts`.
+- [x] 2.5 GREEN: `src/adapters/d1/{team,member,membership,profile}-repo.ts`, all queries scoped by `team_id`. `changeRole({requireRemainingAdmin:true})` implemented as one conditional `UPDATE` + a `changes()=1`-gated audit `INSERT`, both in one `db.batch()`. UNIQUE violations on `teams.telegram_chat_id` and `memberships(team_id,member_id)` translated to `AlreadyExistsError` (`src/adapters/d1/errors.ts`). `DmSelectionRepo` D1 adapter deliberately deferred — out of the mandatory contract points for this PR, not audit/cipher-related; carried to Phase 3 wiring.
+- [x] 2.6 RED: raw-row test — full_name/emails/social_links ciphertext, github_username plaintext. See `test/adapters/d1/profile-repo.test.ts`.
+- [x] 2.7 GREEN: wire cipher into profile/audit upserts. `src/adapters/d1/profile-repo.ts` — `FieldCipher` injected, AAD = `profile_fields|teamId|membershipId|field`, audit old/new of encrypted fields also encrypted with the same AAD.
 
 ## Phase 3: Telegram & HTTP Wiring (PR4)
 
