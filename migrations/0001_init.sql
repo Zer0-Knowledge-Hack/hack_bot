@@ -31,6 +31,10 @@ CREATE TABLE profile_fields (
     field IN ('full_name', 'emails', 'social_links', 'github_username')
   ),
   value BLOB NOT NULL,
+  -- key_version NULL means `value` is stored plaintext (only
+  -- github_username, per design.md "GitHub Username Stored Plaintext").
+  -- Any non-NULL key_version means `value` is AES-GCM ciphertext produced
+  -- by the crypto adapter under that key version (design.md "Key ring").
   key_version INTEGER,
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (team_id, membership_id, field),
@@ -44,6 +48,12 @@ CREATE TABLE audit_log (
   target_membership_id TEXT NOT NULL,
   field TEXT NOT NULL,
   old_value BLOB,
+  -- key_version applies to new_value. old_value can predate a key rotation
+  -- (FIX-001: an unreadable prior field's original ciphertext is preserved
+  -- verbatim instead of being re-encrypted), so it needs its own version —
+  -- a single shared column cannot describe two ciphertexts under different
+  -- keys. NULL means old_value is plaintext (or there was no prior value).
+  old_key_version INTEGER,
   new_value BLOB,
   key_version INTEGER,
   created_at INTEGER NOT NULL,
