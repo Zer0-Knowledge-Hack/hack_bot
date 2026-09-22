@@ -62,11 +62,11 @@ Chain strategy: stacked-to-main
 - [x] 3.2 GREEN: `src/index.ts` secret check via `timingSafeEqual` before body parse — length checked first, header validated before `c.req.json()` is ever called.
 - [x] 3.3 RED: command routing test — recognized vs ignored update. `test/adapters/telegram/commands.test.ts` ("ignores an update that is not a recognized command").
 - [x] 3.4 GREEN: `src/adapters/telegram/{bot,commands,context,chat-admin-checker}.ts` (grammY, `BOT_INFO` var). Implements `/setup`, `/join`, `/datachannel` end-to-end (setup-team, join-team, bind-data-channel use cases). Promote/demote and profile set/show commands are NOT yet wired — deferred to the next Telegram-wiring batch (see Remaining below); `registerCommands` only registers the three commands above, nothing is half-wired.
-- [ ] 3.5 RED: DM picker `SELF.fetch` test — forged callback team id refused, valid `sel:<uuid>` re-checks membership. DEFERRED.
-- [ ] 3.6 GREEN: `src/adapters/telegram/team-picker.ts`. DEFERRED.
+- [x] 3.5 RED: DM picker callback test — forged callback team id refused, valid `sel:<team-id>` re-checks membership.
+- [x] 3.6 GREEN: `src/adapters/telegram/team-picker.ts` with private-chat-only selection handling and server-side membership re-check.
 - [x] 3.7 RED: `safe-logger` allowlist test — PII fixtures never logged (`test/adapters/log/safe-logger.test.ts`, including a defense-in-depth case for an unsafe-cast extra property).
 - [x] 3.8 GREEN: `src/adapters/log/safe-logger.ts` (explicit field-by-field allowlist copy, never spreads the caller's object); `src/composition.ts` wires env→adapters→use cases per request, with the `PII_KEYRING`/cipher module-level cache (mandatory point 2) fail-closed and never caching a failed parse.
-- [ ] 3.9 Data-channel read-gating tests (in-topic vs outside vs DM) + wiring for `read-profiles`, promote/demote, profile set/show commands. DEFERRED — `read-profiles`, `change-role`, `update-profile-field` use cases exist (Phase 1) but are not yet called from any Telegram command handler.
+- [x] 3.9 Data-channel read-gating tests (in-topic vs outside vs DM) + wiring for `read-profiles`, promote/demote, profile set/show commands.
 
 **Deferred from Phase 2 (D1 adapter), completed here**: `DmSelectionRepo` D1 adapter — `src/adapters/d1/dm-selection-repo.ts` (upsert on `telegram_user_id` PK, get/set roundtrip, tenant/user-scoped). Tests: `test/adapters/d1/dm-selection-repo.test.ts` (4 tests: not-found, roundtrip with an injected-clock-derived TTL value, no cross-user leak, overwrite-on-reselect). Wired into `composition.ts` but not yet consumed by any command (DM team resolution/picker is task 3.5/3.6, deferred).
 

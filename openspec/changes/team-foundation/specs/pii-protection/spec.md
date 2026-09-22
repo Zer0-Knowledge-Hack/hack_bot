@@ -20,7 +20,7 @@ The system MUST encrypt full name, emails, and social links using AES-GCM (WebCr
 #### Scenario: Authorized read decrypts value
 
 - GIVEN a profile field is encrypted at rest
-- WHEN an authorized reader (self, team admin, or the member via DM) requests it
+- WHEN any registered member of the same team (in the data channel or DM) requests it
 - THEN the system decrypts it and returns the plaintext
 
 ### Requirement: GitHub Username Stored Plaintext
