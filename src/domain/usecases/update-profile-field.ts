@@ -38,6 +38,10 @@ export async function updateProfileField(
     (f) => f.field === input.field,
   );
 
+  // FIX-001: an `unreadable` existing field (RES-001) has value "" as a
+  // placeholder, never real plaintext — it MUST NOT be fabricated into the
+  // audit trail as oldValue. Flag it explicitly so the adapter preserves
+  // the original stored ciphertext instead of losing it.
   await deps.profileRepo.upsertField(
     input.teamId,
     {
@@ -48,11 +52,13 @@ export async function updateProfileField(
       keyVersion: input.keyVersion,
       updatedAt: deps.clock.now(),
     },
+    actor.id,
     {
       field: input.field,
-      oldValue: existing?.value ?? null,
+      oldValue: existing?.unreadable ? null : existing?.value ?? null,
       newValue: input.value,
       keyVersion: input.keyVersion,
+      ...(existing?.unreadable ? { oldValueUnreadable: true } : {}),
     },
   );
 }

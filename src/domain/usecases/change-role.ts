@@ -47,6 +47,7 @@ export async function changeRole(
     input.teamId,
     target.id,
     input.newRole,
+    actor.id,
     {
       field: "role",
       oldValue: target.role,

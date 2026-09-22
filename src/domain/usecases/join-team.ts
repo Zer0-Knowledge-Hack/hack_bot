@@ -30,12 +30,15 @@ export async function joinTeam(
     input.callerTelegramUserId,
   );
   if (!member) {
-    member = {
+    // RES-002: upsert returns the ACTUALLY persisted member — a concurrent
+    // writer may have raced ahead of the pre-read above and already
+    // created this member under a different id. Use the returned member,
+    // never the locally generated one, for the membership FK below.
+    member = await deps.memberRepo.upsert({
       id: asMemberId(deps.idGen.newId()),
       telegramUserId: input.callerTelegramUserId,
       createdAt: now,
-    };
-    await deps.memberRepo.upsert(member);
+    });
   }
 
   const existingMembership = await deps.membershipRepo.getByMember(

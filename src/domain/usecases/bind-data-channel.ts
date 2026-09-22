@@ -30,7 +30,7 @@ export async function bindDataChannel(
     throw new NotFoundError("Team not found");
   }
 
-  await deps.teamRepo.bindDataChannel(input.teamId, input.threadId, {
+  await deps.teamRepo.bindDataChannel(input.teamId, input.threadId, actor.id, {
     field: "data_topic_thread_id",
     oldValue: team.dataTopicThreadId === null ? null : String(team.dataTopicThreadId),
     newValue: String(input.threadId),

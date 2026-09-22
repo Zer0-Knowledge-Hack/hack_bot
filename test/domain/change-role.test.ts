@@ -31,6 +31,25 @@ describe("changeRole", () => {
     expect(membershipRepo.rows.find((m) => m.id === memberId)?.role).toBe("admin");
   });
 
+  it("REL-001: records the acting admin as actor and the edited member as target (admin edits another member)", async () => {
+    const { membershipRepo } = makeDeps();
+    const adminId = asMembershipId("m-admin");
+    const memberId = asMembershipId("m-member");
+    membershipRepo.rows.push(
+      { id: adminId, teamId, memberId: asMemberId("u-admin"), role: "admin", joinedAt: 0 },
+      { id: memberId, teamId, memberId: asMemberId("u-member"), role: "member", joinedAt: 0 },
+    );
+
+    await changeRole(
+      { teamId, actorMembershipId: adminId, targetMembershipId: memberId, newRole: "admin" },
+      { membershipRepo },
+    );
+
+    expect(membershipRepo.audits).toHaveLength(1);
+    expect(membershipRepo.audits[0]?.actorMembershipId).toBe(adminId);
+    expect(membershipRepo.audits[0]?.targetMembershipId).toBe(memberId);
+  });
+
   it("refuses when the caller is not an admin", async () => {
     const { membershipRepo } = makeDeps();
     const actorId = asMembershipId("m-peer");
@@ -125,10 +144,10 @@ describe("changeRole", () => {
     });
 
     const [result1, result2] = await Promise.all([
-      membershipRepo.changeRole(teamId, admin1, "member", draftFor(admin1, "admin"), {
+      membershipRepo.changeRole(teamId, admin1, "member", admin1, draftFor(admin1, "admin"), {
         requireRemainingAdmin: true,
       }),
-      membershipRepo.changeRole(teamId, admin2, "member", draftFor(admin2, "admin"), {
+      membershipRepo.changeRole(teamId, admin2, "member", admin2, draftFor(admin2, "admin"), {
         requireRemainingAdmin: true,
       }),
     ]);

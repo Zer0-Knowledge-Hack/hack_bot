@@ -79,6 +79,54 @@ describe("createAesGcmCipher (WebCrypto AES-GCM)", () => {
     ).rejects.toThrow(FieldUnreadableError);
   });
 
+  it("rejects decryption of a tampered (bit-flipped) ciphertext", async () => {
+    const keyRing = parseKeyRing(
+      JSON.stringify({ active: 1, keys: { "1": KEY_V1 } }),
+    );
+    const cipher = createAesGcmCipher(keyRing);
+    const aad = "profile_fields|team-1|membership-1|full_name";
+    const { value, keyVersion } = await cipher.encrypt("Grace Hopper", aad);
+
+    const tampered = new Uint8Array(value);
+    // Flip one bit inside the ciphertext (after the 12-byte IV prefix) —
+    // GCM's auth tag MUST catch this, never silently return corrupted text.
+    const lastIndex = tampered.length - 1;
+    tampered.set([tampered[lastIndex]! ^ 0xff], lastIndex);
+
+    await expect(cipher.decrypt(tampered, keyVersion, aad)).rejects.toThrow(
+      FieldUnreadableError,
+    );
+  });
+
+  it("rejects decryption of a truncated ciphertext", async () => {
+    const keyRing = parseKeyRing(
+      JSON.stringify({ active: 1, keys: { "1": KEY_V1 } }),
+    );
+    const cipher = createAesGcmCipher(keyRing);
+    const aad = "profile_fields|team-1|membership-1|full_name";
+    const { value, keyVersion } = await cipher.encrypt("Grace Hopper", aad);
+
+    const truncated = value.slice(0, value.length - 5);
+
+    await expect(cipher.decrypt(truncated, keyVersion, aad)).rejects.toThrow(
+      FieldUnreadableError,
+    );
+  });
+
+  it("rejects decryption when the key version is present in the ring but wrong for this value", async () => {
+    const keyRing = parseKeyRing(
+      JSON.stringify({ active: 1, keys: { "1": KEY_V1, "2": KEY_V2 } }),
+    );
+    const cipher = createAesGcmCipher(keyRing);
+    const aad = "profile_fields|team-1|membership-1|full_name";
+    const { value } = await cipher.encrypt("Grace Hopper", aad);
+
+    // Value was encrypted under key version 1 (the active key at encrypt
+    // time); claiming it was encrypted under version 2 (present, but wrong
+    // for THIS ciphertext) must still fail closed.
+    await expect(cipher.decrypt(value, 2, aad)).rejects.toThrow(FieldUnreadableError);
+  });
+
   it("still decrypts a value written under an old key version after rotation", async () => {
     const keyRingBeforeRotation = parseKeyRing(
       JSON.stringify({ active: 1, keys: { "1": KEY_V1 } }),
