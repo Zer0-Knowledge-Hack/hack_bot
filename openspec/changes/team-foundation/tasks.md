@@ -35,15 +35,16 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Domain Foundation (PR2)
 
-- [ ] 1.1 `src/domain/{ids,entities,errors,ports}.ts`: `TeamId` brand, entities, port interfaces.
-- [ ] 1.2 RED: access-policy tests — self-or-admin edit, last-admin-cannot-be-demoted (spec: Peer edit refused; Admin edits member).
-- [ ] 1.3 GREEN: `src/domain/access-policy.ts`.
-- [ ] 1.4 RED: `setup-team`, `join-team` use-case tests with fakes (spec: Successful setup; Setup rejected; getChatMember fails; Caller not admin; New user joins; Already-a-member).
-- [ ] 1.5 GREEN: implement both use cases.
-- [ ] 1.6 RED: `change-role`, `update-profile-field`, `bind-data-channel` tests (spec: Admin promotes; Non-admin refused; Single field edit; Rejected edit no audit).
-- [ ] 1.7 GREEN: implement.
-- [ ] 1.8 RED: `resolve-dm-team`/`select-dm-team` tests incl. 15-min TTL remember+re-verify and expiry (spec: 0/1/2+ teams; remembered 15 min; expires/membership lost).
-- [ ] 1.9 GREEN: implement `dm_selections` domain logic against fake repo.
+- [x] 1.1 `src/domain/{ids,entities,errors,ports}.ts`: `TeamId` brand, entities, port interfaces.
+- [x] 1.2 RED: access-policy tests — self-or-admin edit, last-admin-cannot-be-demoted (spec: Peer edit refused; Admin edits member).
+- [x] 1.3 GREEN: `src/domain/access-policy.ts`.
+- [x] 1.4 RED: `setup-team`, `join-team` use-case tests with fakes (spec: Successful setup; Setup rejected; getChatMember fails; Caller not admin; New user joins; Already-a-member).
+- [x] 1.5 GREEN: implement both use cases.
+- [x] 1.6 RED: `change-role`, `update-profile-field`, `bind-data-channel` tests (spec: Admin promotes; Non-admin refused; Single field edit; Rejected edit no audit).
+- [x] 1.7 GREEN: implement.
+- [x] 1.8 RED: `resolve-dm-team`/`select-dm-team` tests incl. 15-min TTL remember+re-verify and expiry (spec: 0/1/2+ teams; remembered 15 min; expires/membership lost).
+- [x] 1.9 GREEN: implement `dm_selections` domain logic against fake repo.
+- [x] 1.10 `read-profiles` use case (task-generation gap found in review REL-001): RED/GREEN tests for group in-data-channel read, group outside-data-channel refusal, group no-data-channel-bound refusal, DM registered-member read, cross-team refusal, tenant isolation (spec: member-profiles "Reads Restricted to Data Channel or DM"; design.md:47 lists `read-profiles`).
 
 ## Phase 2: Crypto & D1 Adapters (PR3)
 
