@@ -19,17 +19,27 @@ export interface TeamRepo {
   create(team: Team): Promise<void>;
   // Persists the bound thread id and its audit row atomically (design.md
   // "Atomicity" — same one-batch-write contract as MembershipRepo/ProfileRepo
-  // write methods).
+  // write methods). `actorMembershipId` is required because audit_log.actor_
+  // membership_id is a NOT NULL FK (schema) that AuditDraft alone cannot
+  // supply — the caller (use case) knows who performed the action.
   bindDataChannel(
     teamId: TeamId,
     threadId: number,
+    actorMembershipId: MembershipId,
     audit: AuditDraft,
   ): Promise<void>;
 }
 
 export interface MemberRepo {
   findByTelegramUserId(telegramUserId: number): Promise<Member | null>;
-  upsert(member: Member): Promise<void>;
+  // Idempotent on `telegramUserId` (UNIQUE). MUST return the ACTUALLY
+  // persisted member — not the caller-supplied `member` — because a
+  // concurrent writer may have already inserted a row for this
+  // telegramUserId under a different id between the caller's pre-read and
+  // this call (RES-002). Other rows (memberships) FK to member.id, so
+  // callers MUST use the returned id, never the locally generated one, for
+  // any subsequent write.
+  upsert(member: Member): Promise<Member>;
 }
 
 export interface MembershipRepo {
@@ -53,10 +63,15 @@ export interface MembershipRepo {
   // count (that read can be stale under concurrent demotions) — the
   // precondition MUST be re-evaluated at write time and the result MUST
   // reflect whether the write actually applied.
+  // `actorMembershipId` is required because audit_log.actor_membership_id
+  // is a NOT NULL FK (schema) that AuditDraft alone cannot supply — the
+  // caller (use case) knows who performed the change. It is intentionally
+  // separate from `membershipId` (the target being changed).
   changeRole(
     teamId: TeamId,
     membershipId: MembershipId,
     role: Role,
+    actorMembershipId: MembershipId,
     audit: AuditDraft,
     options?: { requireRemainingAdmin: boolean },
   ): Promise<ChangeRoleResult>;
@@ -67,10 +82,19 @@ export interface ChangeRoleResult {
 }
 
 export interface ProfileRepo {
+  // MUST isolate a per-field decrypt failure (design.md "PII Never
+  // Logged") — one unreadable field (wrong AAD, unknown key version,
+  // corrupted ciphertext) MUST NOT fail the whole listing. The broken
+  // field is returned with `unreadable: true` and `value: ""` (see
+  // `ProfileField.unreadable`), never dropped and never leaking ciphertext.
   list(teamId: TeamId, membershipId?: MembershipId): Promise<ProfileField[]>;
+  // `actorMembershipId` is required because audit_log.actor_membership_id is
+  // a NOT NULL FK (schema) that AuditDraft alone cannot supply — the caller
+  // (use case) knows who performed the edit (self or admin).
   upsertField(
     teamId: TeamId,
     field: ProfileField,
+    actorMembershipId: MembershipId,
     audit: AuditDraft,
   ): Promise<void>;
 }

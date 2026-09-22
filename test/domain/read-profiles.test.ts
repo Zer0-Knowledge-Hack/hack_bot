@@ -173,4 +173,35 @@ describe("readProfiles", () => {
     expect(result).toHaveLength(1);
     expect(result[0]?.teamId).toBe(teamId);
   });
+
+  it("passes an unreadable field marker through unchanged (RES-001)", async () => {
+    const deps = makeDeps();
+    const { membershipId } = seedMember(deps);
+    deps.profileRepo.rows.push({
+      teamId,
+      membershipId,
+      field: "full_name",
+      value: "",
+      keyVersion: 99,
+      updatedAt: 0,
+      unreadable: true,
+    });
+
+    const result = await readProfiles(
+      { context: { kind: "dm", teamId }, callerTelegramUserId: telegramUserId },
+      deps,
+    );
+
+    expect(result).toEqual([
+      {
+        teamId,
+        membershipId,
+        field: "full_name",
+        value: "",
+        keyVersion: 99,
+        updatedAt: 0,
+        unreadable: true,
+      },
+    ]);
+  });
 });

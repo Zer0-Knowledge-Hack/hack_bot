@@ -52,6 +52,8 @@ describe("bindDataChannel", () => {
       oldValue: null,
       newValue: "42",
       keyVersion: null,
+      actorMembershipId: adminId,
+      targetMembershipId: adminId,
     });
   });
 
@@ -74,6 +76,8 @@ describe("bindDataChannel", () => {
       oldValue: "7",
       newValue: "99",
       keyVersion: null,
+      actorMembershipId: adminId,
+      targetMembershipId: adminId,
     });
   });
 

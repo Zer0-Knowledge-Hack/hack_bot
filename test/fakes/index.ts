@@ -22,6 +22,15 @@ import type { MemberId, MembershipId, TeamId } from "../../src/domain/ids";
 // In-memory fakes for domain tests. Pure Vitest, no Workers runtime needed —
 // this proves the domain layer has zero infrastructure dependencies.
 
+// REL-001: fakes record actor/target membership alongside each audit draft
+// so use-case tests can assert the acting membership (and, where
+// applicable, the target membership) are passed correctly — mirroring the
+// real D1 adapters' NOT NULL actor_membership_id/target_membership_id FKs.
+export type RecordedAudit = AuditDraft & {
+  actorMembershipId: MembershipId;
+  targetMembershipId: MembershipId;
+};
+
 export function fakeClock(startMs = 1_700_000_000_000): Clock & { advance(ms: number): void } {
   let current = startMs;
   return {
@@ -39,10 +48,10 @@ export function fakeIdGen(): IdGen {
 
 export function fakeTeamRepo(): TeamRepo & {
   rows: Team[];
-  audits: AuditDraft[];
+  audits: RecordedAudit[];
 } {
   const rows: Team[] = [];
-  const audits: AuditDraft[] = [];
+  const audits: RecordedAudit[] = [];
   return {
     rows,
     audits,
@@ -52,10 +61,12 @@ export function fakeTeamRepo(): TeamRepo & {
     create: async (team) => {
       rows.push(team);
     },
-    bindDataChannel: async (teamId, threadId, audit) => {
+    bindDataChannel: async (teamId, threadId, actorMembershipId, audit) => {
       const team = rows.find((t) => t.id === teamId);
       if (team) team.dataTopicThreadId = threadId;
-      audits.push(audit);
+      // Team-level action, no separate "target member" — actor and target
+      // are the same acting membership (mirrors the D1 adapter).
+      audits.push({ ...audit, actorMembershipId, targetMembershipId: actorMembershipId });
     },
   };
 }
@@ -66,10 +77,15 @@ export function fakeMemberRepo(): MemberRepo & { rows: Member[] } {
     rows,
     findByTelegramUserId: async (telegramUserId) =>
       rows.find((m) => m.telegramUserId === telegramUserId) ?? null,
+    // Mimics the D1 adapter's ON CONFLICT (telegram_user_id) DO NOTHING +
+    // re-SELECT contract (RES-002): a second upsert for the same
+    // telegramUserId with a different id MUST NOT reassign the row — it
+    // returns the FIRST persisted member, never the caller's.
     upsert: async (member) => {
-      const idx = rows.findIndex((m) => m.id === member.id);
-      if (idx >= 0) rows[idx] = member;
-      else rows.push(member);
+      const existing = rows.find((m) => m.telegramUserId === member.telegramUserId);
+      if (existing) return existing;
+      rows.push(member);
+      return member;
     },
   };
 }
@@ -78,9 +94,9 @@ export function fakeMemberRepo(): MemberRepo & { rows: Member[] } {
 // `findByUser`, mirroring how the real D1 repo would join through members.
 export function fakeMembershipRepo(
   memberRepo: MemberRepo & { rows: Member[] },
-): MembershipRepo & { rows: Membership[]; audits: AuditDraft[] } {
+): MembershipRepo & { rows: Membership[]; audits: RecordedAudit[] } {
   const rows: Membership[] = [];
-  const audits: AuditDraft[] = [];
+  const audits: RecordedAudit[] = [];
   return {
     rows,
     audits,
@@ -100,9 +116,12 @@ export function fakeMembershipRepo(
       rows.filter((m) => m.teamId === teamId),
     create: async (membership, audit) => {
       rows.push(membership);
-      audits.push(audit);
+      // Self-created membership (setup/join): actor and target are the
+      // same person bootstrapping their own membership (mirrors the D1
+      // adapter's `membership.id` used as both actor and target).
+      audits.push({ ...audit, actorMembershipId: membership.id, targetMembershipId: membership.id });
     },
-    changeRole: async (teamId, membershipId, role, audit, options) => {
+    changeRole: async (teamId, membershipId, role, actorMembershipId, audit, options) => {
       const membership = rows.find(
         (m) => m.teamId === teamId && m.id === membershipId,
       );
@@ -117,7 +136,7 @@ export function fakeMembershipRepo(
         if (adminCount <= 1) return { applied: false };
       }
       membership.role = role;
-      audits.push(audit);
+      audits.push({ ...audit, actorMembershipId, targetMembershipId: membershipId });
       return { applied: true };
     },
   };
@@ -125,10 +144,10 @@ export function fakeMembershipRepo(
 
 export function fakeProfileRepo(): ProfileRepo & {
   rows: ProfileField[];
-  audits: AuditDraft[];
+  audits: RecordedAudit[];
 } {
   const rows: ProfileField[] = [];
-  const audits: AuditDraft[] = [];
+  const audits: RecordedAudit[] = [];
   return {
     rows,
     audits,
@@ -138,7 +157,7 @@ export function fakeProfileRepo(): ProfileRepo & {
           f.teamId === teamId &&
           (membershipId === undefined || f.membershipId === membershipId),
       ),
-    upsertField: async (teamId, field, audit) => {
+    upsertField: async (teamId, field, actorMembershipId, audit) => {
       const idx = rows.findIndex(
         (f) =>
           f.teamId === teamId &&
@@ -147,7 +166,7 @@ export function fakeProfileRepo(): ProfileRepo & {
       );
       if (idx >= 0) rows[idx] = field;
       else rows.push(field);
-      audits.push(audit);
+      audits.push({ ...audit, actorMembershipId, targetMembershipId: field.membershipId });
     },
   };
 }
