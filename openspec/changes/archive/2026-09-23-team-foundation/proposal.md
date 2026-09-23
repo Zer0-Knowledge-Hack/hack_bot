@@ -21,6 +21,7 @@ Teams have no shared, trustworthy registry of who belongs and how to reach them.
 ### Out of Scope
 - GitHub integration, digests/cron, AI/natural language, voice, hackathons (changes 2-4)
 - Invite codes, live Telegram admin sync, key-rotation job (schema only supports it)
+- Reading the audit log. This change writes and encrypts audit rows; read access and its authorization rules are deferred to a follow-up change (found unimplemented by verify)
 
 ## Capabilities
 
