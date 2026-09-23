@@ -59,3 +59,12 @@ Single correction actor applying the frozen review ledger for PR6, on top of 8d0
 - `git diff --stat` (working tree vs 8d0af4a, excluding `.codegraph/`): `commands.ts` +191/-? lines, `test/adapters/telegram/commands.test.ts` +353 lines, `pii-protection/spec.md` 1 line changed, `tasks.md` unchanged by this correction (pre-existing diff from prior session).
 
 **Note (WU4 self-correction, not a ledger item):** the first draft of the "lost membership" picker test removed the selected team's only membership, leaving the caller with exactly one remaining membership — which correctly auto-resolves per spec ("Caller has exactly one team"), not the "needs-selection" case being tested. Fixed by giving the caller three teams so 2+ memberships remain after losing the selected one, matching team-membership spec:74-78 exactly. No production code was wrong; the test scenario was corrected before it was trusted.
+
+## PR7: Key backup docs (task 4.1)
+
+Completed the only remaining task, 4.1, closing Phase 4. No production code changed.
+
+- **Artifact**: `docs/key-backup.md` — generate `PII_KEYRING` offline (`openssl rand -base64 32`, verified against `parseKeyRing`'s exact shape/length checks in `src/adapters/crypto/key-ring.ts`), two-custodian password-manager backup before `wrangler secret put` (secrets are write-only), `wrangler secret put` for `BOT_TOKEN`/`WEBHOOK_SECRET`/`PII_KEYRING` (`BOT_INFO` documented separately as a non-secret var per `src/env.ts`/`.dev.vars.example`), `setWebhook` with `secret_token` plus `getWebhookInfo` verification (matches `src/index.ts`'s constant-time header check), and rotation notes.
+- **Rotation accuracy check**: confirmed against `src/adapters/d1/profile-repo.ts` and `proposal.md`'s explicit out-of-scope note ("key-rotation job (schema only supports it)") that adding a key version and moving `active` is supported, but there is no re-encryption job — old rows keep decrypting via their own stored `key_version`. Documented that removing a still-referenced key version makes those rows permanently `unreadable` (`FieldUnreadableError` path in `profile-repo.ts`'s `decryptRow`), and did not invent any rotation tooling that doesn't exist.
+- **Verification commands run**: `openssl rand -base64 32` and `node -e "require('crypto').randomBytes(32).toString('base64')"` both produce a 44-character base64 string decoding to exactly 32 bytes, matching `KEY_BYTES = 32` in `key-ring.ts`.
+- **Tasks**: `openspec/changes/team-foundation/tasks.md` 4.1 marked `[x]`. All Phase 0-4 tasks are now complete.
