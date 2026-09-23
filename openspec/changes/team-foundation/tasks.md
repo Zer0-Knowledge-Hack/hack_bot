@@ -72,4 +72,4 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Docs (PR5)
 
-- [ ] 4.1 Write `docs/key-backup.md`: generate `PII_KEYRING` offline, two-custodian password-manager backup, `wrangler secret put` for `BOT_TOKEN`/`WEBHOOK_SECRET`/`PII_KEYRING`, `setWebhook` with `secret_token`, rotation notes.
+- [x] 4.1 Write `docs/key-backup.md`: generate `PII_KEYRING` offline, two-custodian password-manager backup, `wrangler secret put` for `BOT_TOKEN`/`WEBHOOK_SECRET`/`PII_KEYRING`, `setWebhook` with `secret_token`, rotation notes.
