@@ -14,8 +14,13 @@
     {
       "binding": "DB",
       "database_name": "hack-bot-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "d4ba5860-cc66-4cf2-a871-3fb5f6fcd7cc",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  // Public getMe result, cached so grammY never calls getMe per request.
+  // Not a secret; the token-bearing values are Worker secrets.
+  "vars": {
+    "BOT_INFO": "{\"id\":8808165755,\"is_bot\":true,\"first_name\":\"Hack Bot\",\"username\":\"hackZK_bot\",\"can_join_groups\":true,\"can_read_all_group_messages\":false,\"supports_inline_queries\":false,\"can_connect_to_business\":false,\"has_main_web_app\":false}"
+  }
 }
