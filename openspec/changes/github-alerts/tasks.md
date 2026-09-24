@@ -26,17 +26,19 @@ Chain strategy: stacked-to-main
 | 4 | Mapper, alert sender, `buildGithubRouter`, end-to-end delivery + 500-on-D1-failure tests | PR4 (~300) | `npm test -- test/http` | `SELF.fetch` + `vi.stubGlobal(fetch)` | delete `src/adapters/github/event-mapper.ts`, `src/adapters/telegram/alert-sender.ts` |
 | 5 | `/linkrepo`, `/unlinkrepo`, `/repos` commands + tests | PR5 (~250) | `npm test -- test/adapters/telegram/commands.test.ts` | grammY stub, `SELF.fetch` | revert `commands.ts` command registration |
 
+**PR1 actual size (measured `git diff --stat`, intent-to-add, after apply): 871 authored lines (16 files, 0 deletions) — exceeds the 400-line budget and the ~350 estimate above.** Implementation-only lines (migration, `entities.ts`/`errors.ts`/`ports.ts` additions, `github.ts`, 4 use cases, `migrations.test.ts` table-list fix) total ~356, under budget; the overrun comes entirely from the Strict-TDD RED test files (`test/domain/{github,link-repo-to-topic,unlink-repo,list-repo-links,route-github-event}.test.ts`, 451 lines) plus the three new port fakes in `test/fakes/index.ts` (64 lines). All code is written and every test is green (see apply-progress.md). Flagged for the orchestrator/maintainer to decide before this is committed as PR1: accept as `size:exception`, or split into two chained slices (1a: migration + entities/errors/ports + `github.ts` + `link-repo-to-topic`/`unlink-repo`/`list-repo-links` + their tests + fakes; 1b: `route-github-event.ts` + its test). No commit was made.
+
 ## Phase 1: Domain Foundation (PR1)
 
-- [ ] 1.1 RED: `github.ts` — `parseRepoFullName` (lowercase, `owner/repo` shape), `formatGithubAlert` truncation at 4096 (spec: Message Truncated).
-- [ ] 1.2 GREEN: `src/domain/github.ts` types, `RepoFullName`, `GithubEvent`, `formatGithubAlert`.
-- [ ] 1.3 Add `RepoTopicLink` entity; `GithubOrgClaimRepo`, `RepoTopicLinkRepo`, `AlertSender` ports; `InvalidRepoError`, `OrgNotClaimedError`, `AlertSendFailedError` in `entities.ts`/`ports.ts`/`errors.ts`.
-- [ ] 1.4 RED: `link-repo-to-topic` tests — claimed org links, unclaimed org rejected, admin-only, must be inside a topic, re-link moves and reply names old/new topic (spec: repo-topic-links, all "Requirement" scenarios).
-- [ ] 1.5 GREEN: `src/domain/usecases/link-repo.ts`.
-- [ ] 1.6 RED/GREEN: `unlink-repo.ts`, `list-repo-links.ts` (spec: any member reads, excludes unclaimed-org links).
-- [ ] 1.7 RED: `route-github-event` — unclaimed org ignored, unlinked repo ignored (no fallback), linked repo delivers, send failure returns `send-failed` kind not thrown (spec: github-alerts Route/Delivery-Failure).
-- [ ] 1.8 GREEN: `src/domain/usecases/route-github-event.ts`.
-- [ ] 1.9 `migrations/0002_github_alerts.sql` per design (claims + links, composite FK).
+- [x] 1.1 RED: `github.ts` — `parseRepoFullName` (lowercase, `owner/repo` shape), `formatGithubAlert` truncation at 4096 (spec: Message Truncated).
+- [x] 1.2 GREEN: `src/domain/github.ts` types, `RepoFullName`, `GithubEvent`, `formatGithubAlert`.
+- [x] 1.3 Add `RepoTopicLink` entity; `GithubOrgClaimRepo`, `RepoTopicLinkRepo`, `AlertSender` ports; `InvalidRepoError`, `OrgNotClaimedError`, `AlertSendFailedError` in `entities.ts`/`ports.ts`/`errors.ts`.
+- [x] 1.4 RED: `link-repo-to-topic` tests — claimed org links, unclaimed org rejected, admin-only, must be inside a topic, re-link moves and reply names old/new topic (spec: repo-topic-links, all "Requirement" scenarios). Note: the "must be inside a topic" and "reply names old/new topic" scenarios are adapter/command-layer concerns (Phase 5, `/linkrepo`); the domain use case tested here covers the claim gate, admin gate, and move-semantics (`previousThreadId`).
+- [x] 1.5 GREEN: `src/domain/usecases/link-repo-to-topic.ts`.
+- [x] 1.6 RED/GREEN: `unlink-repo.ts`, `list-repo-links.ts` (spec: any member reads, excludes unclaimed-org links).
+- [x] 1.7 RED: `route-github-event` — unclaimed org ignored, unlinked repo ignored (no fallback), linked repo delivers, send failure returns `send-failed` kind not thrown (spec: github-alerts Route/Delivery-Failure).
+- [x] 1.8 GREEN: `src/domain/usecases/route-github-event.ts`.
+- [x] 1.9 `migrations/0002_github_alerts.sql` per design (claims + links, composite FK).
 
 ## Phase 2: D1 Adapters (PR2)
 

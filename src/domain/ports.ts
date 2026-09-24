@@ -4,8 +4,10 @@ import type {
   Membership,
   ProfileField,
   DmSelection,
+  RepoTopicLink,
   Team,
 } from "./entities";
+import type { RepoFullName } from "./github";
 import type { MemberId, MembershipId, TeamId } from "./ids";
 import type { Role } from "./entities";
 
@@ -147,4 +149,31 @@ export interface LogEvent {
 
 export interface Logger {
   log(entry: LogEvent): void;
+}
+
+// GitHub alerts (design.md "Tenancy for routing" and "Interfaces /
+// Contracts"). `findTeamByOrg` is the sole cross-team lookup here —
+// mirrors MembershipRepo.findByUser — because routing an inbound webhook
+// starts with only an org login, before any TeamId is known. Everything
+// after it takes TeamId first.
+export interface GithubOrgClaimRepo {
+  findTeamByOrg(orgLogin: string): Promise<TeamId | null>;
+  isClaimedBy(teamId: TeamId, orgLogin: string): Promise<boolean>;
+}
+
+export interface RepoTopicLinkRepo {
+  get(teamId: TeamId, repo: RepoFullName): Promise<RepoTopicLink | null>;
+  // ON CONFLICT DO UPDATE thread_id (design.md "Interfaces / Contracts") —
+  // re-linking an already-linked repo moves it instead of erroring.
+  upsert(teamId: TeamId, link: RepoTopicLink): Promise<void>;
+  remove(teamId: TeamId, repo: RepoFullName): Promise<boolean>;
+  list(teamId: TeamId): Promise<RepoTopicLink[]>;
+}
+
+export interface AlertSender {
+  // Throws AlertSendFailedError (never resolves false-on-error) so
+  // routeGithubEvent can distinguish "delivered" from "send failed" and
+  // return the "send-failed" outcome instead of a 500 (design.md "GitHub
+  // route status policy").
+  send(chatId: number, threadId: number, text: string): Promise<void>;
 }

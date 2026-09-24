@@ -1,20 +1,26 @@
+import { AlertSendFailedError } from "../../src/domain/errors";
 import type {
   AuditDraft,
   Member,
   Membership,
   ProfileField,
+  RepoTopicLink,
   Role,
   DmSelection,
   Team,
 } from "../../src/domain/entities";
+import type { RepoFullName } from "../../src/domain/github";
 import type {
+  AlertSender,
   ChatAdminChecker,
   Clock,
   DmSelectionRepo,
+  GithubOrgClaimRepo,
   IdGen,
   MemberRepo,
   MembershipRepo,
   ProfileRepo,
+  RepoTopicLinkRepo,
   TeamRepo,
 } from "../../src/domain/ports";
 import type { MemberId, MembershipId, TeamId } from "../../src/domain/ids";
@@ -197,6 +203,76 @@ export function fakeChatAdminChecker(
     isAdmin: async (chatId, userId) => {
       if (opts.throws) throw new Error("getChatMember failed");
       return admins.some((a) => a.chatId === chatId && a.userId === userId);
+    },
+  };
+}
+
+// GitHub alerts fakes (design.md "Interfaces / Contracts").
+
+export function fakeGithubOrgClaimRepo(
+  opts: { throws?: boolean } = {},
+): GithubOrgClaimRepo & {
+  rows: Array<{ teamId: TeamId; orgLogin: string }>;
+} {
+  const rows: Array<{ teamId: TeamId; orgLogin: string }> = [];
+  return {
+    rows,
+    findTeamByOrg: async (orgLogin: string) => {
+      if (opts.throws) throw new Error("D1 unavailable");
+      return rows.find((r) => r.orgLogin === orgLogin)?.teamId ?? null;
+    },
+    isClaimedBy: async (teamId: TeamId, orgLogin: string) => {
+      if (opts.throws) throw new Error("D1 unavailable");
+      return rows.some((r) => r.teamId === teamId && r.orgLogin === orgLogin);
+    },
+  };
+}
+
+export function fakeRepoTopicLinkRepo(
+  opts: { throws?: boolean } = {},
+): RepoTopicLinkRepo & {
+  rows: RepoTopicLink[];
+} {
+  const rows: RepoTopicLink[] = [];
+  return {
+    rows,
+    get: async (teamId: TeamId, repo: RepoFullName) => {
+      if (opts.throws) throw new Error("D1 unavailable");
+      return (
+        rows.find((l) => l.teamId === teamId && l.repoFullName === repo) ??
+        null
+      );
+    },
+    upsert: async (teamId: TeamId, link: RepoTopicLink) => {
+      const idx = rows.findIndex(
+        (l) => l.teamId === teamId && l.repoFullName === link.repoFullName,
+      );
+      if (idx >= 0) rows[idx] = link;
+      else rows.push(link);
+    },
+    remove: async (teamId: TeamId, repo: RepoFullName) => {
+      const idx = rows.findIndex(
+        (l) => l.teamId === teamId && l.repoFullName === repo,
+      );
+      if (idx < 0) return false;
+      rows.splice(idx, 1);
+      return true;
+    },
+    list: async (teamId: TeamId) => rows.filter((l) => l.teamId === teamId),
+  };
+}
+
+export function fakeAlertSender(
+  opts: { throws?: boolean } = {},
+): AlertSender & {
+  sent: Array<{ chatId: number; threadId: number; text: string }>;
+} {
+  const sent: Array<{ chatId: number; threadId: number; text: string }> = [];
+  return {
+    sent,
+    send: async (chatId: number, threadId: number, text: string) => {
+      if (opts.throws) throw new AlertSendFailedError("sendMessage failed");
+      sent.push({ chatId, threadId, text });
     },
   };
 }

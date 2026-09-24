@@ -15,9 +15,13 @@ describe("migrations/0001_init.sql", () => {
     expect(names).toEqual([
       "audit_log",
       "dm_selections",
+      // github_org_claims and repo_topic_links: migrations/0002_github_alerts.sql
+      // (PR2 covers their own FK/UNIQUE/CHECK migration tests).
+      "github_org_claims",
       "members",
       "memberships",
       "profile_fields",
+      "repo_topic_links",
       "teams",
     ]);
   });

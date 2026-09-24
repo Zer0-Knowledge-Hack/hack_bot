@@ -1,3 +1,4 @@
+import type { RepoFullName } from "./github";
 import type { MemberId, MembershipId, TeamId } from "./ids";
 
 export interface Team {
@@ -74,4 +75,18 @@ export interface DmSelection {
   telegramUserId: number;
   teamId: TeamId;
   expiresAt: number;
+}
+
+// One repo maps to at most one forum topic per team (design.md "One Topic
+// Per Repo, Re-Link Moves It"). `orgLogin` is redundant with the owner
+// segment of `repoFullName` but kept as its own column so the composite FK
+// to `github_org_claims(team_id, org_login)` can enforce claim ownership at
+// the D1 layer without re-parsing the repo name (see migrations/0002).
+export interface RepoTopicLink {
+  teamId: TeamId;
+  repoFullName: RepoFullName;
+  orgLogin: string;
+  threadId: number;
+  createdAt: number;
+  updatedAt: number;
 }
