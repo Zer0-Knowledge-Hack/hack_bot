@@ -21,6 +21,7 @@ export default defineConfig(async () => {
             // .dev.vars.example's documented shapes.
             BOT_TOKEN: "000000000:TEST-TOKEN-NOT-REAL",
             WEBHOOK_SECRET: "test-webhook-secret-value",
+            GITHUB_WEBHOOK_SECRET: "test-github-webhook-secret-value",
             PII_KEYRING: JSON.stringify({
               active: 1,
               keys: { "1": Buffer.alloc(32, 9).toString("base64") },

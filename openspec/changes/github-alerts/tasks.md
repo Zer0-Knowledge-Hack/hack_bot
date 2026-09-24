@@ -49,10 +49,10 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Signature and Route Skeleton (PR3)
 
-- [ ] 3.1 RED: HMAC tests — missing header, wrong secret, right-length-wrong-content (timing-safe), valid signature (spec: HMAC Signature Verification, all scenarios).
-- [ ] 3.2 GREEN: `src/adapters/github/signature.ts`, WebCrypto HMAC + `timingSafeEqual`, empty/missing secret → `ConfigError` (500), before `JSON.parse`.
-- [ ] 3.3 RED: route status tests — `ping` 200, invalid JSON/non-object/unsupported event 200, D1 failure 500 (spec: Ping, Unsupported, Infrastructure Failures).
-- [ ] 3.4 GREEN: `src/index.ts` route registration, `env.ts` `GITHUB_WEBHOOK_SECRET`, `.dev.vars.example`, `vitest.config.ts` test binding.
+- [x] 3.1 RED: HMAC tests — missing header, wrong secret, right-length-wrong-content (timing-safe), valid signature (spec: HMAC Signature Verification, all scenarios).
+- [x] 3.2 GREEN: `src/adapters/github/signature.ts`, WebCrypto HMAC + `timingSafeEqual`, empty/missing secret → `ConfigError` (500), before `JSON.parse`.
+- [x] 3.3 RED: route status tests — `ping` 200, invalid JSON/non-object/unsupported event 200 (spec: Ping, Unsupported). D1 failure 500 deferred to PR4 — see Deviation note in apply-progress.md; there is no D1/routing wiring in this PR to fail.
+- [x] 3.4 GREEN: `src/index.ts` route registration, `env.ts` `GITHUB_WEBHOOK_SECRET`, `.dev.vars.example`, `vitest.config.ts` test binding.
 
 ## Phase 4: Delivery Wiring (PR4)
 

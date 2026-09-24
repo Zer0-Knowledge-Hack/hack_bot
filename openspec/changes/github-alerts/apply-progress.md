@@ -243,3 +243,170 @@ Applied on `feat/github-alerts-d1`, still no commit/push, `.codegraph/` untouche
 ### Status (after correction)
 
 All 4 confirmed PR2 review findings addressed. Full suite: `npx vitest run` → 260/260 pass. `npx tsc --noEmit` → clean, no errors. Two genuine bugs found and fixed (the `upsert` tenant-scoping bug in production code, and the case-matching divergence in the fake); the remaining findings were untested-but-correct behavior, now pinned down by tests. No commit/push made; `.codegraph/` untouched; task 6.3 left checked as instructed.
+
+## PR3 — Signature and Route Skeleton (Phase 3)
+
+**Mode**: Strict TDD, RED → GREEN per module (signature.ts first, then the route). Scope explicitly limited to `signature.ts` + the `POST /github/webhook` route skeleton (401/500/ping/malformed-JSON) + the `GITHUB_WEBHOOK_SECRET` binding — no event mapping, org/repo routing, or Telegram delivery (Phase 4). Still on `feat/github-alerts-route` (from `main` at `5b6d4f4`, includes PR1 + PR2). No commit made — working tree only, per instruction. `.codegraph/` untouched.
+
+### Completed Tasks
+
+- [x] 3.1 RED: `test/adapters/github/signature.test.ts` — missing header, wrong secret, right-length-wrong-content (constant-time path), malformed header shape, valid signature, empty secret, undefined secret.
+- [x] 3.2 GREEN: `src/adapters/github/signature.ts` — `verifyGithubSignature(rawBody, signatureHeader, secret)`. Secret emptiness checked first (throws `ConfigError`, never verifies against an empty key); header validated against `^sha256=[0-9a-f]{64}$`; HMAC-SHA256 via `crypto.subtle.importKey`/`sign` over the raw `ArrayBuffer`; length-checked, then `crypto.subtle.timingSafeEqual` (same WebCrypto primitive already proven available by `test/runtime-assumptions/timing-safe-equal.test.ts`, same length-check-then-compare pattern as `src/index.ts`'s `isValidSecret`).
+- [x] 3.3 RED: `test/http/github-webhook.test.ts` — signature gate (missing/wrong/same-length-wrong → 401), status policy (ping → 200, malformed JSON → 200, non-object JSON → 200, unsupported/not-yet-wired event → 200), production-safety fail-closed suite (empty secret → 500 for unsigned, well-formed-signed, and header-less requests; never crashes; Telegram route and `/health` unaffected), and a no-leak suite (payload/signature/secret never appear in `console.log` output). D1-failure-500 scenario from the tasks.md task-3.3 wording is deferred — see Deviations below.
+- [x] 3.4 GREEN: `src/index.ts` — `app.post("/github/webhook", ...)`; `src/env.ts` — `GITHUB_WEBHOOK_SECRET: string`; `.dev.vars.example` — documented placeholder; `vitest.config.ts` — `GITHUB_WEBHOOK_SECRET: "test-github-webhook-secret-value"` miniflare binding.
+
+### Files Changed
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `src/adapters/github/signature.ts` | Created | `verifyGithubSignature` — HMAC-SHA256 over raw bytes, constant-time compare, `ConfigError` on empty/missing secret |
+| `test/adapters/github/signature.test.ts` | Created | 7 tests covering every HMAC Signature Verification scenario in `specs/github-webhook/spec.md` plus the two secret-misconfiguration cases |
+| `src/index.ts` | Modified | Added `POST /github/webhook`: reads raw `arrayBuffer()`, verifies signature before any `JSON.parse`, 401 on failed verification, 500 + `ConfigError`-reason log on unset/empty secret, 200 for `ping`/malformed JSON/non-object payload/any other event (placeholder pending Phase 4) |
+| `src/env.ts` | Modified | Added `GITHUB_WEBHOOK_SECRET: string` to `Env` |
+| `.dev.vars.example` | Modified | Added `GITHUB_WEBHOOK_SECRET` placeholder with a one-line rollout note |
+| `vitest.config.ts` | Modified | Added `GITHUB_WEBHOOK_SECRET` miniflare test binding, mirroring `WEBHOOK_SECRET`'s existing test-only-value pattern |
+| `test/http/github-webhook.test.ts` | Created | 13 tests: signature gate, status policy, fail-closed-on-unset-secret (including cross-checks that `/telegram/webhook` and `/health` stay unaffected), and no-payload/signature/secret-in-logs |
+
+### TDD Cycle Evidence
+
+| Task | RED (failing first, correct reason) | GREEN (implementation, passes) | REFACTOR |
+|---|---|---|---|
+| 3.1/3.2 `signature.ts` | `npx vitest run test/adapters/github/signature.test.ts` before the module existed: `Cannot find module '../../../src/adapters/github/signature'` (0 tests ran, failed suite) | Created `signature.ts`; `npx vitest run test/adapters/github/signature.test.ts` → 7/7 pass | None needed — implementation is a single small pure-ish async function, already minimal |
+| 3.3/3.4 route skeleton | `npx vitest run test/http/github-webhook.test.ts` before the route existed: 10/13 failed with `404` (route not registered) or, for one test, a `DataError` from trying to HMAC-sign with an empty key in the test helper itself (fixed by rewriting that one test to send a well-formed signature against the *request's* empty-secret env, rather than trying to sign with an empty key) | Added the route to `src/index.ts` + `env.ts`/`vitest.config.ts`/`.dev.vars.example` bindings; `npx vitest run test/http/github-webhook.test.ts` → 13/13 pass | None needed — route mirrors the existing `/telegram/webhook` error-boundary shape (try/catch around composition-equivalent step, malformed-body 200, safe logging) |
+
+Every RED run above failed for the right reason (module resolution or route-not-registered 404), never a passing or wrongly-failing assertion. The one non-production-related RED (`DataError` from a broken test helper) was a test-authoring mistake caught during RED, not a production bug — fixed by correcting the test before writing any production code for that branch.
+
+### Work Unit Evidence (PR3 / Unit 3)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npx vitest run test/adapters/github/signature.test.ts test/http/github-webhook.test.ts` → 20/20 pass (7 + 13) |
+| Runtime harness command/scenario and exact result | `SELF`/`app.request` through the real Hono app in the Workers runtime (`@cloudflare/vitest-pool-workers`), same harness family as `test/http/webhook-e2e.test.ts` — exercises the actual route registration, `c.env` binding resolution, and `crypto.subtle` in the Workers isolate, not a Node polyfill. Full suite: `npx vitest run` → 280/280 pass (34 files, up from 260/32 before this PR) |
+| Rollback boundary | Delete `src/adapters/github/signature.ts`, `test/adapters/github/signature.test.ts`, `test/http/github-webhook.test.ts`; remove the `app.post("/github/webhook", ...)` block from `src/index.ts`; remove `GITHUB_WEBHOOK_SECRET` from `src/env.ts`, `vitest.config.ts`, and `.dev.vars.example`. Nothing outside these files references the new route or `verifyGithubSignature` yet — the Telegram route and `/health` are untouched aside from the shared `Env` type gaining one more required field (verified unaffected by two dedicated tests) |
+
+### Deviations from Design
+
+- **tasks.md task 3.3's "D1 failure 500" scenario is deferred to PR4, not implemented here.** This PR has no D1/routing wiring at all (no mapper, no `routeGithubEvent` call, no `buildGithubRouter`) — that lands in Phase 4 per design.md's PR slicing (#4: "the mapper, alert sender, `buildGithubRouter` wiring and the end-to-end delivery tests"). There is no code path in this PR that could reach D1, so a "D1 failure → 500" test would have nothing to exercise except a `throw` inserted purely for the test's sake, which would misrepresent Phase-4 behavior instead of testing it. This was an explicit scope instruction for this batch (only `signature.ts` + the 401/500-on-config/ping/malformed-JSON route skeleton + the env binding — no event mapping, routing, or Telegram delivery). The design.md "GitHub route status policy" table's Infrastructure-Failures row and its spec scenario remain correctly the responsibility of PR4, where the D1 call actually exists.
+- **Non-ping events currently return 200 unconditionally (no mapper yet), not spec-driven "unsupported" filtering.** Per design.md's own PR slicing, the mapper (`event-mapper.ts`) that determines "supported vs. unsupported event/action" is Phase 4 work. Until it exists, every non-ping event is a de facto unsupported event under this skeleton, and the design.md status table already assigns unsupported events the same 200 — so this is a temporary but spec-consistent placeholder, not a violation of the "Unsupported Event or Action Ignored" requirement. It will be replaced with dispatch to `mapGithubEvent`/`routeGithubEvent` in PR4, at which point the currently-blanket 200 branch narrows to only truly-unsupported combinations.
+- No other deviations. `signature.ts` matches design.md's "Signature check" row verbatim (regex → HMAC over raw bytes → constant-time compare → length-check-before-compare, all before `JSON.parse`; empty/missing secret is a `ConfigError`, never a verify-against-empty-key). The route's 401/500/200 mapping matches the "GitHub route status policy" table's rows that apply to this PR's scope exactly.
+
+### Issues Found / Risks
+
+- None. Production code is small (`signature.ts` 47 lines + the route addition to `src/index.ts` ~52 lines + 4 lines each in `env.ts`/`.dev.vars.example` + 1 line in `vitest.config.ts` ≈ 108 lines total), comfortably under the 400-line budget and the ~250-line tasks.md estimate — no `size:exception` needed for this PR, unlike PR1/PR2's test-driven overruns.
+- One test-authoring bug was caught and fixed during RED (see TDD Cycle Evidence above): the original "signed against the empty secret itself" test tried to HMAC-sign with a zero-length key, which WebCrypto rejects with a `DataError` unrelated to the production code under test. Rewritten to send a well-formed signature (signed under the real test secret) against a request whose *environment* has an empty `GITHUB_WEBHOOK_SECRET` — the actually-intended scenario (secret unset in the deployed env, regardless of what an attacker sends).
+
+### New Test Count
+
+- Before this PR: 260 tests passing (32 files)
+- After this PR: **280 tests passing** (34 files) — +20 (7 `signature.test.ts` + 13 `github-webhook.test.ts`)
+- `npx tsc --noEmit`: clean, no errors (one pre-fix error surfaced and was corrected: a test helper's `ArrayBufferLike`-typed `.buffer` needed an explicit `as ArrayBuffer` cast to satisfy `verifyGithubSignature`'s `ArrayBuffer` parameter — a test-file-only fix, no production signature changed)
+
+### Line Counts
+
+| Category | Files | Lines |
+|---|---|---|
+| Production | `src/adapters/github/signature.ts` (47) + `src/index.ts` route addition (52) + `src/env.ts` addition (4) | **103** |
+| Tests | `test/adapters/github/signature.test.ts` (77) + `test/http/github-webhook.test.ts` (195) | **272** |
+| Config/docs (not counted as code) | `.dev.vars.example` (+4), `vitest.config.ts` (+1) | 5 |
+
+Production code (103 lines) is well under the 400-line budget and under the ~250-line tasks.md estimate. No `size:exception` is needed for PR3 — this is the first PR in the chain where both production and test totals individually and combined stay under budget.
+
+### Workload / PR Boundary
+
+- Mode: stacked-to-main, chained PR slice (PR3 of 5), stacked on `feat/github-alerts-route` (from `main` at `5b6d4f4`, includes PR1 + PR2)
+- Current work unit: Unit 3 — "`signature.ts` + route skeleton (401/500/ping/malformed JSON) + env binding"
+- Boundary: starts from PR1+PR2 (domain + D1 adapters, unchanged in this PR), ends at the signature verifier and the route skeleton returning the correct status for every case in scope (401 unauthorized, 500 config-error/fail-closed, 200 ping/malformed/non-object/not-yet-supported). Explicitly does not wire the mapper, `routeGithubEvent`, `buildGithubRouter`, or any Telegram delivery — that is Phase 4 (task 4.5 wires this route's placeholder branch to real routing)
+- Estimated review budget impact: comfortably within budget on both production and test code; no exception needed
+
+### Remaining Tasks
+
+- [ ] Phase 4 (PR4): mapper, alert sender, `buildGithubRouter`, e2e delivery tests (including the D1-failure-500 scenario deferred from this PR)
+- [ ] Phase 5 (PR5): `/linkrepo`, `/unlinkrepo`, `/repos` commands
+- [ ] Phase 6.1/6.2: operator rollout steps (secret provisioning after this PR merges, org webhook config after PR4 merges)
+
+### Status
+
+4/4 Phase-3 tasks complete. Full suite: `npx vitest run` → 280/280 pass. `npx tsc --noEmit` → clean, no errors. Telegram webhook and `/health` verified unaffected by dedicated tests in this PR. Production code (103 lines) is well within the 400-line budget — no exception needed. Ready for verify.
+
+## Correction — PR3 Review Ledger (warnings, no blocker/critical)
+
+Applied on `feat/github-alerts-route`, still no commit/push, `.codegraph/` untouched. Fixes the 4 warning-level findings from the frozen PR3 review ledger (no blocker/critical findings existed). Strict TDD: a failing test was written first for both behavior changes (RES-002, RES-001); the two readability findings (READ-001, READ-002) are pure extractions with no behavior change, verified against the existing suite as an approval-test safety net throughout.
+
+### Findings Addressed
+
+| Finding | Fix | RED evidence | New test result |
+|---|---|---|---|
+| RES-002 — catch-all branch for signature-verified, non-ping events returned 200 without logging, contradicting design.md:27 ("unsupported event or action: 200, logged") | `src/index.ts`: added `logger.log({ event: "github-webhook", outcome: "ok", reason: "ignored:not-yet-routed" })` before the final `return c.text("ok", 200)`, using only allowlisted `LogEvent` fields (no payload, no event type/action) | `test/http/github-webhook.test.ts` new test ran before the fix: `expected undefined to deeply equal {...}` — no `github-webhook` log entry existed at all | **New behavior added, test passed after the fix.** `npx vitest run test/http/github-webhook.test.ts` → 14/14 (was 13/13) |
+| RES-001 — `await c.req.arrayBuffer()` was unguarded, unlike the Telegram route's guarded `c.req.json()` | `src/index.ts`: wrapped the raw-body read in try/catch; on failure, logs `errorCode` only (no payload/secret) and returns `c.text("ok", 200)` — the same status the Telegram route uses for an unparseable body | Added a test with a `ReadableStream` body that calls `controller.error(...)` before any data — this **is** cleanly injectable in the Workers test runtime via `app.request(new Request(..., { body: brokenStream, duplex: "half" }))`. Ran before the fix: `expected 200 to be 500` — the unguarded `await` let the rejection escape the handler, and Hono's default error boundary answered a plain uncontrolled 500 instead of the documented 200 policy (and without the safe logger) | **Real gap found and fixed** (the route was one dropped-connection away from an unlogged, non-policy-compliant 500). `npx vitest run test/http/github-webhook.test.ts` → 15/15 (was 14/14) |
+| READ-001 — the constant-time comparison (length check, then `crypto.subtle.timingSafeEqual`) was duplicated in `src/index.ts`'s `isValidSecret` and `src/adapters/github/signature.ts` | Extracted `timingSafeCompare(provided, expected)` to `src/adapters/crypto/timing-safe-compare.ts`; `isValidSecret` was removed and both `/telegram/webhook` and `verifyGithubSignature` now call the shared helper. No behavior change: same `!provided` short-circuit, same length-check-before-compare order | New module written before existing code depended on it (TDD-for-new-code: `Cannot find module '.../timing-safe-compare'`), then implemented | GREEN: `npx vitest run test/adapters/crypto/timing-safe-compare.test.ts` → 5/5 (new). Safety net (no regressions): `npx vitest run test/http/webhook-secret.test.ts test/http/webhook-e2e.test.ts test/adapters/github/signature.test.ts test/http/github-webhook.test.ts test/runtime-assumptions/timing-safe-equal.test.ts` → all green before and after wiring the callers |
+| READ-002 — the `signHex` test helper was copy-pasted in `test/adapters/github/signature.test.ts` and `test/http/github-webhook.test.ts` | Extracted to `test/support/github-hmac.ts`; both test files now import it | N/A — test-only refactor, no production behavior. Both files' existing tests are the approval-test safety net | Ran both files immediately after the extraction, before any other change: `npx vitest run test/adapters/github/signature.test.ts test/http/github-webhook.test.ts` → 20/20, unchanged from before the extraction |
+
+**Two real gaps found (RES-001, RES-002), both fixed with new logging/guarding, not by weakening any test.** READ-001/READ-002 were pure duplication removals with zero behavior change, confirmed by the pre-existing suites staying green throughout.
+
+### Files Changed (this correction)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `src/adapters/crypto/timing-safe-compare.ts` | Created | `timingSafeCompare(provided, expected)` — the shared constant-time string compare |
+| `test/adapters/crypto/timing-safe-compare.test.ts` | Created | 5 tests: identical, same-length-different, shorter, longer, empty-vs-non-empty |
+| `src/index.ts` | Modified | Removed local `isValidSecret`; Telegram route now calls `timingSafeCompare`. GitHub route: guarded `c.req.arrayBuffer()` (RES-001), added the not-yet-routed log line (RES-002) |
+| `src/adapters/github/signature.ts` | Modified | Replaced the inline length-check + `timingSafeEqual` with a call to the shared `timingSafeCompare` |
+| `test/support/github-hmac.ts` | Created | Shared `signHex` helper (READ-002) |
+| `test/adapters/github/signature.test.ts` | Modified | Imports `signHex` from `test/support/github-hmac` instead of a local copy |
+| `test/http/github-webhook.test.ts` | Modified | Imports `signHex` from `test/support/github-hmac`; added the RES-002 logging test and the RES-001 unreadable-body test |
+| `openspec/changes/github-alerts/apply-progress.md` | Modified | This correction section |
+
+### New Test Count
+
+- Before this correction: 280 tests passing (34 files)
+- After this correction: **287 tests passing** (35 files) — +7 (5 `timing-safe-compare.test.ts` + 1 RES-002 log test + 1 RES-001 unreadable-body test)
+- `npx tsc --noEmit`: clean, no errors
+
+### Which Tests Failed First vs. Passed Immediately
+
+- **Failed first (RED, for the right reason), then passed after the fix**: RES-002's log-assertion test (`expected undefined`, no log entry existed) and RES-001's unreadable-body test (`expected 200 to be 500` — the route was actually returning an uncontrolled 500 via Hono's default error boundary before the fix).
+- **New module, no prior code to fail against**: `timing-safe-compare.test.ts` failed on module resolution (`Cannot find module`) before the helper existed — the standard "RED via missing production code" pattern for brand-new pure logic, not a behavior regression.
+- **Passed immediately (approval tests, no RED expected)**: every pre-existing test in `webhook-secret.test.ts`, `webhook-e2e.test.ts`, `signature.test.ts`, `github-webhook.test.ts` (13 pre-existing ones), and `timing-safe-equal.test.ts` — these are the READ-001/READ-002 refactor's safety net and were never expected to fail, since no behavior changed for them.
+
+### Status (after correction)
+
+All 4 PR3 review warnings addressed. Full suite: `npx vitest run` → 287/287 pass. `npx tsc --noEmit` → clean, no errors. Two real gaps found and fixed (RES-001's unguarded body read escaping to an uncontrolled 500; RES-002's missing log line for the design-mandated "unsupported event: 200, logged" policy); two pure duplication removals (READ-001, READ-002) verified behavior-neutral by the existing suite staying green throughout. No commit/push made; `.codegraph/` untouched.
+
+## Correction 2 (maintainer-authorized) — Scoped-Validator Escalation on Correction 1's RES-001 Fix
+
+Applied on `feat/github-alerts-route`, still no commit/push, `.codegraph/` untouched. Scope: only `test/http/github-webhook.test.ts` (~124-140) and `src/index.ts` (~99-109), per the maintainer's explicit "touch nothing else" instruction.
+
+### Finding
+
+The scoped fix-delta validator escalated one fix-caused defect in correction 1's RES-001 fix: when `c.req.arrayBuffer()` throws, the route returned 200 before signature verification. That is wrong on two counts — the failure is a **transient, transport-level** read failure (not malformed content that was successfully read), and the request was **never authenticated** at that point. design.md's status policy assigns 500 to transient/unexpected failures precisely so the delivery is marked failed in GitHub and can be redelivered; a body-read failure is exactly that case, not the "redelivering the same bytes can never succeed" case that correctly applies to the JSON.parse/non-object branches later in the same handler (those DID fully read the bytes; malformed content redelivered unchanged will fail identically forever).
+
+### Fix (test-first)
+
+1. **RED**: Changed the existing correction-1 test (`test/http/github-webhook.test.ts`, "unreadable raw body" describe block) to assert `res.status` is `500` instead of `200`, and added an exact-match assertion on the logged entry (`{ event: "github-webhook", outcome: "error", errorCode: "Error" }`, plus a check that the raw error message never appears in any log line). Ran against the unmodified correction-1 code: `expected 200 to be 500` — confirmed RED for the exact reason the finding describes (the route was still returning 200 on this path).
+2. **GREEN**: Changed `src/index.ts`'s `catch` block for the `c.req.arrayBuffer()` guard to `return c.text("Internal Server Error", 500)` instead of `return c.text("ok", 200)`. The safe log line (errorCode-only, no payload/message) was kept unchanged. Rewrote the surrounding comment to drop the "redelivering the same bytes can never succeed" rationale (which does not apply here) and state the actual reasoning: a transient, transport-level failure on an unauthenticated request, which design.md's status policy answers with 500.
+
+### RED Evidence
+
+```
+AssertionError: expected 200 to be 500 // Object.is equality
+- Expected: 500
++ Received: 200
+ ❯ test/http/github-webhook.test.ts:144:24
+```
+
+### Files Changed (this correction)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `test/http/github-webhook.test.ts` | Modified | The "unreadable raw body" test now asserts 500 (was 200) and asserts the exact safe-logged entry; nothing else in the file touched |
+| `src/index.ts` | Modified | The `arrayBuffer()` catch block now returns 500 instead of 200; the comment above it no longer cites the malformed-content rationale; nothing else in the file touched |
+
+### New Test Count
+
+- Before this correction: 287 tests passing (35 files)
+- After this correction: **287 tests passing** (35 files, unchanged — one existing test modified in place, no test added or removed)
+- `npx tsc --noEmit`: clean, no errors
+
+### Status (after correction 2)
+
+The scoped-validator-escalated defect is fixed: an unreadable GitHub webhook body now returns 500 (not 200), matching design.md's status policy for transient/unexpected failures, while still logging only allowlisted fields and never the raw error message. Full suite: `npx vitest run` → 287/287 pass. `npx tsc --noEmit` → clean, no errors. No commit/push made; `.codegraph/` untouched; only the two files named in the maintainer's instruction were touched.

@@ -6,4 +6,8 @@ export interface Env {
   WEBHOOK_SECRET: string;
   PII_KEYRING: string;
   BOT_INFO: string;
+  // GitHub webhook HMAC secret (design.md "Secret scope" — one global
+  // secret). Missing/empty is a config error, never a default (see
+  // src/adapters/github/signature.ts).
+  GITHUB_WEBHOOK_SECRET: string;
 }
