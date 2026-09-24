@@ -140,6 +140,9 @@ export interface LogEvent {
   field?: string;
   outcome: "ok" | "refused" | "error";
   errorCode?: string;
+  // A fixed, non-sensitive failure description (e.g. a ConfigError
+  // message). Never a raw error message, input value, or secret.
+  reason?: string;
 }
 
 export interface Logger {

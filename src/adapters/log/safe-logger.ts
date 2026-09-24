@@ -1,7 +1,7 @@
 import type { LogEvent, Logger } from "../../domain/ports";
 
 // design.md "Logging": an allowlisted field set only (event, teamId,
-// membershipId, field, outcome, errorCode). Update text and values are
+// membershipId, field, outcome, errorCode, reason). Update text and values are
 // NEVER logged. Fields are copied explicitly, one by one — never spread
 // from the caller's object — so an accidental extra property on a
 // LogEvent-shaped value (e.g. via an unsafe cast) cannot leak into a log
@@ -18,6 +18,7 @@ export function createSafeLogger(): Logger {
           : {}),
         ...(entry.field !== undefined ? { field: entry.field } : {}),
         ...(entry.errorCode !== undefined ? { errorCode: entry.errorCode } : {}),
+        ...(entry.reason !== undefined ? { reason: entry.reason } : {}),
       };
       console.log(JSON.stringify(safe));
     },

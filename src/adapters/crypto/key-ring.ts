@@ -1,7 +1,11 @@
 // Parses the `PII_KEYRING` secret (design.md "Key ring"):
 //   {"active":<version>,"keys":{"<version>":"<base64 32-byte key>"}}
 // Fails closed (throws) on anything missing or malformed — a broken keyring
-// must never silently fall back to plaintext or a wrong key.
+// must never silently fall back to plaintext or a wrong key. Every failure
+// is a ConfigError whose message is logged as-is, so messages only ever
+// interpolate already-validated numbers, never raw secret content.
+
+import { ConfigError } from "../../config-error";
 
 const KEY_BYTES = 32;
 
@@ -12,14 +16,14 @@ export interface KeyRing {
 
 export function parseKeyRing(raw: string | undefined): KeyRing {
   if (!raw || raw.trim() === "") {
-    throw new Error("PII_KEYRING secret is missing");
+    throw new ConfigError("PII_KEYRING secret is missing");
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error("PII_KEYRING secret is not valid JSON");
+    throw new ConfigError("PII_KEYRING secret is not valid JSON");
   }
 
   if (
@@ -29,7 +33,7 @@ export function parseKeyRing(raw: string | undefined): KeyRing {
     typeof (parsed as { keys?: unknown }).keys !== "object" ||
     (parsed as { keys?: unknown }).keys === null
   ) {
-    throw new Error(
+    throw new ConfigError(
       'PII_KEYRING secret must have the shape {"active":N,"keys":{"N":"<base64 32B>"}}',
     );
   }
@@ -43,13 +47,13 @@ export function parseKeyRing(raw: string | undefined): KeyRing {
   for (const [versionText, base64Key] of Object.entries(rawKeys)) {
     const version = Number(versionText);
     if (!Number.isInteger(version) || typeof base64Key !== "string") {
-      throw new Error(
-        `PII_KEYRING secret has an invalid key entry for version "${versionText}"`,
+      throw new ConfigError(
+        "PII_KEYRING secret has an invalid key entry (version must be an integer, key a base64 string)",
       );
     }
     const bytes = Buffer.from(base64Key, "base64");
     if (bytes.length !== KEY_BYTES) {
-      throw new Error(
+      throw new ConfigError(
         `PII_KEYRING secret key version ${version} must decode to ${KEY_BYTES} bytes, got ${bytes.length}`,
       );
     }
@@ -57,7 +61,7 @@ export function parseKeyRing(raw: string | undefined): KeyRing {
   }
 
   if (!keys.has(active)) {
-    throw new Error(
+    throw new ConfigError(
       `PII_KEYRING secret "active" version ${active} has no matching key entry`,
     );
   }

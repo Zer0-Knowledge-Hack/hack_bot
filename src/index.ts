@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Update } from "grammy/types";
 import { createSafeLogger } from "./adapters/log/safe-logger";
 import { buildBot } from "./composition";
+import { ConfigError } from "./config-error";
 import type { Env } from "./env";
 
 export type { Env } from "./env";
@@ -32,11 +33,15 @@ app.post("/telegram/webhook", async (c) => {
     bot = buildBot(c.env);
   } catch (err) {
     // Fail closed on a broken PII_KEYRING (or any other composition
-    // failure) — never log the secret or any error detail beyond a code.
+    // failure) — never log the secret. Only a ConfigError's message is
+    // logged (as `reason`), because it is a fixed, non-sensitive string by
+    // contract (src/config-error.ts); any other error's message may echo
+    // input, so only its name is logged.
     logger.log({
       event: "composition",
       outcome: "error",
       errorCode: err instanceof Error ? err.name : "UnknownError",
+      ...(err instanceof ConfigError ? { reason: err.message } : {}),
     });
     return c.text("Internal Server Error", 500);
   }
@@ -64,6 +69,12 @@ app.post("/telegram/webhook", async (c) => {
       outcome: "error",
       errorCode: err instanceof Error ? err.name : "UnknownError",
     });
+    return c.text("ok", 200);
+  }
+  // Valid JSON that is not an object (e.g. `null`) makes grammY throw a
+  // TypeError, which would otherwise be answered 500 and retried forever.
+  if (typeof update !== "object" || update === null || Array.isArray(update)) {
+    logger.log({ event: "webhook", outcome: "error", errorCode: "MalformedUpdate" });
     return c.text("ok", 200);
   }
 

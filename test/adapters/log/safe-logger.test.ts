@@ -38,6 +38,26 @@ describe("createSafeLogger", () => {
     spy.mockRestore();
   });
 
+  it("logs the allowlisted `reason` field alongside errorCode", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const logger = createSafeLogger();
+
+    logger.log({
+      event: "composition",
+      outcome: "error",
+      errorCode: "ConfigError",
+      reason: "PII_KEYRING secret is not valid JSON",
+    });
+
+    expect(JSON.parse(spy.mock.calls[0]?.[0] as string)).toEqual({
+      event: "composition",
+      outcome: "error",
+      errorCode: "ConfigError",
+      reason: "PII_KEYRING secret is not valid JSON",
+    });
+    spy.mockRestore();
+  });
+
   it("never logs PII even if an extra property is attached to the entry via an unsafe cast", () => {
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     const logger = createSafeLogger();
