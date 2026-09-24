@@ -6,8 +6,16 @@ running `wrangler secret put`, or the data becomes permanently unreadable.
 
 ## Quick path
 
-1. Generate a keyring offline: `openssl rand -base64 32` (see [Generate keyring](#generate-keyring)).
-2. Build the `PII_KEYRING` JSON and back it up with two custodians in a password manager (see [Back up](#back-up-two-custodians)) — do this before step 3.
+1. Generate the full `PII_KEYRING` value offline, on a trusted machine:
+   ```sh
+   printf '{"active":1,"keys":{"1":"%s"}}\n' "$(openssl rand -base64 32)"
+   ```
+   It prints the whole JSON keyring, e.g. `{"active":1,"keys":{"1":"q2x...8Q="}}`.
+   That whole line is the secret (see [Generate keyring](#generate-keyring)).
+   > **Warning:** the secret must be this JSON, not the bare base64 key.
+   > A raw `openssl rand -base64 32` output fails `parseKeyRing` ("not valid
+   > JSON"), and every webhook request returns `500`.
+2. Back up that exact JSON with two custodians in a password manager (see [Back up](#back-up-two-custodians)) — do this before step 3.
 3. `wrangler secret put BOT_TOKEN`, `WEBHOOK_SECRET`, `PII_KEYRING` (see [Install secrets](#install-secrets)).
 4. Register the webhook with `secret_token` and verify with `getWebhookInfo` (see [Register webhook](#register-webhook)).
 5. Record who the two custodians are and which password-manager entry holds the secrets, somewhere your team can find during an incident (not in this repo).
@@ -28,19 +36,19 @@ The required shape is:
   fails closed (`buildBot` throws, the webhook returns 500) — it never falls
   back to plaintext or a wrong key.
 
-Generate one 32-byte key offline, on a machine you trust, never in a shared
-chat or logged shell history:
+Generate the full secret value offline, on a machine you trust, never in a
+shared chat. The key only exists inside the command's output, never as a
+literal in the command line or shell history:
 
 ```sh
-openssl rand -base64 32
+printf '{"active":1,"keys":{"1":"%s"}}\n' "$(openssl rand -base64 32)"
 ```
 
-Then assemble the full secret value by hand (do not paste the key into any
-online JSON tool):
-
-```json
-{"active":1,"keys":{"1":"<paste the openssl output here>"}}
-```
+Paste that whole JSON line (not only the key inside it) when
+`wrangler secret put PII_KEYRING` prompts. Do not paste the key into any
+online JSON tool. A bare base64 key is rejected: the Worker fails closed and
+every webhook request returns `500`, with `"reason":"PII_KEYRING secret is not
+valid JSON"` in the Worker logs.
 
 ## Back up (two custodians)
 
@@ -172,7 +180,7 @@ recovered** — there is no backdoor or master key.
 
 ## Final checklist
 
-- [ ] Keyring generated offline with `openssl rand -base64 32` per key version.
+- [ ] Keyring generated offline as the full JSON (`{"active":1,"keys":{"1":"<base64 32-byte key>"}}`), not a bare base64 key.
 - [ ] `PII_KEYRING` JSON backed up in a password manager shared by two custodians, before `wrangler secret put`.
 - [ ] `BOT_TOKEN` and `WEBHOOK_SECRET` also backed up with the two custodians.
 - [ ] `wrangler secret put` run for `BOT_TOKEN`, `WEBHOOK_SECRET`, `PII_KEYRING`.
