@@ -1,4 +1,4 @@
-import type { Bot } from "grammy";
+import type { Bot, Context } from "grammy";
 import { bindDataChannel } from "../../domain/usecases/bind-data-channel";
 import { joinTeam } from "../../domain/usecases/join-team";
 import { setupTeam } from "../../domain/usecases/setup-team";
@@ -151,11 +151,35 @@ function profileDirectoryReply(memberships: Membership[], fields: ProfileField[]
   return `Team ${teamId}\n${memberships.map((m) => formatMemberBlock(m, fields)).join("\n\n")}`;
 }
 
+// An anonymous group admin's message arrives with `sender_chat` set to the
+// group itself (and `from` set to the GroupAnonymousBot placeholder).
+function isAnonymousGroupAdmin(ctx: Context): boolean {
+  const senderChatId = ctx.message?.sender_chat?.id;
+  return senderChatId !== undefined && senderChatId === ctx.chat?.id;
+}
+
 export function registerCommands(bot: Bot, deps: CommandDeps): void {
   registerTeamPicker(bot, deps);
   bot.command("setup", async (ctx) => {
     const loc = callerLocation(ctx);
     if (!loc) return;
+    // Telegram-specific pre-checks, answered before any admin lookup: a DM
+    // has no group to register, and an anonymous admin's `from` is the
+    // GroupAnonymousBot, which getChatMember never reports as an admin —
+    // both would otherwise fall through to a misleading "not an admin"
+    // refusal.
+    if (isPrivateChat(ctx)) {
+      deps.logger.log({ event: "setup-team", outcome: "refused", errorCode: "PrivateChat" });
+      await ctx.reply("Run /setup inside the group you want to register as a team, not in a private chat.");
+      return;
+    }
+    if (isAnonymousGroupAdmin(ctx)) {
+      deps.logger.log({ event: "setup-team", outcome: "refused", errorCode: "AnonymousAdmin" });
+      await ctx.reply(
+        'You are posting as an anonymous admin, so your admin status cannot be verified. Turn off "Remain anonymous" in your admin rights and run /setup again.',
+      );
+      return;
+    }
     await runCommand(
       {
         event: "setup-team",

@@ -1,9 +1,10 @@
 import type { Bot, Context } from "grammy";
 import { UnauthorizedError } from "../../domain/errors";
+import { parseTeamId, TEAM_ID_PATTERN_SOURCE } from "../../domain/ids";
 import { selectDmTeam } from "../../domain/usecases/dm-team-selection";
 import type { Clock, DmSelectionRepo, Logger, MembershipRepo } from "../../domain/ports";
 
-const SELECTION_PATTERN = /^sel:([a-z0-9-]{1,64})$/i;
+const SELECTION_PATTERN = new RegExp(`^sel:(${TEAM_ID_PATTERN_SOURCE})$`, "i");
 
 const EVENT = "dm-team-selection";
 
@@ -51,13 +52,11 @@ async function safeReply(ctx: Context, deps: TeamPickerDeps, text: string): Prom
 export function registerTeamPicker(bot: Bot, deps: TeamPickerDeps): void {
   bot.callbackQuery(SELECTION_PATTERN, async (ctx) => {
     const match = SELECTION_PATTERN.exec(ctx.callbackQuery.data);
-    if (!match || !isPrivateChat(ctx) || !ctx.from) return;
+    const teamId = match?.[1] !== undefined ? parseTeamId(match[1]) : null;
+    if (!teamId || !isPrivateChat(ctx) || !ctx.from) return;
 
     try {
-      await selectDmTeam(
-        { telegramUserId: ctx.from.id, teamId: match[1] as never },
-        deps,
-      );
+      await selectDmTeam({ telegramUserId: ctx.from.id, teamId }, deps);
     } catch (error) {
       if (!(error instanceof UnauthorizedError)) {
         // Unexpected/transient failure (e.g. D1) persisting the selection —
