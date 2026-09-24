@@ -4,6 +4,11 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-22",
   "compatibility_flags": ["nodejs_compat"],
+  // Explicit copies of what deploys already resolved to by default: the
+  // webhook is served at hack-bot.<subdomain>.workers.dev, and per-version
+  // Preview URLs are enabled.
+  "workers_dev": true,
+  "preview_urls": true,
   "observability": {
     "enabled": true,
     "traces": {

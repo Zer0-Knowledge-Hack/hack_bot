@@ -9,7 +9,9 @@ import { createSafeLogger } from "./adapters/log/safe-logger";
 import { createBot } from "./adapters/telegram/bot";
 import { createChatAdminChecker } from "./adapters/telegram/chat-admin-checker";
 import { registerCommands } from "./adapters/telegram/commands";
+import { ConfigError } from "./config-error";
 import type { FieldCipher } from "./domain/ports";
+import type { UserFromGetMe } from "grammy/types";
 import type { Env } from "./env";
 
 // Composition root: wires env bindings -> adapters -> use cases for one
@@ -39,6 +41,31 @@ function getOrBuildCipher(rawKeyRing: string): FieldCipher {
 const idGen = { newId: () => crypto.randomUUID() };
 const clock = { now: () => Date.now() };
 
+// A raw JSON.parse SyntaxError can quote the input, so it is replaced by a
+// ConfigError with a fixed message that is safe to log. The shape check
+// covers the fields grammY reads from its cached getMe result (the bot's
+// id, and its username for command matching).
+function parseBotInfo(raw: string): UserFromGetMe {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new ConfigError("BOT_INFO var is not valid JSON");
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    typeof (parsed as { id?: unknown }).id !== "number" ||
+    typeof (parsed as { username?: unknown }).username !== "string"
+  ) {
+    throw new ConfigError(
+      "BOT_INFO var must be a getMe object with a numeric id and a string username",
+    );
+  }
+  return parsed as UserFromGetMe;
+}
+
 export function buildBot(env: Env) {
   const cipher = getOrBuildCipher(env.PII_KEYRING);
   const logger = createSafeLogger();
@@ -49,7 +76,7 @@ export function buildBot(env: Env) {
   const profileRepo = createD1ProfileRepo(env.DB, idGen, clock, cipher);
   const dmSelectionRepo = createD1DmSelectionRepo(env.DB);
 
-  const bot = createBot(env.BOT_TOKEN, JSON.parse(env.BOT_INFO));
+  const bot = createBot(env.BOT_TOKEN, parseBotInfo(env.BOT_INFO));
   const chatAdminChecker = createChatAdminChecker(bot.api);
 
   registerCommands(bot, {

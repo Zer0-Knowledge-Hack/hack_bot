@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FieldUnreadableError } from "../../../src/domain/errors";
 import { createAesGcmCipher } from "../../../src/adapters/crypto/aes-gcm-cipher";
 import { parseKeyRing } from "../../../src/adapters/crypto/key-ring";
+import { ConfigError } from "../../../src/config-error";
 
 // 32 raw bytes, base64-encoded — matches PII_KEYRING's documented format
 // (.dev.vars.example: `{"active":1,"keys":{"1":"<base64 32B key>"}}`).
@@ -196,5 +197,44 @@ describe("parseKeyRing (PII_KEYRING secret parsing, fail-closed)", () => {
 
     expect(keyRing.active).toBe(2);
     expect(keyRing.keys.size).toBe(2);
+  });
+});
+
+// Malformed-input coverage at the PII_KEYRING trust boundary. Every failure
+// MUST be a ConfigError (the only error type whose message the webhook
+// boundary logs, see src/index.ts), and that message MUST NOT echo key
+// material or any other part of the raw secret.
+describe("parseKeyRing — malformed PII_KEYRING input", () => {
+  const LEAK_MARKER = "leak-marker-SECRET";
+
+  it.each([
+    ["a raw base64 key instead of the JSON keyring", KEY_V1],
+    ["whitespace only", "   "],
+    ["JSON null", "null"],
+    ["a JSON array", JSON.stringify([KEY_V1])],
+    ["a JSON number", "42"],
+    ["a JSON string", JSON.stringify(KEY_V1)],
+    ["missing active", JSON.stringify({ keys: { "1": KEY_V1 } })],
+    ["active as a string", JSON.stringify({ active: "1", keys: { "1": KEY_V1 } })],
+    ["keys null", JSON.stringify({ active: 1, keys: null })],
+    ["keys as a string", JSON.stringify({ active: 1, keys: KEY_V1 })],
+    ["a non-integer version key", JSON.stringify({ active: 1, keys: { "1": KEY_V1, [LEAK_MARKER]: KEY_V2 } })],
+    ["a non-string key value", JSON.stringify({ active: 1, keys: { "1": 12345 } })],
+    ["a key that is not 32 bytes", JSON.stringify({ active: 1, keys: { "1": Buffer.alloc(31, 1).toString("base64") } })],
+    ["an active version with no key entry", JSON.stringify({ active: 2, keys: { "1": KEY_V1 } })],
+  ])("throws a ConfigError that does not echo the secret for %s", (_label, raw) => {
+    let thrown: unknown;
+    try {
+      parseKeyRing(raw);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(ConfigError);
+    const message = (thrown as Error).message;
+    expect(message).toMatch(/PII_KEYRING/);
+    expect(message).not.toContain(KEY_V1);
+    expect(message).not.toContain(KEY_V2);
+    expect(message).not.toContain(LEAK_MARKER);
   });
 });

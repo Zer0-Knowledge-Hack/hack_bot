@@ -158,6 +158,45 @@ describe("registerCommands — /setup (team-registration spec)", () => {
     expect(deps.teamRepo.rows).toHaveLength(0);
     expect(replies[0]?.text).toMatch(/admin/i);
   });
+
+  it("tells the caller to run /setup inside the group when run in a private chat (DM)", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 30, userId: 30 }]);
+    const adminCheck = vi.spyOn(deps.chatAdminChecker, "isAdmin");
+    const logSpy = vi.spyOn(deps.logger, "log");
+
+    await bot.handleUpdate(commandUpdate("setup", 30, 30, { chatType: "private" }));
+
+    expect(deps.teamRepo.rows).toHaveLength(0);
+    expect(adminCheck).not.toHaveBeenCalled();
+    expect(replies[0]?.text).toMatch(/inside the group/i);
+    expect(replies[0]?.text).not.toMatch(/Only a Telegram group admin/i);
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "setup-team", outcome: "refused", errorCode: "PrivateChat" }),
+    );
+  });
+
+  it("tells an anonymous group admin to turn off anonymity instead of refusing as a non-admin", async () => {
+    // Telegram delivers an anonymous admin's message with `from` set to
+    // the GroupAnonymousBot and `sender_chat` set to the group itself.
+    const { bot, replies, deps } = makeBot();
+    const adminCheck = vi.spyOn(deps.chatAdminChecker, "isAdmin");
+    const logSpy = vi.spyOn(deps.logger, "log");
+    const base = commandUpdate("setup", -100_40, 1_087_968_824);
+    const update = {
+      ...base,
+      message: { ...base.message, sender_chat: { id: -100_40, type: "supergroup", title: "Test group" } },
+    } as Update;
+
+    await bot.handleUpdate(update);
+
+    expect(deps.teamRepo.rows).toHaveLength(0);
+    expect(adminCheck).not.toHaveBeenCalled();
+    expect(replies[0]?.text).toMatch(/anonymous/i);
+    expect(replies[0]?.text).not.toMatch(/Only a Telegram group admin/i);
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "setup-team", outcome: "refused", errorCode: "AnonymousAdmin" }),
+    );
+  });
 });
 
 describe("registerCommands — /join (team-membership spec)", () => {
@@ -263,6 +302,43 @@ describe("registerCommands — DM team selection (team-membership spec)", () => 
     };
 
     await expect(bot.handleUpdate(callbackUpdate(50, 1, `sel:${teamId}`))).rejects.toMatchObject({ error: failure });
+  });
+
+  it.each([
+    ["empty team id", "sel:"],
+    ["path traversal", "sel:../team"],
+    ["SQL-ish", "sel:1' OR '1'='1"],
+    ["oversized team id", `sel:${"a".repeat(65)}`],
+    ["unknown prefix", "pick:id-1"],
+    ["no prefix", "id-1"],
+    ["embedded newline", "sel:id-1\nsel:id-2"],
+  ])("ignores malformed callback data (%s) without persisting or replying", async (_label, data) => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+
+    await expect(bot.handleUpdate(callbackUpdate(50, 1, data))).resolves.toBeUndefined();
+
+    expect(deps.dmSelectionRepo.rows).toHaveLength(0);
+    expect(replies).toHaveLength(1); // only the /setup reply
+  });
+
+  it("ignores a well-formed selection callback that arrives from a group chat", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    const teamId = deps.teamRepo.rows[0]!.id;
+    const base = callbackUpdate(10, 1, `sel:${teamId}`);
+    const update = {
+      ...base,
+      callback_query: {
+        ...base.callback_query,
+        message: { message_id: 1, date: 0, chat: { id: 10, type: "supergroup", title: "Test group" } },
+      },
+    } as Update;
+
+    await bot.handleUpdate(update);
+
+    expect(deps.dmSelectionRepo.rows).toHaveLength(0);
+    expect(replies).toHaveLength(1);
   });
 });
 
