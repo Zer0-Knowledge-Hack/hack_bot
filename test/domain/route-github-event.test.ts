@@ -132,3 +132,23 @@ describe("routeGithubEvent", () => {
     expect(deps.alertSender.sent).toHaveLength(0);
   });
 });
+
+// REL-001 (PR2 review correction): fakeGithubOrgClaimRepo must normalize
+// case exactly like the D1 adapter (createD1GithubOrgClaimRepo lowercases
+// both findTeamByOrg and isClaimedBy lookups), so a domain test using the
+// fake cannot pass on a case assumption the real adapter would reject.
+describe("fakeGithubOrgClaimRepo (contract parity with the D1 adapter)", () => {
+  it("isClaimedBy matches regardless of the input's case", () => {
+    const claimRepo = fakeGithubOrgClaimRepo();
+    claimRepo.rows.push({ teamId, orgLogin: "case-org" });
+
+    return expect(claimRepo.isClaimedBy(teamId, "Case-Org")).resolves.toBe(true);
+  });
+
+  it("findTeamByOrg matches regardless of the input's case", () => {
+    const claimRepo = fakeGithubOrgClaimRepo();
+    claimRepo.rows.push({ teamId, orgLogin: "case-org-2" });
+
+    return expect(claimRepo.findTeamByOrg("Case-Org-2")).resolves.toBe(teamId);
+  });
+});

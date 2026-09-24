@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { linkRepoToTopic } from "../../src/domain/usecases/link-repo-to-topic";
-import { NotFoundError, OrgNotClaimedError, UnauthorizedError } from "../../src/domain/errors";
+import {
+  NotFoundError,
+  OrgNotClaimedError,
+  TenantMismatchError,
+  UnauthorizedError,
+} from "../../src/domain/errors";
 import { parseRepoFullName } from "../../src/domain/github";
 import { asMemberId, asMembershipId, asTeamId } from "../../src/domain/ids";
 import {
@@ -121,5 +126,31 @@ describe("linkRepoToTopic", () => {
     expect(result).toEqual({ repo, previousThreadId: 10 });
     expect(deps.repoTopicLinkRepo.rows).toHaveLength(1);
     expect(deps.repoTopicLinkRepo.rows[0]?.threadId).toBe(20);
+  });
+});
+
+// RISK-001/REL-002/READ-001 (PR2 review correction): `fakeRepoTopicLinkRepo`
+// must mirror the real D1 adapter's contract — the `teamId` argument is
+// authoritative and a mismatching `link.teamId` is rejected, never silently
+// written under the wrong team. No use case currently constructs a
+// mismatched call (link-repo-to-topic.ts always passes `input.teamId` for
+// both), so this exercises the fake directly to keep the two
+// implementations honest with each other.
+describe("fakeRepoTopicLinkRepo (contract parity with the D1 adapter)", () => {
+  it("upsert rejects (and writes nothing) when the teamId argument disagrees with link.teamId", async () => {
+    const deps = makeDeps();
+    const otherTeamId = asTeamId("team-2");
+
+    await expect(
+      deps.repoTopicLinkRepo.upsert(teamId, {
+        teamId: otherTeamId,
+        repoFullName: repo,
+        orgLogin: "octocat",
+        threadId: 10,
+        createdAt: 0,
+        updatedAt: 0,
+      }),
+    ).rejects.toThrow(TenantMismatchError);
+    expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
   });
 });

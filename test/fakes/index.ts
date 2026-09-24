@@ -1,4 +1,4 @@
-import { AlertSendFailedError } from "../../src/domain/errors";
+import { AlertSendFailedError, TenantMismatchError } from "../../src/domain/errors";
 import type {
   AuditDraft,
   Member,
@@ -217,13 +217,18 @@ export function fakeGithubOrgClaimRepo(
   const rows: Array<{ teamId: TeamId; orgLogin: string }> = [];
   return {
     rows,
+    // Mirrors the D1 adapter (REL-001): claims are stored/keyed lowercase,
+    // so both lookups normalize the input's case exactly like
+    // createD1GithubOrgClaimRepo does.
     findTeamByOrg: async (orgLogin: string) => {
       if (opts.throws) throw new Error("D1 unavailable");
-      return rows.find((r) => r.orgLogin === orgLogin)?.teamId ?? null;
+      const normalized = orgLogin.toLowerCase();
+      return rows.find((r) => r.orgLogin === normalized)?.teamId ?? null;
     },
     isClaimedBy: async (teamId: TeamId, orgLogin: string) => {
       if (opts.throws) throw new Error("D1 unavailable");
-      return rows.some((r) => r.teamId === teamId && r.orgLogin === orgLogin);
+      const normalized = orgLogin.toLowerCase();
+      return rows.some((r) => r.teamId === teamId && r.orgLogin === normalized);
     },
   };
 }
@@ -244,6 +249,14 @@ export function fakeRepoTopicLinkRepo(
       );
     },
     upsert: async (teamId: TeamId, link: RepoTopicLink) => {
+      // Mirrors the D1 adapter (RISK-001/REL-002/READ-001): the `teamId`
+      // argument is authoritative, a mismatching `link.teamId` is rejected
+      // rather than silently written under the wrong team.
+      if (teamId !== link.teamId) {
+        throw new TenantMismatchError(
+          `RepoTopicLinkRepo.upsert: teamId argument ("${teamId}") does not match link.teamId ("${link.teamId}")`,
+        );
+      }
       const idx = rows.findIndex(
         (l) => l.teamId === teamId && l.repoFullName === link.repoFullName,
       );
