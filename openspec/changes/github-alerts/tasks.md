@@ -28,6 +28,8 @@ Chain strategy: stacked-to-main
 
 **PR1 actual size (measured `git diff --stat`, intent-to-add, after apply): 871 authored lines (16 files, 0 deletions) — exceeds the 400-line budget and the ~350 estimate above.** Implementation-only lines (migration, `entities.ts`/`errors.ts`/`ports.ts` additions, `github.ts`, 4 use cases, `migrations.test.ts` table-list fix) total ~356, under budget; the overrun comes entirely from the Strict-TDD RED test files (`test/domain/{github,link-repo-to-topic,unlink-repo,list-repo-links,route-github-event}.test.ts`, 451 lines) plus the three new port fakes in `test/fakes/index.ts` (64 lines). All code is written and every test is green (see apply-progress.md). Flagged for the orchestrator/maintainer to decide before this is committed as PR1: accept as `size:exception`, or split into two chained slices (1a: migration + entities/errors/ports + `github.ts` + `link-repo-to-topic`/`unlink-repo`/`list-repo-links` + their tests + fakes; 1b: `route-github-event.ts` + its test). No commit was made.
 
+**PR2 actual size (measured `wc -l`/`git diff --stat`, after apply): production code (`src/adapters/d1/{github-org-claim-repo,repo-topic-link-repo}.ts`) is 112 lines, well under the 400-line budget and the ~250 estimate. Test code (new `test/adapters/d1/{github-org-claim-repo,repo-topic-link-repo}.test.ts` plus 145 added lines in `test/adapters/migrations.test.ts`) totals 466 lines — the size:exception the user pre-accepted for test overrun. No commit was made.
+
 ## Phase 1: Domain Foundation (PR1)
 
 - [x] 1.1 RED: `github.ts` — `parseRepoFullName` (lowercase, `owner/repo` shape), `formatGithubAlert` truncation at 4096 (spec: Message Truncated).
@@ -42,8 +44,8 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: D1 Adapters (PR2)
 
-- [ ] 2.1 RED: migration test — table/FK/UNIQUE/CHECK enforcement, cross-team isolation on links.
-- [ ] 2.2 GREEN: `src/adapters/d1/github-org-claim-repo.ts`, `repo-topic-link-repo.ts` (upsert `ON CONFLICT DO UPDATE thread_id`).
+- [x] 2.1 RED: migration test — table/FK/UNIQUE/CHECK enforcement, cross-team isolation on links.
+- [x] 2.2 GREEN: `src/adapters/d1/github-org-claim-repo.ts`, `repo-topic-link-repo.ts` (upsert `ON CONFLICT DO UPDATE thread_id`).
 
 ## Phase 3: Signature and Route Skeleton (PR3)
 
@@ -71,4 +73,4 @@ Chain strategy: stacked-to-main
 
 - [ ] 6.1 (after PR3 merges) `npx wrangler secret put GITHUB_WEBHOOK_SECRET`.
 - [ ] 6.2 (after PR4 merges) Configure org webhook: content type `application/json`, same secret, Pull requests + Issues events; verify ping returns 200.
-- [ ] 6.3 (after PR1 merges, before PR5's `/linkrepo` is used) Claim the org via `wrangler d1 execute` insert into `github_org_claims`.
+- [x] 6.3 (after PR1 merges, before PR5's `/linkrepo` is used) Claim the org via `wrangler d1 execute` insert into `github_org_claims`.
