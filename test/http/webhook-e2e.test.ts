@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import app from "../../src/index";
 import type { Env } from "../../src/index";
+import { stubTelegramApi } from "../support/telegram-stub";
 
 // REL-001: the assembled route was never proven end-to-end — this file
 // drives real updates through the actual Hono route + `buildBot` (real
@@ -13,38 +14,17 @@ import type { Env } from "../../src/index";
 
 const WEBHOOK_SECRET = (env as unknown as { WEBHOOK_SECRET: string }).WEBHOOK_SECRET;
 
-// Seam note: grammY's `Bot`/`ApiClient` resolves the bare `fetch` identifier
-// at construction time (see node_modules/grammy/out/web.mjs — `const
-// fetchFn = customFetch ?? fetch;`), and `composition.ts` builds a fresh
-// `Bot` per request. Since @cloudflare/vitest-pool-workers runs the `main`
-// worker in the SAME isolate as the test file (its own module doc:
-// "this `main` worker runs in the same isolate/context as tests, so any
-// global mocks will apply to it too"), stubbing `globalThis.fetch` before
-// the request is enough to intercept grammY's outbound calls — no
-// production seam was needed in `buildBot`/`composition.ts`.
-type TelegramCall = { method: string; body: unknown };
-
-function stubTelegramApi(handler?: (method: string, body: unknown) => unknown) {
-  const calls: TelegramCall[] = [];
-  vi.stubGlobal(
-    "fetch",
-    async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input.toString();
-      const method = url.split("/").pop() ?? "";
-      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      calls.push({ method, body });
-      const result =
-        handler?.(method, body) ??
-        (method === "getChatMember"
-          ? { status: "administrator", user: { id: 1, is_bot: false, first_name: "Admin" } }
-          : { message_id: calls.length, date: 0, chat: { id: 1, type: "supergroup" } });
-      return new Response(JSON.stringify({ ok: true, result }), {
-        headers: { "content-type": "application/json" },
-      });
-    },
-  );
-  return calls;
-}
+// Seam note (READ-002: the stub itself is now shared — see
+// test/support/telegram-stub.ts): grammY's `Bot`/`ApiClient` resolves the
+// bare `fetch` identifier at construction time (see
+// node_modules/grammy/out/web.mjs — `const fetchFn = customFetch ??
+// fetch;`), and `composition.ts` builds a fresh `Bot` per request. Since
+// @cloudflare/vitest-pool-workers runs the `main` worker in the SAME
+// isolate as the test file (its own module doc: "this `main` worker runs
+// in the same isolate/context as tests, so any global mocks will apply to
+// it too"), stubbing `globalThis.fetch` before the request is enough to
+// intercept grammY's outbound calls — no production seam was needed in
+// `buildBot`/`composition.ts`.
 
 let nextUpdateId = 1000;
 function commandUpdate(command: string, chatId: number, userId: number) {
