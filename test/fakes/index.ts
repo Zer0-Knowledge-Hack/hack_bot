@@ -1,4 +1,5 @@
 import { AlertSendFailedError, TenantMismatchError } from "../../src/domain/errors";
+import type { AlertSendFailureClass } from "../../src/domain/errors";
 import type {
   AuditDraft,
   Member,
@@ -276,7 +277,7 @@ export function fakeRepoTopicLinkRepo(
 }
 
 export function fakeAlertSender(
-  opts: { throws?: boolean } = {},
+  opts: { throws?: boolean; failureClass?: AlertSendFailureClass } = {},
 ): AlertSender & {
   sent: Array<{ chatId: number; threadId: number; text: string }>;
 } {
@@ -284,7 +285,9 @@ export function fakeAlertSender(
   return {
     sent,
     send: async (chatId: number, threadId: number, text: string) => {
-      if (opts.throws) throw new AlertSendFailedError("sendMessage failed");
+      if (opts.throws) {
+        throw new AlertSendFailedError("sendMessage failed", opts.failureClass ?? "rejected");
+      }
       sent.push({ chatId, threadId, text });
     },
   };

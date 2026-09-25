@@ -89,11 +89,17 @@ describe("routeGithubEvent", () => {
       updatedAt: 0,
     });
     deps.teamRepo.rows.push({ id: teamId, chatId: 999, dataTopicThreadId: null, createdAt: 0 });
-    const failingDeps = { ...deps, alertSender: fakeAlertSender({ throws: true }) };
+    const failingDeps = {
+      ...deps,
+      alertSender: fakeAlertSender({ throws: true, failureClass: "rate-limited" }),
+    };
 
     const result = await routeGithubEvent(makeEvent(), failingDeps);
 
-    expect(result).toEqual({ kind: "send-failed", teamId });
+    // PR4 correction (RES-001): the AlertSendFailedError's failureClass is
+    // carried through the result so the HTTP adapter can log a
+    // distinguishable, non-sensitive reason.
+    expect(result).toEqual({ kind: "send-failed", teamId, failureClass: "rate-limited" });
   });
 
   it("propagates (rejects) an unexpected error from the org claim lookup, instead of an ignored outcome (RES-001)", async () => {

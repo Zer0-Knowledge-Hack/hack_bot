@@ -7,9 +7,13 @@ import { signHex } from "../support/github-hmac";
 // github-webhook spec: HMAC gate, ping/malformed/unsupported status policy,
 // and the production-safety requirement that a missing/empty
 // GITHUB_WEBHOOK_SECRET fails every request closed (500), never open.
-// Event mapping/routing/Telegram delivery are out of scope for this PR
-// (Phase 4) — every signature-verified, well-formed, non-ping event is
-// acknowledged with 200 as an "unsupported for now" placeholder.
+// READ-001 (PR4 correction): mapping and routing ARE wired (event-mapper.ts
+// + routeGithubEvent, since PR4) — this file's non-ping fixtures are
+// deliberately incomplete (missing number/sender/pull_request fields), so
+// they exercise the real mapper's "cannot build a GithubEvent" branch and
+// get the same 200/logged outcome any other unsupported event/action does.
+// End-to-end delivery through a complete, routable payload is covered by
+// test/http/github-webhook-delivery-e2e.test.ts.
 
 const GITHUB_WEBHOOK_SECRET = (env as unknown as { GITHUB_WEBHOOK_SECRET: string })
   .GITHUB_WEBHOOK_SECRET;
@@ -89,7 +93,7 @@ describe("POST /github/webhook — status policy", () => {
     expect(res.status).toBe(200);
   });
 
-  it("returns 200 for a signature-verified event outside the (not yet wired) supported set", async () => {
+  it("returns 200 for a signature-verified event the mapper cannot build a GithubEvent from (incomplete fixture)", async () => {
     const res = await signedPost(
       JSON.stringify({ action: "opened", repository: { full_name: "o/r" } }),
       "pull_request",
@@ -97,12 +101,15 @@ describe("POST /github/webhook — status policy", () => {
     expect(res.status).toBe(200);
   });
 
-  it("logs the not-yet-routed event through the safe logger (RES-002, design.md:27 'unsupported event: 200, logged')", async () => {
+  it("logs the unsupported/unmapped event through the safe logger (RES-002, design.md:27 'unsupported event: 200, logged')", async () => {
     const logs: string[] = [];
     const consoleSpy = vi.spyOn(console, "log").mockImplementation((msg) => {
       logs.push(String(msg));
     });
 
+    // Missing number/sender/pull_request fields — the mapper (PR4) cannot
+    // build a GithubEvent from this, so it is treated the same as any
+    // other unsupported event/action combination.
     const res = await signedPost(
       JSON.stringify({ action: "opened", repository: { full_name: "o/r" } }),
       "pull_request",
@@ -113,7 +120,7 @@ describe("POST /github/webhook — status policy", () => {
     expect(entry).toEqual({
       event: "github-webhook",
       outcome: "ok",
-      reason: "ignored:not-yet-routed",
+      reason: "ignored:unsupported-event",
     });
 
     consoleSpy.mockRestore();

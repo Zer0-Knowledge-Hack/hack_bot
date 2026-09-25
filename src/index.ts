@@ -1,10 +1,12 @@
 import { Hono } from "hono";
 import type { Update } from "grammy/types";
 import { createSafeLogger } from "./adapters/log/safe-logger";
+import { mapGithubEvent } from "./adapters/github/event-mapper";
 import { verifyGithubSignature } from "./adapters/github/signature";
 import { timingSafeCompare } from "./adapters/crypto/timing-safe-compare";
-import { buildBot } from "./composition";
+import { buildBot, buildGithubRouter } from "./composition";
 import { ConfigError } from "./config-error";
+import { routeGithubEvent } from "./domain/usecases/route-github-event";
 import type { Env } from "./env";
 
 export type { Env } from "./env";
@@ -86,11 +88,10 @@ app.post("/telegram/webhook", async (c) => {
   return c.text("ok");
 });
 
-// design.md "GitHub route status policy" — route skeleton only (PR3). The
-// mapper, org/repo routing and Telegram delivery land in Phase 4; until
-// then every signature-verified, well-formed, non-ping event is
-// acknowledged and dropped (the same 2xx the design table gives an
-// unsupported event/action, since nothing is wired to support one yet).
+// design.md "GitHub route status policy": HMAC-verify the raw body, map
+// the payload to an allowlisted domain event (or drop it as unsupported),
+// then route it to the linked team's forum topic through the composition
+// root (buildGithubRouter). No payload field is ever logged.
 app.post("/github/webhook", async (c) => {
   // RES-001, corrected: an unreadable raw body is a transient, transport-
   // level failure (e.g. a broken/aborted request stream) on a request that
@@ -146,15 +147,59 @@ app.post("/github/webhook", async (c) => {
     return c.text("ok", 200);
   }
 
-  if (c.req.header("X-GitHub-Event") === "ping") {
+  const githubEventType = c.req.header("X-GitHub-Event") ?? "";
+  if (githubEventType === "ping") {
     return c.text("ok", 200);
   }
 
-  // Placeholder until Phase 4 wires the mapper/router: acknowledge, drop,
-  // and log (RES-002 / design.md:27 "unsupported event or action: 200,
-  // logged"). `reason` is a fixed, non-sensitive string per the logging
-  // allowlist — never the event type, action, or any payload field.
-  logger.log({ event: "github-webhook", outcome: "ok", reason: "ignored:not-yet-routed" });
+  // The mapper (adapters/github/event-mapper.ts) is the only place that
+  // reads the raw payload shape (design.md "Event filtering"). `null`
+  // covers every unsupported event type or action (spec: "Unsupported
+  // Event or Action Ignored") — 200, logged, no payload field in `reason`.
+  const event = mapGithubEvent(githubEventType, payload);
+  if (!event) {
+    logger.log({ event: "github-webhook", outcome: "ok", reason: "ignored:unsupported-event" });
+    return c.text("ok", 200);
+  }
+
+  let result: Awaited<ReturnType<typeof routeGithubEvent>>;
+  try {
+    result = await routeGithubEvent(event, buildGithubRouter(c.env));
+  } catch (err) {
+    // Unexpected failure (e.g. D1) — design.md "GitHub route status
+    // policy": 500, logged by error name only, so the delivery stays
+    // visible in GitHub for a manual redeliver.
+    logger.log({
+      event: "github-webhook",
+      outcome: "error",
+      errorCode: err instanceof Error ? err.name : "UnknownError",
+    });
+    return c.text("Internal Server Error", 500);
+  }
+
+  if (result.kind === "ignored") {
+    // `reason` is one of a fixed, non-sensitive set ("unclaimed-org",
+    // "unlinked-repo") — never a repo name or any payload field.
+    logger.log({ event: "github-webhook", outcome: "ok", reason: `ignored:${result.reason}` });
+    return c.text("ok", 200);
+  }
+  if (result.kind === "send-failed") {
+    // Telegram delivery failure (e.g. the topic was deleted, a rate limit,
+    // or Telegram being unavailable) is a permanent-for-this-request
+    // failure, not an infrastructure one — 2xx, no retry (design.md
+    // "GitHub route status policy", spec: "Delivery Failure Is Logged and
+    // Acknowledged"). `reason` is AlertSendFailedError's fixed,
+    // non-sensitive classification (PR4 correction RES-001) — never
+    // Telegram's error description, the chat id, or the token.
+    logger.log({
+      event: "github-webhook",
+      outcome: "error",
+      errorCode: "AlertSendFailed",
+      reason: result.failureClass,
+    });
+    return c.text("ok", 200);
+  }
+
   return c.text("ok", 200);
 });
 

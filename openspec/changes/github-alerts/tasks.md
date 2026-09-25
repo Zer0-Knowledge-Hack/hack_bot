@@ -56,12 +56,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Delivery Wiring (PR4)
 
-- [ ] 4.1 RED: mapper allowlist test — commit email fixture never appears in mapped `GithubEvent`; `merged` derived from `closed`+`pull_request.merged`; `reviewer` from login/team slug.
-- [ ] 4.2 GREEN: `src/adapters/github/event-mapper.ts`.
-- [ ] 4.3 RED: `AlertSender` test — `sendMessage` carries `message_thread_id`; send failure surfaces as `AlertSendFailedError`, not thrown to caller.
-- [ ] 4.4 GREEN: `src/adapters/telegram/alert-sender.ts` (`new Api(BOT_TOKEN)`, no `Bot`/`PII_KEYRING`).
-- [ ] 4.5 GREEN: `composition.ts` `buildGithubRouter(env)` wiring deps end to end.
-- [ ] 4.6 RED: e2e — linked repo alert delivered; unlinked/unclaimed silent; send failure logs reason-only and returns 2xx; log output has no payload fixture strings (spec: Delivery Failure, Allowlisted Fields).
+- [x] 4.1 RED: mapper allowlist test — commit email fixture never appears in mapped `GithubEvent`; `merged` derived from `closed`+`pull_request.merged`; `reviewer` from login/team slug.
+- [x] 4.2 GREEN: `src/adapters/github/event-mapper.ts`.
+- [x] 4.3 RED: `AlertSender` test — `sendMessage` carries `message_thread_id`; send failure surfaces as `AlertSendFailedError`, not thrown to caller.
+- [x] 4.4 GREEN: `src/adapters/telegram/alert-sender.ts` (`new Api(BOT_TOKEN)`, no `Bot`/`PII_KEYRING`).
+- [x] 4.5 GREEN: `composition.ts` `buildGithubRouter(env)` wiring deps end to end.
+- [x] 4.6 RED: e2e — linked repo alert delivered; unlinked/unclaimed silent; send failure logs reason-only and returns 2xx; log output has no payload fixture strings (spec: Delivery Failure, Allowlisted Fields).
 
 ## Phase 5: Link Commands (PR5)
 
