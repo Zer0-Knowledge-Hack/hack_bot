@@ -65,9 +65,11 @@ Chain strategy: stacked-to-main
 
 ## Phase 5: Link Commands (PR5)
 
-- [ ] 5.1 RED: `/linkrepo`/`/unlinkrepo` — admin-only, must be inside a topic (refuse in general chat with instruction), re-link reply names both topics (spec: Admin-Only Link/Unlink, One Topic Per Repo).
-- [ ] 5.2 RED: `/repos` — any registered member anywhere in the group, read-only, non-member refused, excludes unclaimed-org links.
-- [ ] 5.3 GREEN: wire all three commands in `src/adapters/telegram/commands.ts`.
+- [x] 5.1 RED: `/linkrepo`/`/unlinkrepo` — admin-only, must be inside a topic (refuse in general chat with instruction), re-link reply names both topics (spec: Admin-Only Link/Unlink, One Topic Per Repo).
+- [x] 5.2 RED: `/repos` — any registered member anywhere in the group, read-only, non-member refused, excludes unclaimed-org links.
+- [x] 5.3 GREEN: wire all three commands in `src/adapters/telegram/commands.ts`.
+
+**PR5 actual size (measured `git diff --stat`, after apply): production code (`src/adapters/telegram/commands.ts` + `src/composition.ts`) is 114 lines, test code (`test/adapters/telegram/commands.test.ts`) is 151 lines — both well under the 400-line budget and the ~250 estimate. No commit was made.
 
 ## Phase 6: Operator Rollout
 
