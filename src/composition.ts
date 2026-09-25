@@ -1,16 +1,21 @@
+import { Api } from "grammy";
 import { createAesGcmCipher } from "./adapters/crypto/aes-gcm-cipher";
 import { parseKeyRing } from "./adapters/crypto/key-ring";
 import { createD1DmSelectionRepo } from "./adapters/d1/dm-selection-repo";
+import { createD1GithubOrgClaimRepo } from "./adapters/d1/github-org-claim-repo";
 import { createD1MemberRepo } from "./adapters/d1/member-repo";
 import { createD1MembershipRepo } from "./adapters/d1/membership-repo";
 import { createD1ProfileRepo } from "./adapters/d1/profile-repo";
+import { createD1RepoTopicLinkRepo } from "./adapters/d1/repo-topic-link-repo";
 import { createD1TeamRepo } from "./adapters/d1/team-repo";
 import { createSafeLogger } from "./adapters/log/safe-logger";
+import { createTelegramAlertSender } from "./adapters/telegram/alert-sender";
 import { createBot } from "./adapters/telegram/bot";
 import { createChatAdminChecker } from "./adapters/telegram/chat-admin-checker";
 import { registerCommands } from "./adapters/telegram/commands";
 import { ConfigError } from "./config-error";
 import type { FieldCipher } from "./domain/ports";
+import type { RouteGithubEventDeps } from "./domain/usecases/route-github-event";
 import type { UserFromGetMe } from "grammy/types";
 import type { Env } from "./env";
 
@@ -92,4 +97,18 @@ export function buildBot(env: Env) {
   });
 
   return bot;
+}
+
+// design.md "Sender": `new Api(BOT_TOKEN)` here, no `Bot` and no
+// `PII_KEYRING` on this route — a broken keyring would otherwise break
+// GitHub alerts too, and this composition path never touches PII fields.
+export function buildGithubRouter(env: Env): RouteGithubEventDeps {
+  const api = new Api(env.BOT_TOKEN);
+
+  return {
+    githubOrgClaimRepo: createD1GithubOrgClaimRepo(env.DB),
+    repoTopicLinkRepo: createD1RepoTopicLinkRepo(env.DB),
+    teamRepo: createD1TeamRepo(env.DB, idGen, clock),
+    alertSender: createTelegramAlertSender(api),
+  };
 }

@@ -1,4 +1,5 @@
 import { AlertSendFailedError, NotFoundError } from "../errors";
+import type { AlertSendFailureClass } from "../errors";
 import { formatGithubAlert } from "../github";
 import type { GithubEvent } from "../github";
 import type { TeamId } from "../ids";
@@ -18,7 +19,10 @@ export interface RouteGithubEventDeps {
 
 export type RouteGithubEventResult =
   | { kind: "delivered"; teamId: TeamId }
-  | { kind: "send-failed"; teamId: TeamId }
+  // PR4 correction (RES-001): failureClass is AlertSendFailedError's fixed,
+  // non-sensitive classification — carried through so the HTTP adapter can
+  // log a distinguishable reason without ever seeing Telegram's raw error.
+  | { kind: "send-failed"; teamId: TeamId; failureClass: AlertSendFailureClass }
   | { kind: "ignored"; reason: "unclaimed-org" | "unlinked-repo" };
 
 // design.md "GitHub route status policy": unclaimed org or unlinked repo
@@ -54,7 +58,7 @@ export async function routeGithubEvent(
     await deps.alertSender.send(team.chatId, link.threadId, text);
   } catch (err) {
     if (err instanceof AlertSendFailedError) {
-      return { kind: "send-failed", teamId };
+      return { kind: "send-failed", teamId, failureClass: err.failureClass };
     }
     throw err;
   }
