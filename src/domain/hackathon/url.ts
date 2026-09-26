@@ -44,7 +44,10 @@ export function assertSafeUrl(raw: string): SafeUrlResult {
     return { ok: false, reason: "port" };
   }
 
-  const hostname = url.hostname.toLowerCase();
+  // A trailing root dot (e.g. "localhost.", "foo.localhost.") is a valid DNS
+  // representation of the same name and must not bypass any host check
+  // below (RISK-002).
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
   if (hostname === "localhost" || isUnsafeIpLiteral(hostname)) {
     return { ok: false, reason: "ip-literal" };
   }
@@ -68,6 +71,7 @@ function isUnsafeIpv4(hostname: string): boolean {
   const octets = match.slice(1, 5).map(Number);
   if (octets.some((n) => n > 255)) return false;
   const [a = 0, b = 0] = octets;
+  if (a === 0) return true; // 0.0.0.0/8, "this network" / unspecified address
   if (a === 127) return true; // loopback
   if (a === 10) return true; // RFC1918
   if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918

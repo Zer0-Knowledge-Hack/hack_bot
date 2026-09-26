@@ -69,6 +69,32 @@ describe("assertSafeUrl", () => {
       reason: "private-suffix",
     });
   });
+
+  it("refuses the literal hostname localhost with a trailing root dot (RISK-002)", () => {
+    expect(assertSafeUrl("http://localhost./event")).toEqual({
+      ok: false,
+      reason: "ip-literal",
+    });
+  });
+
+  it("refuses a private-suffix host with a trailing root dot (RISK-002)", () => {
+    expect(assertSafeUrl("http://service.internal./event")).toEqual({
+      ok: false,
+      reason: "private-suffix",
+    });
+  });
+
+  it("still accepts a public host with a trailing root dot (RISK-002)", () => {
+    const result = assertSafeUrl("http://example.com./event");
+    expect(result.ok).toBe(true);
+  });
+
+  it("refuses the 0.0.0.0 unspecified address (RISK-003)", () => {
+    expect(assertSafeUrl("http://0.0.0.0/")).toEqual({
+      ok: false,
+      reason: "ip-literal",
+    });
+  });
 });
 
 describe("normalizeUrlKey", () => {
