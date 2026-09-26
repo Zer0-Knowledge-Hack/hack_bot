@@ -44,10 +44,11 @@ export function assertSafeUrl(raw: string): SafeUrlResult {
     return { ok: false, reason: "port" };
   }
 
-  // A trailing root dot (e.g. "localhost.", "foo.localhost.") is a valid DNS
-  // representation of the same name and must not bypass any host check
-  // below (RISK-002).
-  const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+  // Trailing dots (e.g. "localhost.", "foo.internal..") must not bypass any
+  // host check below (RISK-002). The URL parser keeps every one of them, so
+  // strip them all; a host made only of dots becomes empty and is refused as
+  // single-label.
+  const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
   if (hostname === "localhost" || isUnsafeIpLiteral(hostname)) {
     return { ok: false, reason: "ip-literal" };
   }

@@ -84,6 +84,24 @@ describe("assertSafeUrl", () => {
     });
   });
 
+  it("refuses hosts with several trailing dots (RISK-002)", () => {
+    expect(assertSafeUrl("http://localhost../event")).toEqual({
+      ok: false,
+      reason: "ip-literal",
+    });
+    expect(assertSafeUrl("http://service.internal.../event")).toEqual({
+      ok: false,
+      reason: "private-suffix",
+    });
+  });
+
+  it("refuses a host made only of dots (RISK-002)", () => {
+    expect(assertSafeUrl("http://../event")).toEqual({
+      ok: false,
+      reason: "single-label-host",
+    });
+  });
+
   it("still accepts a public host with a trailing root dot (RISK-002)", () => {
     const result = assertSafeUrl("http://example.com./event");
     expect(result.ok).toBe(true);
