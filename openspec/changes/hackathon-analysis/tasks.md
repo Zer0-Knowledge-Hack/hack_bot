@@ -40,8 +40,8 @@ Chain strategy: stacked-to-main
 - [x] 1.4 GREEN: `src/domain/hackathon/url.ts` guard + normalize.
 - [x] 1.5 RED: `test/domain/hackathon/slug.test.ts` — name/host derivation, NFKD, 40-char cap, collision suffixes (spec hackathon-analysis: Slug Generation and Uniqueness, both scenarios).
 - [x] 1.6 GREEN: `src/domain/hackathon/slug.ts`.
-- [ ] 1.7 RED: `test/domain/hackathon/extraction.test.ts` — `validateExtraction`: schema pass/reject, null-over-guess, snippet ≤160 verbatim (spec llm-extraction: Strict Schema Output, Null Over Guess, Bounded Source Snippet).
-- [ ] 1.8 GREEN: `src/domain/hackathon/extraction.ts`.
+- [x] 1.7 RED: `test/domain/hackathon/extraction.test.ts` — `validateExtraction`: schema pass/reject, null-over-guess, snippet ≤160 verbatim (spec llm-extraction: Strict Schema Output, Null Over Guess, Bounded Source Snippet).
+- [x] 1.8 GREEN: `src/domain/hackathon/extraction.ts`.
 - [ ] 1.9 RED/GREEN: `src/domain/hackathon/suggest.ts` — deterministic token-overlap top-3 repo suggestion, with test.
 - [ ] 1.10 RED/GREEN: `src/domain/hackathon/format.ts` — analysis and `/hackathons` list formatting, with test.
 - [ ] 1.11 RED/GREEN: `src/domain/text-limit.ts` — `joinLinesWithinLimit` (spec hackathon-analysis: Listing Is Read-Only and Truncated, Plain Text Replies), with test.
