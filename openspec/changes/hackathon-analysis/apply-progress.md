@@ -102,3 +102,30 @@ None.
 ## Status
 
 11/11 Phase 1 tasks complete. Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 2) once PR1 is reviewed/merged per the stacked-to-main chain strategy.
+
+## PR1 correction (frozen ledger fixes, reviewed at HEAD 233852f)
+
+One correction transaction applied against the ledger findings corroborated for `feat/hackathon-domain`. Strict TDD followed for each fix: RED (new/rewritten test, confirmed failing) → GREEN (implementation) → full-suite/typecheck confirmation.
+
+| Finding | RED evidence | GREEN evidence |
+|---|---|---|
+| **RISK-002** — trailing root dot (`localhost.`, `foo.localhost.`, `metadata.google.internal.`) bypassed `assertSafeUrl` | Added 4 tests to `test/domain/hackathon/url.test.ts` (`localhost.` refused, private-suffix-with-dot refused, public-host-with-dot still accepted, plus the RISK-003 case below). `npx vitest run test/domain/hackathon/url.test.ts test/domain/hackathon/extraction.test.ts` → 3 of the 4 new URL cases failed (`ok: true` returned instead of the expected refusal) before the fix | Stripped one trailing `.` from `hostname` in `assertSafeUrl` before the localhost/IP-literal, single-label, and private-suffix checks. Re-ran the same command → all 27 tests in both files passed |
+| **RISK-003** — `0.0.0.0` allowed through `isUnsafeIpv4` | Added `refuses the 0.0.0.0 unspecified address` test | Added `if (a === 0) return true;` (refuse the whole `0.0.0.0/8` block) ahead of the existing loopback/RFC1918 checks in `isUnsafeIpv4`. Confirmed green in the same run above |
+| **RELI-001 / RESI-001** — `validateExtraction` did not check `candidate.value` against each field's declared type (string teamSize, numeric name, `undefined` value all passed as `ok: true`) | Added 3 tests to `test/domain/hackathon/extraction.test.ts` (string `teamSize`, numeric `name`, `undefined` value) — all 3 failed pre-fix (returned `ok: true` with the bad value stored instead of `invalid-shape`) | Added `hasValidFieldType(name, value)` — `teamSize` must be a finite `number`; every other field must be a `string` — and folded it into the existing shape guard so any field failing type-check rejects the **whole response** as `invalid-shape`, consistent with the file's existing "invalid shape rejects the whole response" semantics (kept, did not switch to per-field null) |
+| **RELI-002** — the "snippet exceeds limit" test used a 197-char snippet that was also not verbatim on the page, so it passed for the wrong reason; title said 160 instead of 200 | Rewrote the test with a snippet that IS verbatim in `pageText` and is exactly 201 chars (asserted `toHaveLength(201)` and `pageText.includes(over)` before the behavioral assertion), renamed to "exceeds 200 characters"; added a new boundary test asserting an exactly-200-char verbatim snippet is kept, not nulled | Both tests passed immediately against the existing `sanitizeField` (`field.snippet.length > SNIPPET_MAX` with `SNIPPET_MAX = 200`) — no production change was needed for RELI-002, only the test rewrite, confirming the length guard was already correct and the old test was a false positive |
+
+### Full-suite and typecheck evidence (after all 3 correction commits)
+- `npx vitest run` → 45 files, **400/400 tests passed** (0 failed)
+- `npm run typecheck` → clean, no errors
+
+### Diff scope (`git diff --stat 233852f`)
+```
+src/domain/hackathon/extraction.ts       |  14 ++++-
+src/domain/hackathon/url.ts              |   6 +-
+test/domain/hackathon/extraction.test.ts | 104 +++++++++++++++++++++++++++++--
+test/domain/hackathon/url.test.ts        |  26 ++++++++
+4 files changed, 143 insertions(+), 7 deletions(-)
+```
+
+### Deviations
+None. RELI-001/RESI-001 kept the file's existing "invalid shape rejects the whole response" semantics rather than introducing a new per-field null path, per the instruction to follow the file's existing design unless it clearly says otherwise.
