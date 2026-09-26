@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { analyzeHackathon } from "../../../src/domain/usecases/analyze-hackathon";
-import { BrowserQuotaExceededError, PageTooThinError } from "../../../src/domain/errors";
+import {
+  BrowserQuotaExceededError,
+  ExtractionFailedError,
+  PageTooThinError,
+} from "../../../src/domain/errors";
 import { asTeamId } from "../../../src/domain/ids";
 import {
   fakeClock,
@@ -145,6 +149,78 @@ describe("analyzeHackathon: primary-then-fallback LLM call", () => {
     expect(tracked.calls).toHaveLength(2);
     expect(tracked.calls[1]?.modelId).toBe("@cf/fallback");
     expect(result.fields.name?.value).toBe("Meridian");
+  });
+
+  const FIELD_ORDER = [
+    "name",
+    "format",
+    "location",
+    "teamSize",
+    "submissionDeadline",
+    "startDate",
+    "endDate",
+    "resultsDate",
+    "prizes",
+    "tracks",
+    "eligibility",
+  ] as const;
+
+  // Builds a raw response where the first `n` fields are syntactically
+  // valid but content-invalid (empty snippet -> nulled by sanitizeField,
+  // RELI-001's "rejectedCount"), and the rest are fields the model itself
+  // returned as null (not a rejection).
+  function rawWithRejectedCount(n: number) {
+    const raw: Record<string, unknown> = {};
+    for (const [i, field] of FIELD_ORDER.entries()) {
+      raw[field] =
+        i < n
+          ? { value: field === "teamSize" ? 1 : "x", snippet: "", confidence: 0.5 }
+          : null;
+    }
+    return raw;
+  }
+
+  it("majority rejected (>half of 11 fields nulled by content validation) triggers the fallback (RELI-001)", async () => {
+    const deps = makeDeps();
+    const tracked = fakeLlmExtractor([
+      { raw: rawWithRejectedCount(6) },
+      { raw: validRaw("xxxxx") },
+    ]);
+    deps.llmExtractor = tracked;
+
+    const result = await analyzeHackathon(makeInput(), deps);
+
+    expect(tracked.calls).toHaveLength(2);
+    expect(tracked.calls[1]?.modelId).toBe("@cf/fallback");
+    expect(result.fields.name?.value).toBe("Meridian");
+  });
+
+  it("raises ExtractionFailedError(invalid-output) when both primary and fallback are majority-rejected, with exactly 2 calls (RELI-001)", async () => {
+    const deps = makeDeps();
+    const tracked = fakeLlmExtractor([
+      { raw: rawWithRejectedCount(6) },
+      { raw: rawWithRejectedCount(7) },
+    ]);
+    deps.llmExtractor = tracked;
+
+    const thrown: unknown = await analyzeHackathon(makeInput(), deps).catch(
+      (e: unknown) => e,
+    );
+
+    expect(tracked.calls).toHaveLength(2);
+    expect(thrown).toBeInstanceOf(ExtractionFailedError);
+    expect((thrown as ExtractionFailedError).kind).toBe("invalid-output");
+  });
+
+  it("a minority rejected (<=half of 11 fields) does not trigger the fallback (RELI-001)", async () => {
+    const deps = makeDeps();
+    const tracked = fakeLlmExtractor([{ raw: rawWithRejectedCount(2) }]);
+    deps.llmExtractor = tracked;
+
+    await analyzeHackathon(makeInput(), deps);
+
+    expect(tracked.calls).toHaveLength(1);
+    expect(tracked.calls[0]?.modelId).toBe("@cf/primary");
   });
 });
 

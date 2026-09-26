@@ -27,6 +27,7 @@ describe("validateExtraction", () => {
     );
     expect(result).toEqual({
       ok: true,
+      rejectedCount: 0,
       fields: {
         name: { value: "Meridian 2026", snippet: "Meridian 2026", confidence: 0.9 },
         format: null,
@@ -41,6 +42,33 @@ describe("validateExtraction", () => {
         eligibility: null,
       },
     });
+  });
+
+  it("reports rejectedCount for fields nulled by content validation, distinct from fields the model itself returned as null (RELI-001)", () => {
+    // name: nulled by content validation (empty snippet). prizes: nulled by
+    // content validation (snippet not verbatim). teamSize: the model
+    // returned null itself — not a rejection. Expected rejectedCount: 2.
+    const result = validateExtraction(
+      {
+        name: { value: "Meridian 2026", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: { value: "prize pool", snippet: "not on the page", confidence: 0.9 },
+        tracks: null,
+        eligibility: null,
+      },
+      pageText,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.rejectedCount).toBe(2);
+    expect(result.ok && result.fields.name).toBeNull();
+    expect(result.ok && result.fields.prizes).toBeNull();
+    expect(result.ok && result.fields.teamSize).toBeNull();
   });
 
   it("rejects a response missing required shape (spec llm-extraction: Malformed response is rejected)", () => {

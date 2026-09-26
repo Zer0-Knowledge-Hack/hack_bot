@@ -5,7 +5,12 @@ import {
 } from "../errors";
 import { deriveBaseSlug, slugForAttempt } from "../hackathon/slug";
 import { suggestRepos } from "../hackathon/suggest";
-import { validateExtraction } from "../hackathon/extraction";
+import {
+  FIELD_COUNT,
+  validateExtraction,
+  type ExtractedFields,
+  type ValidateExtractionResult,
+} from "../hackathon/extraction";
 import type { HackathonAnalysis } from "../entities";
 import type { RepoFullName } from "../github";
 import type { TeamId } from "../ids";
@@ -137,22 +142,45 @@ async function resolvePageText(
   }
 }
 
+// design.md "Extraction Schema and Prompt": "The fallback model is tried
+// when the output is unparseable or more than half of its fields are
+// invalid." A result is usable when it validated AND is not
+// majority-rejected; "invalid" here means content-validation rejections
+// (extraction.ts's rejectedCount), never fields the model itself returned
+// as null.
+const MAJORITY_REJECTED_THRESHOLD = Math.floor(FIELD_COUNT / 2);
+
+function isUsable(
+  result: ValidateExtractionResult,
+): result is Extract<ValidateExtractionResult, { ok: true }> {
+  return result.ok && result.rejectedCount <= MAJORITY_REJECTED_THRESHOLD;
+}
+
+function rejectedCountOf(result: ValidateExtractionResult): number {
+  return result.ok ? result.rejectedCount : FIELD_COUNT;
+}
+
 // design.md "Validation": at most 2 model calls (primary, then fallback).
 async function extractFields(
   pageText: string,
   input: Pick<AnalyzeHackathonInput, "primaryModel" | "fallbackModel">,
   llmExtractor: LlmExtractor,
-) {
+): Promise<ExtractedFields> {
   const primaryRaw = await llmExtractor.extract(pageText, input.primaryModel);
   const primary = validateExtraction(primaryRaw, pageText);
-  if (primary.ok) return primary.fields;
+  if (isUsable(primary)) return primary.fields;
 
   const fallbackRaw = await llmExtractor.extract(pageText, input.fallbackModel);
   const fallback = validateExtraction(fallbackRaw, pageText);
-  if (fallback.ok) return fallback.fields;
+
+  // "Use the fallback result when it is better": prefer whichever attempt
+  // rejected fewer fields, then check that the better one clears the
+  // majority-rejected bar.
+  const better = rejectedCountOf(fallback) <= rejectedCountOf(primary) ? fallback : primary;
+  if (isUsable(better)) return better.fields;
 
   throw new ExtractionFailedError(
-    "Both the primary and fallback model produced an invalid response",
+    "Both the primary and fallback model produced too many invalid fields",
     "invalid-output",
   );
 }

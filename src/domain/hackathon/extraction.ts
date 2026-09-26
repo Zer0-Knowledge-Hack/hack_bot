@@ -30,8 +30,14 @@ export interface ExtractedFields {
   eligibility: Field<string>;
 }
 
+// `rejectedCount` (RELI-001) counts fields nulled by content validation —
+// an empty/whitespace snippet, an oversized snippet, a non-verbatim
+// snippet, or an oversized value — as opposed to fields the model itself
+// returned as `null`. The use case layer uses it to decide whether the
+// fallback model should be tried or preferred (analyze-hackathon.ts
+// "more than half of its fields are invalid").
 export type ValidateExtractionResult =
-  | { ok: true; fields: ExtractedFields }
+  | { ok: true; fields: ExtractedFields; rejectedCount: number }
   | { ok: false; reason: "invalid-shape" };
 
 // spec llm-extraction: "Bounded Source Snippet Per Non-Null Field" — at
@@ -63,6 +69,11 @@ const FIELD_NAMES: Array<keyof ExtractedFields> = [
   "eligibility",
 ];
 
+// Exported so analyze-hackathon.ts can compute "more than half of its
+// fields are invalid" (design.md "Extraction Schema and Prompt") without
+// hardcoding the field count a second time.
+export const FIELD_COUNT = FIELD_NAMES.length;
+
 export function validateExtraction(
   raw: unknown,
   pageText: string,
@@ -73,6 +84,7 @@ export function validateExtraction(
   const record = raw as Record<string, unknown>;
 
   const fields = {} as ExtractedFields;
+  let rejectedCount = 0;
   for (const name of FIELD_NAMES) {
     if (!(name in record)) {
       return { ok: false, reason: "invalid-shape" };
@@ -98,10 +110,14 @@ export function validateExtraction(
       { value: candidate.value, snippet: candidate.snippet, confidence: candidate.confidence },
       pageText,
     );
+    // The model supplied a non-null field, but content validation nulled
+    // it (RELI-001) — distinct from a field the model itself returned as
+    // null, which is never counted as rejected.
+    if (sanitized === null) rejectedCount += 1;
     (fields as unknown as Record<string, unknown>)[name] = sanitized;
   }
 
-  return { ok: true, fields };
+  return { ok: true, fields, rejectedCount };
 }
 
 // Checks `value` against the declared type of the field (spec
