@@ -1,9 +1,18 @@
-import { AlertSendFailedError, TenantMismatchError } from "../../src/domain/errors";
+import {
+  AlertSendFailedError,
+  PublishFailedError,
+  QueueSendFailedError,
+  TenantMismatchError,
+} from "../../src/domain/errors";
 import type { AlertSendFailureClass } from "../../src/domain/errors";
 import type {
+  AnalysisJobMessage,
   AuditDraft,
+  ClaimResult,
+  HackathonAnalysis,
   Member,
   Membership,
+  NewAnalysisJob,
   ProfileField,
   RepoTopicLink,
   Role,
@@ -13,14 +22,22 @@ import type {
 import type { RepoFullName } from "../../src/domain/github";
 import type {
   AlertSender,
+  AnalysisJobQueue,
+  AnalysisJobRepo,
+  AnalysisQuota,
   ChatAdminChecker,
+  ChatPublisher,
   Clock,
   DmSelectionRepo,
   GithubOrgClaimRepo,
+  HackathonAnalysisRepo,
   IdGen,
+  LlmExtractor,
   MemberRepo,
   MembershipRepo,
+  PageFetcher,
   ProfileRepo,
+  RepoMetadataSource,
   RepoTopicLinkRepo,
   TeamRepo,
 } from "../../src/domain/ports";
@@ -289,6 +306,177 @@ export function fakeAlertSender(
         throw new AlertSendFailedError("sendMessage failed", opts.failureClass ?? "rejected");
       }
       sent.push({ chatId, threadId, text });
+    },
+  };
+}
+
+// --- Hackathon analysis fakes (PR2: every new port from design.md
+// "Interfaces / Contracts") ---
+
+// A scripted PageFetcher: each call consumes the next step (repeating the
+// last one once the script is exhausted), so a test can drive a static
+// fetch that succeeds with thin text followed by a rendered fetch that
+// degrades, times out, or throws BrowserQuotaExceededError.
+export type FetchStep = { text: string } | { throws: unknown };
+
+export function fakePageFetcher(
+  script: FetchStep[],
+): PageFetcher & { calls: string[] } {
+  const calls: string[] = [];
+  let i = 0;
+  return {
+    calls,
+    fetch: async (url: string) => {
+      calls.push(url);
+      const step = script[Math.min(i, script.length - 1)];
+      i += 1;
+      if (!step) throw new Error("fakePageFetcher: empty script");
+      if ("throws" in step) throw step.throws;
+      return step.text;
+    },
+  };
+}
+
+export type ExtractStep = { raw: unknown } | { throws: unknown };
+
+export function fakeLlmExtractor(
+  script: ExtractStep[],
+): LlmExtractor & { calls: Array<{ pageText: string; modelId: string }> } {
+  const calls: Array<{ pageText: string; modelId: string }> = [];
+  let i = 0;
+  return {
+    calls,
+    extract: async (pageText: string, modelId: string) => {
+      calls.push({ pageText, modelId });
+      const step = script[Math.min(i, script.length - 1)];
+      i += 1;
+      if (!step) throw new Error("fakeLlmExtractor: empty script");
+      if ("throws" in step) throw step.throws;
+      return step.raw;
+    },
+  };
+}
+
+export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
+  rows: HackathonAnalysis[];
+} {
+  const rows: HackathonAnalysis[] = [];
+  return {
+    rows,
+    findBySlug: async (teamId: TeamId, slug: string) =>
+      rows.find((r) => r.teamId === teamId && r.slug === slug) ?? null,
+    findByNormalizedUrl: async (teamId: TeamId, normalizedUrl: string) =>
+      rows.find(
+        (r) => r.teamId === teamId && r.normalizedUrl === normalizedUrl,
+      ) ?? null,
+    slugExists: async (teamId: TeamId, slug: string) =>
+      rows.some((r) => r.teamId === teamId && r.slug === slug),
+    save: async (analysis: HackathonAnalysis) => {
+      const idx = rows.findIndex((r) => r.id === analysis.id);
+      if (idx >= 0) rows[idx] = analysis;
+      else rows.push(analysis);
+    },
+  };
+}
+
+export function fakeAnalysisQuota(
+  opts: { result?: "ok" | "busy" | "cap-reached" } = {},
+): AnalysisQuota & {
+  reserved: Array<Parameters<AnalysisQuota["reserve"]>[0]>;
+  released: Array<{ team: TeamId; day: string; jobId: string; refund: boolean }>;
+} {
+  const reserved: Array<Parameters<AnalysisQuota["reserve"]>[0]> = [];
+  const released: Array<{ team: TeamId; day: string; jobId: string; refund: boolean }> = [];
+  return {
+    reserved,
+    released,
+    reserve: async (input) => {
+      reserved.push(input);
+      return opts.result ?? "ok";
+    },
+    release: async (team: TeamId, day: string, jobId: string, refund: boolean) => {
+      released.push({ team, day, jobId, refund });
+    },
+  };
+}
+
+export function fakeAnalysisJobRepo(
+  opts: { claimResult?: ClaimResult } = {},
+): AnalysisJobRepo & {
+  persisted: Array<{ id: string; analysisId: string }>;
+  succeeded: string[];
+  failed: Array<{ id: string; reason: string }>;
+} {
+  const persisted: Array<{ id: string; analysisId: string }> = [];
+  const succeeded: string[] = [];
+  const failed: Array<{ id: string; reason: string }> = [];
+  return {
+    persisted,
+    succeeded,
+    failed,
+    claim: async () => opts.claimResult ?? { kind: "missing" },
+    markPersisted: async (id: string, analysisId: string) => {
+      persisted.push({ id, analysisId });
+    },
+    markSucceeded: async (id: string) => {
+      succeeded.push(id);
+    },
+    markFailed: async (id: string, reason: string) => {
+      failed.push({ id, reason });
+    },
+  };
+}
+
+export function fakeAnalysisJobQueue(
+  opts: { throws?: boolean } = {},
+): AnalysisJobQueue & { sent: AnalysisJobMessage[] } {
+  const sent: AnalysisJobMessage[] = [];
+  return {
+    sent,
+    enqueue: async (message: AnalysisJobMessage) => {
+      if (opts.throws) {
+        throw new QueueSendFailedError("Queue.send failed");
+      }
+      sent.push(message);
+    },
+  };
+}
+
+export function fakeRepoMetadataSource(
+  descriptions: Partial<Record<RepoFullName, string | null>> = {},
+): RepoMetadataSource {
+  return {
+    fetchDescription: async (repo: RepoFullName) => descriptions[repo] ?? null,
+  };
+}
+
+export function fakeChatPublisher(
+  opts: { throws?: boolean; failureClass?: AlertSendFailureClass } = {},
+): ChatPublisher & {
+  posted: Array<{ chatId: number; threadId: number | null; text: string }>;
+  pinned: number[];
+  unpinned: number[];
+} {
+  const posted: Array<{ chatId: number; threadId: number | null; text: string }> = [];
+  const pinned: number[] = [];
+  const unpinned: number[] = [];
+  let nextMessageId = 1;
+  return {
+    posted,
+    pinned,
+    unpinned,
+    post: async (chatId: number, threadId: number | null, text: string) => {
+      if (opts.throws) {
+        throw new PublishFailedError("sendMessage failed", opts.failureClass ?? "rejected");
+      }
+      posted.push({ chatId, threadId, text });
+      return nextMessageId++;
+    },
+    pin: async (_chatId: number, messageId: number) => {
+      pinned.push(messageId);
+    },
+    unpin: async (_chatId: number, messageId: number) => {
+      unpinned.push(messageId);
     },
   };
 }
