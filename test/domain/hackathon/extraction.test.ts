@@ -74,11 +74,13 @@ describe("validateExtraction", () => {
     expect(result.ok && result.fields.teamSize).toBeNull();
   });
 
-  it("nulls a field whose snippet exceeds 160 characters (spec llm-extraction: Bounded Source Snippet)", () => {
-    const longSnippet = "Meridian 2026 starts on 2026-03-01. " + "x".repeat(160);
+  it("nulls a field whose snippet exceeds 200 characters (spec llm-extraction: Bounded Source Snippet)", () => {
+    const boundaryText = "Meridian 2026 hosts teams from every continent for a full week. ".repeat(4);
+    const over = boundaryText.slice(0, 201);
+    const withinPage = `Prizes include the following details: ${boundaryText}`;
     const result = validateExtraction(
       {
-        name: { value: "Meridian 2026", snippet: longSnippet, confidence: 0.9 },
+        name: null,
         format: null,
         location: null,
         teamSize: null,
@@ -86,14 +88,46 @@ describe("validateExtraction", () => {
         startDate: null,
         endDate: null,
         resultsDate: null,
-        prizes: null,
+        prizes: { value: "prize pool", snippet: over, confidence: 0.9 },
         tracks: null,
         eligibility: null,
       },
-      pageText,
+      withinPage,
     );
+    expect(over).toHaveLength(201);
+    expect(withinPage.includes(over)).toBe(true);
     expect(result.ok).toBe(true);
-    expect(result.ok && result.fields.name).toBeNull();
+    expect(result.ok && result.fields.prizes).toBeNull();
+  });
+
+  it("keeps a field whose snippet is exactly 200 characters (spec llm-extraction: Bounded Source Snippet)", () => {
+    const boundaryText = "Meridian 2026 hosts teams from every continent for a full week. ".repeat(4);
+    const exact = boundaryText.slice(0, 200);
+    const withinPage = `Prizes include the following details: ${boundaryText}`;
+    const result = validateExtraction(
+      {
+        name: null,
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: { value: "prize pool", snippet: exact, confidence: 0.9 },
+        tracks: null,
+        eligibility: null,
+      },
+      withinPage,
+    );
+    expect(exact).toHaveLength(200);
+    expect(withinPage.includes(exact)).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.fields.prizes).toEqual({
+      value: "prize pool",
+      snippet: exact,
+      confidence: 0.9,
+    });
   });
 
   it("nulls a field whose snippet is not found verbatim in the page text", () => {
