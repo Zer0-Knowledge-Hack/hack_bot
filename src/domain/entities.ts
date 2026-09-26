@@ -1,4 +1,5 @@
 import type { RepoFullName } from "./github";
+import type { ExtractedFields } from "./hackathon/extraction";
 import type { MemberId, MembershipId, TeamId } from "./ids";
 
 export interface Team {
@@ -90,3 +91,88 @@ export interface RepoTopicLink {
   createdAt: number;
   updatedAt: number;
 }
+
+// --- Hackathon analysis (design.md "Data Flow", "Interfaces / Contracts") ---
+
+// The stored analysis record (design.md "Storage": "the validated
+// extraction JSON, bounded; no page text"). `threadId` is the topic it is
+// currently linked to, if any (spec hackathon-analysis: "One Analysis Per
+// Topic") — set by `linkAnalysisToTopic` (PR4), null for a fresh,
+// unlinked analysis.
+export interface HackathonAnalysis {
+  id: string;
+  teamId: TeamId;
+  slug: string;
+  sourceUrl: string;
+  normalizedUrl: string;
+  fields: ExtractedFields;
+  suggestedRepos: RepoFullName[];
+  threadId: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// The queue message (design.md "Message"): ids plus the guarded fetch URL
+// only — no user id, username, page content or model output.
+export interface AnalysisJobMessage {
+  v: 1;
+  jobId: string;
+  teamId: TeamId;
+  chatId: number;
+  threadId: number | null;
+  fetchUrl: string;
+}
+
+export type AnalysisJobStatus =
+  | "queued"
+  | "running"
+  | "persisted"
+  | "succeeded"
+  | "failed";
+
+// Mirrors migrations/0003_hackathon_analysis.sql's `hackathon_analysis_jobs`
+// (design.md "Job State (D1) and Idempotency"). `analysisId` is set once
+// the job reaches `persisted` (design.md "Persist"); `failureReason` is a
+// fixed, non-sensitive code (design.md "Error Taxonomy"), never set until
+// `failed`.
+export interface AnalysisJob {
+  id: string;
+  teamId: TeamId;
+  chatId: number;
+  threadId: number | null;
+  utcDay: string;
+  fetchUrl: string;
+  status: AnalysisJobStatus;
+  attempts: number;
+  claimUntil: number;
+  analysisId: string | null;
+  failureReason: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+// The fields a caller (requestHackathonAnalysis, PR3) supplies to
+// `AnalysisQuota.reserve` for the job row it inserts atomically with the
+// usage lease (design.md "reserve").
+export interface NewAnalysisJob {
+  id: string;
+  teamId: TeamId;
+  chatId: number;
+  threadId: number | null;
+  utcDay: string;
+  fetchUrl: string;
+  createdAt: number;
+}
+
+// design.md "Job State (D1) and Idempotency" — `claim`'s five outcomes.
+export type ClaimResult =
+  | { kind: "claimed"; job: AnalysisJob }
+  | { kind: "persisted"; job: AnalysisJob }
+  | { kind: "terminal" }
+  | { kind: "held" }
+  | { kind: "missing" };
+
+// design.md "Interfaces / Contracts" — `runHackathonJob`'s (PR3) return
+// value; `src/index.ts`'s `queue()` handler maps this to `msg.ack()` or
+// `msg.retry()` and never throws.
+export type JobOutcome = { kind: "ack" } | { kind: "retry"; delaySeconds: number };

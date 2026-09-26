@@ -1,3 +1,10 @@
+// Reused, not duplicated: ConfigError already exists at src/config-error.ts
+// (used by adapters/github/signature.ts, adapters/crypto/key-ring.ts and
+// composition.ts). Re-exporting the SAME class here keeps `instanceof`
+// checks working across every caller, domain or adapter, instead of
+// forking two classes with the same name (design.md "Config errors").
+export { ConfigError } from "../config-error";
+
 export class DomainError extends Error {
   constructor(message: string) {
     super(message);
@@ -46,3 +53,111 @@ export class AlertSendFailedError extends DomainError {
 // (design.md/ports.ts "Tenancy": every tenant-scoped method takes TeamId
 // first) — this is a caller bug, never a silent cross-tenant write.
 export class TenantMismatchError extends DomainError {}
+
+// --- Hackathon analysis errors (design.md "Error Taxonomy") ---
+
+// Thrown by a PageFetcher/rendered-fetcher adapter when the URL, a
+// redirect hop or a browser sub-request fails the SSRF guard (spec
+// page-fetch: "Scheme and Destination Guard on the Static Path", "Same
+// Guard Applies to the Browser Fallback"). `reason` mirrors
+// hackathon/url.ts's UnsafeUrlReason so the log entry stays a fixed,
+// non-sensitive code (design.md "No Raw Page Stored or Logged").
+export class UnsafeUrlError extends DomainError {
+  readonly reason: string;
+
+  constructor(message: string, reason: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
+
+// A static or rendered fetch failed for a reason other than the SSRF guard
+// or a quota (design.md "Error Taxonomy": `fetch:{timeout,too-large,
+// http-status,content-type,redirects,network}`).
+export type PageFetchFailureKind =
+  | "timeout"
+  | "too-large"
+  | "http-status"
+  | "content-type"
+  | "redirects"
+  | "network";
+
+export class PageFetchFailedError extends DomainError {
+  readonly kind: PageFetchFailureKind;
+
+  constructor(message: string, kind: PageFetchFailureKind) {
+    super(message);
+    this.kind = kind;
+  }
+}
+
+// The final page text (static, or static-plus-rendered) is below the
+// usable-text floor (design.md "Error Taxonomy": `fetch:too-thin[
+// -browser-quota]`). `browserQuotaDegraded` is set when the shortfall
+// followed a Browser Rendering 429 with too little static text to
+// substitute (spec page-fetch: "Browser Rendering returns 429 with
+// insufficient static text").
+export class PageTooThinError extends DomainError {
+  readonly browserQuotaDegraded: boolean;
+
+  constructor(message: string, browserQuotaDegraded = false) {
+    super(message);
+    this.browserQuotaDegraded = browserQuotaDegraded;
+  }
+}
+
+// Browser Rendering responded with a quota-exhausted status (429). Thrown
+// only by the rendered PageFetcher instance (design.md "A 429 raises
+// BrowserQuotaExceededError") — analyzeHackathon decides whether to
+// degrade to the static text or fail based on its length.
+export class BrowserQuotaExceededError extends DomainError {}
+
+// Both the primary and the fallback model produced an unusable response
+// (design.md "Error Taxonomy": `llm:{invalid-output,model-error,
+// timeout}`).
+export type ExtractionFailureKind = "invalid-output" | "model-error" | "timeout";
+
+export class ExtractionFailedError extends DomainError {
+  readonly kind: ExtractionFailureKind;
+
+  constructor(message: string, kind: ExtractionFailureKind) {
+    super(message);
+    this.kind = kind;
+  }
+}
+
+// The shared Workers AI daily quota is exhausted (design.md "Error
+// Taxonomy": `llm:quota`). Never retried within the same job.
+export class LlmQuotaExceededError extends DomainError {}
+
+// `AnalysisJobQueue.enqueue` failed (design.md "Error Taxonomy":
+// `queue:send-failed`). The caller (requestHackathonAnalysis, PR3) refunds
+// the reserved cap slot on this error.
+export class QueueSendFailedError extends DomainError {}
+
+// A fresh analysis job for the team is already queued or running (spec
+// hackathon-analysis: "Analysis already running"). No cap slot is
+// consumed.
+export class AnalysisBusyError extends DomainError {}
+
+// The team's daily cap of fresh runs is already reached (spec
+// hackathon-analysis: "Cap reached", "Daily Cap on Fresh Runs").
+export class DailyCapReachedError extends DomainError {}
+
+// No stored analysis exists under the requested slug (spec
+// hackathon-analysis: `/hackathon <slug>` re-show, `showAnalysis`, PR4).
+export class AnalysisNotFoundError extends DomainError {}
+
+// Thrown by a ChatPublisher implementation when `post`/`pin`/`unpin` fails
+// (design.md "Interfaces / Contracts": "post throws
+// PublishFailedError(AlertSendFailureClass)"). Mirrors AlertSendFailedError
+// exactly — same three non-sensitive failure classes, same "still a
+// permanent-for-this-request failure" contract.
+export class PublishFailedError extends DomainError {
+  readonly failureClass: AlertSendFailureClass;
+
+  constructor(message: string, failureClass: AlertSendFailureClass) {
+    super(message);
+    this.failureClass = failureClass;
+  }
+}
