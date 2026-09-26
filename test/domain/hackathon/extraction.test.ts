@@ -130,6 +130,66 @@ describe("validateExtraction", () => {
     });
   });
 
+  it("rejects a response where teamSize is a string instead of a number (RELI-001/RESI-001)", () => {
+    const result = validateExtraction(
+      {
+        name: null,
+        format: null,
+        location: null,
+        teamSize: { value: "4", snippet: "Team size up to 4 people", confidence: 0.8 },
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      pageText,
+    );
+    expect(result).toEqual({ ok: false, reason: "invalid-shape" });
+  });
+
+  it("rejects a response where name is a number instead of a string (RELI-001/RESI-001)", () => {
+    const result = validateExtraction(
+      {
+        name: { value: 2026, snippet: "Meridian 2026", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      pageText,
+    );
+    expect(result).toEqual({ ok: false, reason: "invalid-shape" });
+  });
+
+  it("rejects a response where a field's value is undefined (RELI-001/RESI-001)", () => {
+    const result = validateExtraction(
+      {
+        name: { value: undefined, snippet: "Meridian 2026", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      pageText,
+    );
+    expect(result).toEqual({ ok: false, reason: "invalid-shape" });
+  });
+
   it("nulls a field whose snippet is not found verbatim in the page text", () => {
     const result = validateExtraction(
       {

@@ -79,7 +79,8 @@ export function validateExtraction(
     if (
       !("value" in candidate) ||
       typeof candidate.snippet !== "string" ||
-      typeof candidate.confidence !== "number"
+      typeof candidate.confidence !== "number" ||
+      !hasValidFieldType(name, candidate.value)
     ) {
       return { ok: false, reason: "invalid-shape" };
     }
@@ -91,6 +92,17 @@ export function validateExtraction(
   }
 
   return { ok: true, fields };
+}
+
+// Checks `value` against the declared type of the field (spec
+// llm-extraction: "Malformed response is rejected" — wrong types reject the
+// whole response, RELI-001/RESI-001). `teamSize` is the only numeric field;
+// every other field is a string.
+function hasValidFieldType(name: keyof ExtractedFields, value: unknown): boolean {
+  if (name === "teamSize") {
+    return typeof value === "number" && Number.isFinite(value);
+  }
+  return typeof value === "string";
 }
 
 // Demotes a syntactically valid field to null when it fails a content
