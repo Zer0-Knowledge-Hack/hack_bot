@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { formatGithubAlert, parseRepoFullName } from "../../src/domain/github";
+import {
+  formatGithubAlert,
+  parseRepoFullName,
+  parseRepoReference,
+} from "../../src/domain/github";
 import type { GithubEvent } from "../../src/domain/github";
 
 describe("parseRepoFullName", () => {
@@ -26,6 +30,59 @@ describe("parseRepoFullName", () => {
 
   it("rejects whitespace inside the name", () => {
     expect(parseRepoFullName("octo cat/hello world")).toBeNull();
+  });
+
+  it("rejects a GitHub URL (webhook payloads are strict)", () => {
+    expect(parseRepoFullName("https://github.com/octocat/hello-world")).toBeNull();
+  });
+});
+
+describe("parseRepoReference", () => {
+  it("accepts a plain owner/repo", () => {
+    expect(parseRepoReference("OctoCat/Hello-World")).toBe("octocat/hello-world");
+  });
+
+  it("accepts a GitHub repo URL", () => {
+    expect(parseRepoReference("https://github.com/OctoCat/Hello-World")).toBe(
+      "octocat/hello-world",
+    );
+  });
+
+  it("accepts http, www and scheme-less URLs", () => {
+    expect(parseRepoReference("http://www.github.com/octocat/hello-world")).toBe(
+      "octocat/hello-world",
+    );
+    expect(parseRepoReference("github.com/octocat/hello-world")).toBe("octocat/hello-world");
+  });
+
+  it("ignores a trailing slash, a .git suffix, deeper paths, query and fragment", () => {
+    expect(parseRepoReference("https://github.com/octocat/hello-world/")).toBe(
+      "octocat/hello-world",
+    );
+    expect(parseRepoReference("https://github.com/octocat/hello-world.git")).toBe(
+      "octocat/hello-world",
+    );
+    expect(parseRepoReference("https://github.com/octocat/hello-world/pull/17")).toBe(
+      "octocat/hello-world",
+    );
+    expect(parseRepoReference("https://github.com/octocat/hello-world?tab=readme#top")).toBe(
+      "octocat/hello-world",
+    );
+  });
+
+  it("rejects URLs from other hosts", () => {
+    expect(parseRepoReference("https://gitlab.com/octocat/hello-world")).toBeNull();
+    expect(parseRepoReference("https://evilgithub.com/octocat/hello-world")).toBeNull();
+  });
+
+  it("rejects a GitHub URL without a repo segment", () => {
+    expect(parseRepoReference("https://github.com/octocat")).toBeNull();
+    expect(parseRepoReference("https://github.com/")).toBeNull();
+  });
+
+  it("rejects malformed plain input", () => {
+    expect(parseRepoReference("octocat")).toBeNull();
+    expect(parseRepoReference("octocat/hello/world")).toBeNull();
   });
 });
 
