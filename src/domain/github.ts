@@ -15,6 +15,20 @@ export function parseRepoFullName(raw: string): RepoFullName | null {
   return REPO_FULL_NAME_PATTERN.test(lower) ? (lower as RepoFullName) : null;
 }
 
+// A github.com repo URL, with or without scheme or `www.`. Only the owner and
+// repo segments are kept: a `.git` suffix, deeper paths (`/pull/17`), query
+// and fragment are dropped.
+const GITHUB_REPO_URL_PATTERN =
+  /^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/?#\s]+)\/([^/?#\s]+?)(?:\.git)?(?:[/?#].*)?$/i;
+
+// User input from chat commands: either `owner/repo` or a pasted GitHub URL.
+// Webhook payloads keep using the strict parseRepoFullName.
+export function parseRepoReference(raw: string): RepoFullName | null {
+  const trimmed = raw.trim();
+  const url = GITHUB_REPO_URL_PATTERN.exec(trimmed);
+  return parseRepoFullName(url ? `${url[1]}/${url[2]}` : trimmed);
+}
+
 export type GithubEventKind = "pull_request" | "issues";
 export type GithubEventAction =
   | "opened"

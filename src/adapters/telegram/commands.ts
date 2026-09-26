@@ -10,7 +10,7 @@ import { linkRepoToTopic } from "../../domain/usecases/link-repo-to-topic";
 import { unlinkRepo } from "../../domain/usecases/unlink-repo";
 import { listRepoLinks } from "../../domain/usecases/list-repo-links";
 import { NotFoundError, UnauthorizedError } from "../../domain/errors";
-import { parseRepoFullName } from "../../domain/github";
+import { parseRepoReference } from "../../domain/github";
 import type { RepoFullName } from "../../domain/github";
 import type { Membership, ProfileField, ProfileFieldName } from "../../domain/entities";
 import type { MembershipId, TeamId } from "../../domain/ids";
@@ -198,8 +198,9 @@ function reposReply(links: Array<{ repoFullName: string; threadId: number }>): s
 
 // READ-001: the genuinely shared part of `/linkrepo` and `/unlinkrepo` —
 // the topic gate (spec: "Admin-Only Link/Unlink Inside a Topic") and the
-// `owner/repo` argument parsing. Everything else (which use case runs,
-// which errors it can throw, the reply text) differs per command and is
+// repo argument parsing (`owner/repo` or a pasted GitHub URL). Everything
+// else (which use case runs, which errors it can throw, the reply text)
+// differs per command and is
 // registered explicitly below, the same way `/setup`/`/join`/`/datachannel`
 // each get their own `bot.command` block instead of a shared branching loop.
 async function resolveLinkCommandTarget(
@@ -223,9 +224,9 @@ async function resolveLinkCommandTarget(
     return null;
   }
   const threadId = loc.threadId;
-  const repo = parseRepoFullName(rawRepoArg.trim());
+  const repo = parseRepoReference(rawRepoArg);
   if (!repo) {
-    await ctx.reply(`Usage: /${command} <owner/repo>`);
+    await ctx.reply(`Usage: /${command} <owner/repo or GitHub repo URL>`);
     return null;
   }
   return { loc, threadId, repo };

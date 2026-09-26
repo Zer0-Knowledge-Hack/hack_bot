@@ -656,6 +656,21 @@ describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
     expect(replies[1]?.text).toMatch(/linked/i);
   });
 
+  it("accepts a pasted GitHub repo URL", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+
+    await bot.handleUpdate(
+      commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "https://github.com/Owner/Repo" }),
+    );
+
+    expect(deps.repoTopicLinkRepo.rows).toMatchObject([
+      { repoFullName: "owner/repo", threadId: 77 },
+    ]);
+    expect(replies[1]?.text).toMatch(/linked/i);
+  });
+
   it("refuses an unclaimed org and stores no row", async () => {
     const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
     await bot.handleUpdate(commandUpdate("setup", 10, 1));
@@ -723,6 +738,20 @@ describe("registerCommands — /unlinkrepo (repo-topic-links spec)", () => {
     await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
 
     await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+
+    expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
+    expect(replies[2]?.text).toMatch(/unlinked/i);
+  });
+
+  it("accepts a pasted GitHub repo URL", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+
+    await bot.handleUpdate(
+      commandUpdate("unlinkrepo", 10, 1, { threadId: 77, args: "https://github.com/owner/repo/" }),
+    );
 
     expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
     expect(replies[2]?.text).toMatch(/unlinked/i);
