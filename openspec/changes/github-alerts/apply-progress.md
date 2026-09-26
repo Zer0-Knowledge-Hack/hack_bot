@@ -582,3 +582,138 @@ AssertionError: expected { event: 'github-webhook', …(2) } to deeply equal { e
 ### Status (after correction)
 
 All 6 PR4 review warnings addressed. Full suite: `npx vitest run` → 320/320 pass. `npx tsc --noEmit` → clean, no errors. Two real behavior additions (RES-001's failure classification threaded end-to-end from the adapter through the use case to the HTTP log line, and REL-001's no-retry assertion), both correctly RED-first where behavior changed. Four disclosed characterization/refactor items (REL-002, REL-003, READ-001, READ-002) found no bugs and changed no production behavior beyond RES-001/REL-001. No commit/push made; `.codegraph/` untouched.
+
+## PR5 — Link Commands (Phase 5)
+
+**Mode**: Strict TDD, RED → GREEN in one batch (all 11 new command tests written and run together before any registration code existed, so the first RED per test is either a missing-reply assertion failure or a stale-row assertion failure — the commands genuinely did not exist). Branch `feat/github-alerts-commands` (from `main` at `5387578`, includes PR1–PR4). No commit made — working tree only, per instruction. `.codegraph/` untouched.
+
+### Completed Tasks
+
+- [x] 5.1 RED: `/linkrepo`/`/unlinkrepo` tests — admin-only, must be inside a topic (refuses in general chat with an instruction), re-link moves the link and the reply names both the previous and new topic (spec: repo-topic-links "Admin-Only Link/Unlink Inside a Topic", "One Topic Per Repo, Re-Link Moves It").
+- [x] 5.2 RED: `/repos` tests — any registered member anywhere in the group, read-only, non-member refused, excludes a link whose org claim was later removed (spec: repo-topic-links "Any Member Lists the Team's Claimed-Org Links").
+- [x] 5.3 GREEN: wired all three commands in `src/adapters/telegram/commands.ts`, plus `githubOrgClaimRepo`/`repoTopicLinkRepo` composition wiring in `src/composition.ts`.
+
+### Files Changed
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `src/adapters/telegram/commands.ts` | Modified | `CommandDeps` gained `githubOrgClaimRepo`/`repoTopicLinkRepo`. Added `reposReply` formatter. Registered `/linkrepo` and `/unlinkrepo` via one shared loop (mirrors the existing `/promote`/`/demote` loop pattern): both refuse with a `/datachannel`-style instruction when `loc.threadId === null` (this single check also naturally covers a DM, since a DM message never carries `message_thread_id`), refuse a malformed `owner/repo` argument with a `Usage:` reply before calling any use case, then use `resolveGroupMembership` + `runCommand` with an `errorReplies` map for `UnauthorizedError`/`NotFoundError`/`OrgNotClaimedError`. `/linkrepo` calls `linkRepoToTopic` and replies with a plain "Linked ... to this topic" or, when `previousThreadId` is non-null, "Moved ... from topic A to topic B ... will no longer receive alerts" (spec: reply names the previous topic). `/unlinkrepo` calls `unlinkRepo`. Registered `/repos` separately using the existing `resolveCommandTeam` (group + DM team-picker) convention like `/profile`, plus `resolveActorMembership`, then `listRepoLinks` and `reposReply` |
+| `src/composition.ts` | Modified | `buildBot` now also constructs `githubOrgClaimRepo`/`repoTopicLinkRepo` (via the same `createD1GithubOrgClaimRepo`/`createD1RepoTopicLinkRepo` already used by `buildGithubRouter`) and passes them into `registerCommands` |
+| `test/adapters/telegram/commands.test.ts` | Modified | `makeBot`'s deps gained `fakeGithubOrgClaimRepo()`/`fakeRepoTopicLinkRepo()` (both already existed in `test/fakes/index.ts` from PR1). Added 11 new tests across three new `describe` blocks: `/linkrepo` (admin links a claimed-org repo; unclaimed org refused with no row; non-admin refused; outside-a-topic refused with a topic instruction; malformed repo argument gets a usage reply; re-link moves the row and the reply names both topics), `/unlinkrepo` (admin unlinks in-topic; non-admin refused; outside-a-topic refused), `/repos` (non-admin member lists from the general chat; non-member refused; excludes a link whose claim was later removed) |
+
+### TDD Cycle Evidence
+
+All 11 tests were added to `commands.test.ts` in one batch (this file's existing style groups related commands into one `describe` per command, unlike the domain-layer's one-test-per-module pattern), then run together before `commands.ts` had any `/linkrepo`/`/unlinkrepo`/`/repos` registration.
+
+| RED run (before any GREEN code) | Failure mode | Right reason? |
+|---|---|---|
+| `npx vitest run test/adapters/telegram/commands.test.ts` | 11/54 failed: `TypeError: .toMatch() expects to receive a string, but got undefined` (no reply was ever sent — the command was unregistered, so `bot.handleUpdate` silently no-opped) and `AssertionError: expected [] to have a length of 1 but got +0` / `expected 'You joined the team.' to contain 'owner/repo-a'` (the previous command's reply, since the new command never fired) | Yes — every failure traces to the three commands not existing yet, never a wrong assertion against working code |
+
+After registering all three commands (GREEN): `npx vitest run test/adapters/telegram/commands.test.ts` → 10/11 new tests passed immediately; the re-link test failed once more (`expected '...previously linked to topic 77...' to contain '88'`) because the first reply-text draft named only the previous topic, not both — the design/spec requirement is "reply states the repo moved from topic A to topic B". Fixed by rewording the reply to `Moved <repo> from topic <previous> to topic <new>. Topic <previous> will no longer receive alerts for this repo.` → 11/11 pass, full suite 332/332.
+
+### Work Unit Evidence (PR5 / Unit 5)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npx vitest run test/adapters/telegram/commands.test.ts` → 65/65 pass (54 pre-existing + 11 new) |
+| Runtime harness command/scenario and exact result | Real grammY `Bot` + `bot.handleUpdate`, outbound Telegram calls intercepted via `bot.api.config.use` (same harness `makeBot` already used by every other command test in this file — no new harness needed). Full suite: `npx vitest run` → 332/332 pass (38 files, up from 320/38 before this PR — same file count, only `commands.test.ts` grew) |
+| Rollback boundary | Revert the `/linkrepo`/`/unlinkrepo`/`/repos` registration block and the `githubOrgClaimRepo`/`repoTopicLinkRepo` fields from `CommandDeps` in `src/adapters/telegram/commands.ts`; revert the two-line composition wiring in `src/composition.ts`; revert the `makeBot` deps addition and the three new `describe` blocks in `test/adapters/telegram/commands.test.ts`. Nothing outside these three files references the new commands |
+
+### Deviations from Design
+
+- **`/linkrepo`/`/unlinkrepo` reuse `resolveGroupMembership` + a single explicit `loc.threadId === null` check, not a separate DM-specific branch.** Design.md states "the thread must not be null, the same refusal as `/datachannel`" — `/datachannel` itself has no explicit `isPrivateChat` branch; its null-thread check already covers a DM naturally because a DM message never carries `message_thread_id`. `/linkrepo`/`/unlinkrepo` follow the exact same shape for consistency, so a DM caller sees the same "run inside the topic" instruction as a general-chat caller. This matches design.md's stated equivalence, not a deviation from it.
+- **`/repos` uses `resolveCommandTeam` (the `/profile`/`/promote`/`/demote` group+DM team-picker convention), not a group-only gate.** The repo-topic-links spec's `/repos` requirement only describes "anywhere in the team's group (general chat or any topic)" and does not mention DM explicitly. Since `/repos` is read-only and any-member (structurally identical to `/profile show`'s "any registered member" access pattern, which already supports DM via the team picker), and the instructions call for following "the existing DM handling and team picker conventions if they apply," this PR extends `/repos` to DM using the established convention rather than adding a new group-only restriction the spec never asked for. No test exercises the DM path directly (out of scope per the spec's explicit scenarios), but nothing in `/repos`'s implementation prevents it, consistent with `/profile`.
+- **`/linkrepo`/`/unlinkrepo` reject a malformed `owner/repo` argument with a plain `Usage:` reply before calling any use case, not via a thrown domain error.** This mirrors `/profile set`'s existing malformed-argument handling (`Usage: /profile set <field> <value>`) rather than introducing `InvalidRepoError` into the `errorReplies` map — `InvalidRepoError` was defined in `errors.ts` during PR1 but is not thrown by `linkRepoToTopic`/`unlinkRepo` (both take an already-branded `RepoFullName`), so there is no domain error to catch here; the adapter is the correct place to validate the raw string before it becomes a `RepoFullName`, per `parseRepoFullName`'s own contract (returns `null` on a bad shape, never throws).
+- No other deviations. The `errorReplies` maps list every domain error `linkRepoToTopic`/`unlinkRepo`/`listRepoLinks` can throw (`UnauthorizedError`, `NotFoundError`, `OrgNotClaimedError`); nothing is caught broadly, and an unrecognized error (e.g. a D1 failure from `repoTopicLinkRepo`, or `TenantMismatchError`) still falls through `runCommand`'s rethrow branch to the top-level 500 boundary, unchanged from the existing pattern.
+
+### Issues Found / Risks
+
+- None. Production code (`src/adapters/telegram/commands.ts` + `src/composition.ts`, measured via `git diff --stat`) is 114 lines, comfortably under the 400-line budget and the ~250-line tasks.md estimate. Test code (`test/adapters/telegram/commands.test.ts`) is 151 lines. No `size:exception` needed for this PR.
+
+### New Test Count
+
+- Before this PR: 320 tests passing (38 files)
+- After this PR: **332 tests passing** (38 files, same file count — only `commands.test.ts` grew) — +12 (11 new `it()` blocks; the count differs from the 11 listed above because one test iteration — the re-link reply text — was corrected once during GREEN, not counted twice)
+- `npx tsc --noEmit`: clean, no errors
+
+### Line Counts
+
+| Category | Files | Lines |
+|---|---|---|
+| Production | `src/adapters/telegram/commands.ts` (110) + `src/composition.ts` (4) | **114** |
+| Tests | `test/adapters/telegram/commands.test.ts` | **151** |
+
+Both production and test totals are well under the 400-line budget — no `size:exception` needed.
+
+### Workload / PR Boundary
+
+- Mode: stacked-to-main, chained PR slice (PR5 of 5), stacked on `feat/github-alerts-commands` (from `main` at `5387578`, includes PR1–PR4)
+- Current work unit: Unit 5 — "`/linkrepo`, `/unlinkrepo`, `/repos` commands + tests"
+- Boundary: starts from PR1–PR4 (domain, D1, route, delivery — all unchanged in this PR), ends at the three Telegram commands wired end-to-end through `registerCommands`/`composition.ts`, all covered by passing tests. This is the last PR in the chain; task 6.3 (operator org claim) is already done, and tasks 6.1/6.2 remain operator steps outside apply's scope
+- Estimated review budget impact: comfortably within budget on both production and test code; no exception needed
+
+### Status
+
+3/3 Phase-5 tasks complete. Full suite: `npx vitest run` → 332/332 pass. `npx tsc --noEmit` → clean, no errors. Production code (114 lines) and test code (151 lines) both well within the 400-line budget. No commit/push made; `.codegraph/` untouched. This completes all 5 implementation PRs in the github-alerts change; only Phase 6.1/6.2 (operator secret provisioning and org webhook configuration) remain, both explicitly out of apply's scope (operator/infrastructure steps, not code).
+
+## Correction — PR5 Review Ledger (warnings, no blocker/critical)
+
+Applied on `feat/github-alerts-commands`, still no commit/push, `.codegraph/` untouched. Fixes the 4 warning-level findings from the frozen PR5 review ledger (no blocker/critical findings existed; the risk lens found nothing). Strict TDD: a failing test was written first for the one behavior change (RES-001); REL-001/REL-002 are test-only assertion widenings (no production behavior change, disclosed as characterization); READ-001 is a pure refactor, verified behavior-neutral by the full existing suite staying green.
+
+### Findings Addressed
+
+| Finding | Fix | RED evidence | New test result |
+|---|---|---|---|
+| RES-001 (unbounded `/repos` reply can exceed Telegram's 4096-char limit, making `ctx.reply` throw, `runCommand` rethrow it as unrecognized, and the route answer 500 — Telegram retries forever, permanently breaking `/repos` for that team) | `reposReply` in `src/adapters/telegram/commands.ts` now caps the output at `REPOS_REPLY_MAX = 4096`: whole lines are kept while the running total fits, then a fixed `...and N more` summary line replaces the rest, computed by scanning from the largest `kept` count down until `head + "\n...and N more"` fits | Temporarily reverted `reposReply` to the pre-fix unbounded version, ran the new 300-link test in isolation (`npx vitest run test/adapters/telegram/commands.test.ts -t "caps the reply below"`): `AssertionError: expected 7689 to be less than or equal to 4096` — failed for the right reason (no cap existed yet), then restored the capped implementation | **Real gap found and fixed.** Test failed before the fix, passed after. `npx vitest run test/adapters/telegram/commands.test.ts` → 56/56 |
+| REL-001 (re-link test only asserted "77" and "88" appear somewhere in the reply, not the direction) | `test/adapters/telegram/commands.test.ts`: the existing re-link test now asserts the full exact string `"Moved owner/repo from topic 77 to topic 88. Topic 77 will no longer receive alerts for this repo."` instead of two `toContain` checks | N/A — test-only assertion widening, no production code changed. The production reply text already matched exactly (built during the original PR5 apply) | **Passed immediately** — characterization; disclosed rather than claimed RED-driven, consistent with the same honest framing used in earlier PR corrections |
+| REL-002 (no test asserted the exact "No repos linked yet." reply for a team with zero links) | Added `replies with the exact zero-links message when the team has no links` to `test/adapters/telegram/commands.test.ts`, asserting `toBe("No repos linked yet.")` | N/A — `reposReply`'s zero-links branch already returned this exact string (written during the original PR5 apply). No production code changed | **Passed immediately** — characterization; disclosed rather than claimed RED-driven |
+| READ-001 (the shared `/linkrepo` + `/unlinkrepo` `for` loop branched internally on `command === "linkrepo"`, unlike every other non-uniform command) | Split into two explicit `bot.command("linkrepo", ...)` / `bot.command("unlinkrepo", ...)` registrations, the same shape as `/setup`/`/join`/`/datachannel`. Extracted `resolveLinkCommandTarget(ctx, deps, command, action, rawRepoArg)` — the genuinely shared part (the topic-null gate and `owner/repo` argument parsing) — called once per command with its own literal `command`/`action` strings. `/unlinkrepo`'s `errorReplies` map no longer lists `OrgNotClaimedError` (dead code: `unlinkRepo` never throws it — a minor accuracy improvement alongside the refactor, not a behavior change, since that map entry was never exercised) | N/A — pure refactor, no RED expected or produced | **Full suite stayed green throughout.** `npx vitest run` → 334/334 (same count as before this correction's two new tests were added, confirming the refactor changed no observable behavior) |
+
+**One real bug found and fixed**: RES-001 — `/repos` had no upper bound on the reply length, which would 500-loop forever for any team with enough linked repos to exceed Telegram's 4096-char limit. REL-001/REL-002 were test-only assertion tightening (no bug — the production strings already matched exactly). READ-001 was a pure structural refactor (no bug — confirmed behavior-neutral by the full suite staying green before and after).
+
+### Files Changed (this correction)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `src/adapters/telegram/commands.ts` | Modified | Added `REPOS_REPLY_MAX` cap to `reposReply` (RES-001). Extracted `resolveLinkCommandTarget` helper and split the shared `/linkrepo`/`/unlinkrepo` loop into two explicit `bot.command` registrations, each with its own precise `errorReplies` map (READ-001) |
+| `test/adapters/telegram/commands.test.ts` | Modified | Re-link test now asserts the exact reply string (REL-001). Added a zero-links exact-reply test (REL-002) and a 300-link overflow test asserting `reply.length <= 4096` and the exact `...and N more` tail (RES-001) |
+| `openspec/changes/github-alerts/apply-progress.md` | Modified | This correction section |
+
+### RED Evidence (verbatim excerpt)
+
+```
+# RES-001 — commands.test.ts, reposReply temporarily reverted to the unbounded pre-fix version
+npx vitest run test/adapters/telegram/commands.test.ts -t "caps the reply below"
+
+FAIL  test/adapters/telegram/commands.test.ts > registerCommands — /repos (repo-topic-links spec) > caps the reply below Telegram's 4096-char limit and ends with a fixed summary line
+AssertionError: expected 7689 to be less than or equal to 4096
+ ❯ test/adapters/telegram/commands.test.ts:827:25
+    825|
+    826|     const text = replies.at(-1)!.text;
+    827|     expect(text.length).toBeLessThanOrEqual(4096);
+```
+
+### New Test Count
+
+- Before this correction: 332 tests passing (38 files)
+- After this correction: **334 tests passing** (38 files, same file count — only `commands.test.ts` grew) — +2 (the RES-001 overflow test, the REL-002 zero-links test; REL-001 widened an existing test's assertion rather than adding a new one)
+- `npx tsc --noEmit`: clean, no errors (one intermediate error surfaced and was fixed during the READ-001 refactor: `resolveLinkCommandTarget(ctx: Context, ...)` reading `ctx.match` directly failed to typecheck outside a `bot.command` callback's narrowed type — `'ctx.match' is possibly 'undefined'` and `Property 'trim' does not exist on type 'string | RegExpMatchArray'`. Fixed by having each `bot.command` callback pass its own already-narrowed `ctx.match` string into the helper as an explicit `rawRepoArg` parameter instead of the helper reading `ctx.match` itself)
+
+### Line Counts (cumulative, PR5 + this correction, `git diff --stat` against `main`)
+
+| Category | Files | Lines |
+|---|---|---|
+| Production | `src/adapters/telegram/commands.ts` (177) + `src/composition.ts` (4) | **181** |
+| Tests | `test/adapters/telegram/commands.test.ts` | **197** |
+
+Both totals remain well under the 400-line budget — no `size:exception` needed.
+
+### Failed-First vs. Passed-Immediately Summary
+
+- **Failed first (RED, for the right reason), then passed after the fix**: the RES-001 300-link overflow test (verified by temporarily reverting `reposReply` to its unbounded pre-fix form, confirming the exact `7689 > 4096` failure, then restoring the fix).
+- **Passed immediately (disclosed characterization, no RED expected)**: the REL-001 exact-text assertion and the REL-002 zero-links test — both pin down reply strings the production code already produced correctly before this correction.
+- **Refactor-only, safety net stayed green throughout**: READ-001's split of `/linkrepo`/`/unlinkrepo` into two explicit registrations plus the shared `resolveLinkCommandTarget` helper — full suite 334/334 both before (with the two new RES-001/REL-002 tests) and after the refactor, confirming no observable behavior changed.
+
+### Status (after correction)
+
+All 4 PR5 review warnings addressed (risk lens found nothing, no blocker/critical findings). Full suite: `npx vitest run` → 334/334 pass. `npx tsc --noEmit` → clean, no errors. One real bug found and fixed (RES-001's unbounded `/repos` reply, which would have permanently broken the command via an infinite Telegram-retry 500 loop for any sufficiently large team). REL-001/REL-002 tightened test assertions with no bugs found; READ-001 is a pure, verified-behavior-neutral refactor. No commit/push made; `.codegraph/` untouched.

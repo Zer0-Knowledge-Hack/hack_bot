@@ -80,6 +80,8 @@ export function buildBot(env: Env) {
   const membershipRepo = createD1MembershipRepo(env.DB, idGen, clock);
   const profileRepo = createD1ProfileRepo(env.DB, idGen, clock, cipher);
   const dmSelectionRepo = createD1DmSelectionRepo(env.DB);
+  const githubOrgClaimRepo = createD1GithubOrgClaimRepo(env.DB);
+  const repoTopicLinkRepo = createD1RepoTopicLinkRepo(env.DB);
 
   const bot = createBot(env.BOT_TOKEN, parseBotInfo(env.BOT_INFO));
   const chatAdminChecker = createChatAdminChecker(bot.api);
@@ -91,6 +93,8 @@ export function buildBot(env: Env) {
     profileRepo,
     dmSelectionRepo,
     chatAdminChecker,
+    githubOrgClaimRepo,
+    repoTopicLinkRepo,
     clock,
     idGen,
     logger,

@@ -6,21 +6,29 @@ import { changeRole } from "../../domain/usecases/change-role";
 import { resolveDmTeam } from "../../domain/usecases/dm-team-selection";
 import { readProfiles } from "../../domain/usecases/read-profiles";
 import { updateProfileField } from "../../domain/usecases/update-profile-field";
+import { linkRepoToTopic } from "../../domain/usecases/link-repo-to-topic";
+import { unlinkRepo } from "../../domain/usecases/unlink-repo";
+import { listRepoLinks } from "../../domain/usecases/list-repo-links";
 import { NotFoundError, UnauthorizedError } from "../../domain/errors";
+import { parseRepoFullName } from "../../domain/github";
+import type { RepoFullName } from "../../domain/github";
 import type { Membership, ProfileField, ProfileFieldName } from "../../domain/entities";
 import type { MembershipId, TeamId } from "../../domain/ids";
 import type {
   ChatAdminChecker,
   Clock,
   DmSelectionRepo,
+  GithubOrgClaimRepo,
   IdGen,
   Logger,
   MemberRepo,
   MembershipRepo,
   ProfileRepo,
+  RepoTopicLinkRepo,
   TeamRepo,
 } from "../../domain/ports";
 import { callerLocation, resolveGroupMembership } from "./context";
+import type { CallerLocation } from "./context";
 import { runCommand } from "./command-outcome";
 import { InlineKeyboard } from "grammy";
 import { isPrivateChat, registerTeamPicker } from "./team-picker";
@@ -50,6 +58,8 @@ export interface CommandDeps {
   profileRepo: ProfileRepo;
   dmSelectionRepo: DmSelectionRepo;
   chatAdminChecker: ChatAdminChecker;
+  githubOrgClaimRepo: GithubOrgClaimRepo;
+  repoTopicLinkRepo: RepoTopicLinkRepo;
   clock: Clock;
   idGen: IdGen;
   logger: Logger;
@@ -156,6 +166,69 @@ function profileDirectoryReply(memberships: Membership[], fields: ProfileField[]
 function isAnonymousGroupAdmin(ctx: Context): boolean {
   const senderChatId = ctx.message?.sender_chat?.id;
   return senderChatId !== undefined && senderChatId === ctx.chat?.id;
+}
+
+// spec: repo-topic-links "Any Member Lists the Team's Claimed-Org Links —
+// List reflects current links".
+//
+// RES-001: Telegram rejects a message over 4096 chars — an unbounded reply
+// here would make ctx.reply throw, runCommand would rethrow it as an
+// unrecognized error (it is not a domain error), and the route would answer
+// 500, which Telegram retries forever, permanently breaking /repos for any
+// team with enough links. Below the limit, whole lines are kept; once a
+// line would push the reply over the limit, listing stops and a fixed
+// "...and N more" summary line replaces the rest.
+const REPOS_REPLY_MAX = 4096;
+
+function reposReply(links: Array<{ repoFullName: string; threadId: number }>): string {
+  if (links.length === 0) return "No repos linked yet.";
+  const allLines = links.map((l) => `${l.repoFullName} -> topic ${l.threadId}`);
+  const full = allLines.join("\n");
+  if (full.length <= REPOS_REPLY_MAX) return full;
+  for (let kept = allLines.length - 1; kept >= 0; kept--) {
+    const omitted = allLines.length - kept;
+    const head = allLines.slice(0, kept).join("\n");
+    const candidate = kept > 0 ? `${head}\n...and ${omitted} more` : `...and ${omitted} more`;
+    if (candidate.length <= REPOS_REPLY_MAX) return candidate;
+  }
+  // Pathological case: even the summary line alone (0 links listed) does
+  // not fit — defensively truncate rather than ever exceed the limit.
+  return `...and ${allLines.length} more`.slice(0, REPOS_REPLY_MAX);
+}
+
+// READ-001: the genuinely shared part of `/linkrepo` and `/unlinkrepo` —
+// the topic gate (spec: "Admin-Only Link/Unlink Inside a Topic") and the
+// `owner/repo` argument parsing. Everything else (which use case runs,
+// which errors it can throw, the reply text) differs per command and is
+// registered explicitly below, the same way `/setup`/`/join`/`/datachannel`
+// each get their own `bot.command` block instead of a shared branching loop.
+async function resolveLinkCommandTarget(
+  ctx: Context,
+  deps: CommandDeps,
+  command: string,
+  action: string,
+  rawRepoArg: string,
+): Promise<{ loc: CallerLocation; threadId: number; repo: RepoFullName } | null> {
+  const loc = callerLocation(ctx);
+  if (!loc) return null;
+  // The null-thread check below covers both the group's general chat AND a
+  // DM (a DM message never carries message_thread_id) with the same "run
+  // inside the intended topic" instruction /datachannel already uses —
+  // there is no separate isPrivateChat branch, mirroring /datachannel's own
+  // gate (design.md "Link and unlink need an admin, the thread must not be
+  // null, the same refusal as /datachannel").
+  if (loc.threadId === null) {
+    deps.logger.log({ event: `${action}-repo-to-topic`, outcome: "refused", errorCode: "NoThread" });
+    await ctx.reply(`Run /${command} inside the topic you want to ${action}.`);
+    return null;
+  }
+  const threadId = loc.threadId;
+  const repo = parseRepoFullName(rawRepoArg.trim());
+  if (!repo) {
+    await ctx.reply(`Usage: /${command} <owner/repo>`);
+    return null;
+  }
+  return { loc, threadId, repo };
 }
 
 export function registerCommands(bot: Bot, deps: CommandDeps): void {
@@ -364,4 +437,108 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
       );
     });
   }
+
+  // /linkrepo: admin-only, must run inside a forum topic (spec:
+  // repo-topic-links "Admin-Only Link/Unlink Inside a Topic").
+  bot.command("linkrepo", async (ctx) => {
+    const target = await resolveLinkCommandTarget(ctx, deps, "linkrepo", "link", ctx.match);
+    if (!target) return;
+    const { loc, threadId, repo } = target;
+    await runCommand(
+      {
+        event: "link-repo-to-topic",
+        logger: deps.logger,
+        reply: (text) => ctx.reply(text),
+        // Every domain error linkRepoToTopic can throw MUST be listed here
+        // — see command-outcome.ts.
+        errorReplies: {
+          UnauthorizedError: "Only a team admin may link a repo.",
+          NotFoundError: "Could not verify your team membership. Please try /linkrepo again.",
+          OrgNotClaimedError: "This repo's org is not claimed by your team.",
+        },
+      },
+      async () => {
+        const resolved = await resolveGroupMembership(deps, loc.chatId, loc.userId);
+        if (!resolved) {
+          throw new UnauthorizedError("Only a team admin may link a repo");
+        }
+        const result = await linkRepoToTopic(
+          { teamId: resolved.team.id, actorMembershipId: resolved.membership.id, repo, threadId },
+          deps,
+        );
+        // spec: repo-topic-links "One Topic Per Repo, Re-Link Moves It" —
+        // the reply MUST name the previous topic, not just confirm success.
+        const okReply = result.previousThreadId === null
+          ? `Linked ${repo} to this topic.`
+          : `Moved ${repo} from topic ${result.previousThreadId} to topic ${threadId}. Topic ${result.previousThreadId} will no longer receive alerts for this repo.`;
+        return { okReply, teamId: resolved.team.id };
+      },
+    );
+  });
+
+  // /unlinkrepo: admin-only, must run inside a forum topic — same gate as
+  // /linkrepo (spec: repo-topic-links "Admin-Only Link/Unlink Inside a
+  // Topic"). unlinkRepo never throws OrgNotClaimedError (it has no claim
+  // gate — spec: unlinking an already-linked repo requires no org claim
+  // check), so that mapping is intentionally omitted here, unlike
+  // /linkrepo's errorReplies.
+  bot.command("unlinkrepo", async (ctx) => {
+    const target = await resolveLinkCommandTarget(ctx, deps, "unlinkrepo", "unlink", ctx.match);
+    if (!target) return;
+    const { loc, repo } = target;
+    await runCommand(
+      {
+        event: "unlink-repo-to-topic",
+        logger: deps.logger,
+        reply: (text) => ctx.reply(text),
+        // Every domain error unlinkRepo can throw MUST be listed here —
+        // see command-outcome.ts.
+        errorReplies: {
+          UnauthorizedError: "Only a team admin may unlink a repo.",
+          NotFoundError: "Could not verify your team membership. Please try /unlinkrepo again.",
+        },
+      },
+      async () => {
+        const resolved = await resolveGroupMembership(deps, loc.chatId, loc.userId);
+        if (!resolved) {
+          throw new UnauthorizedError("Only a team admin may unlink a repo");
+        }
+        const removed = await unlinkRepo(
+          { teamId: resolved.team.id, actorMembershipId: resolved.membership.id, repo },
+          deps,
+        );
+        return {
+          okReply: removed ? `Unlinked ${repo} from this topic.` : `${repo} was not linked to any topic.`,
+          teamId: resolved.team.id,
+        };
+      },
+    );
+  });
+
+  // /repos: any registered team member, anywhere in the team's group or DM
+  // (spec: repo-topic-links "Any Member Lists the Team's Claimed-Org
+  // Links"). Read-only, so it follows /profile's resolveCommandTeam
+  // convention (group + DM team picker) rather than /datachannel's
+  // topic-only gate.
+  bot.command("repos", async (ctx) => {
+    const loc = callerLocation(ctx);
+    if (!loc) return;
+    const teamId = await resolveCommandTeam(ctx, deps, "list-repo-links-team-resolution");
+    if (!teamId) return;
+    await runCommand(
+      {
+        event: "list-repo-links",
+        logger: deps.logger,
+        reply: (text) => ctx.reply(text),
+        errorReplies: {
+          NotFoundError: "You are not a member of this team.",
+        },
+      },
+      async () => {
+        const actor = await resolveActorMembership(teamId, loc.userId, deps);
+        const links = await listRepoLinks({ teamId, actorMembershipId: actor.id }, deps);
+        return { okReply: reposReply(links), teamId };
+      },
+    );
+  });
 }

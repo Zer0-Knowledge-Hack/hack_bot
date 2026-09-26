@@ -7,10 +7,12 @@ import {
   fakeChatAdminChecker,
   fakeClock,
   fakeDmSelectionRepo,
+  fakeGithubOrgClaimRepo,
   fakeIdGen,
   fakeMemberRepo,
   fakeMembershipRepo,
   fakeProfileRepo,
+  fakeRepoTopicLinkRepo,
   fakeTeamRepo,
 } from "../../fakes";
 
@@ -57,6 +59,8 @@ function makeBot(admins: Array<{ chatId: number; userId: number }> = []) {
   const profileRepo = fakeProfileRepo();
   const dmSelectionRepo = fakeDmSelectionRepo();
   const chatAdminChecker = fakeChatAdminChecker(admins);
+  const githubOrgClaimRepo = fakeGithubOrgClaimRepo();
+  const repoTopicLinkRepo = fakeRepoTopicLinkRepo();
   const deps = {
     teamRepo,
     memberRepo,
@@ -64,6 +68,8 @@ function makeBot(admins: Array<{ chatId: number; userId: number }> = []) {
     profileRepo,
     dmSelectionRepo,
     chatAdminChecker,
+    githubOrgClaimRepo,
+    repoTopicLinkRepo,
     clock: fakeClock(),
     idGen: fakeIdGen(),
     logger: createSafeLogger(),
@@ -632,5 +638,196 @@ describe("registerCommands — DM team picker outbound failures (R4-001/R4-003)"
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ event: "dm-team-selection", outcome: "error" }),
     );
+  });
+});
+
+// PR5 (repo-topic-links spec) — /linkrepo, /unlinkrepo, /repos.
+describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
+  it("an admin links a claimed-org repo when run inside a topic", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+
+    expect(deps.repoTopicLinkRepo.rows).toMatchObject([
+      { repoFullName: "owner/repo", threadId: 77 },
+    ]);
+    expect(replies[1]?.text).toMatch(/linked/i);
+  });
+
+  it("refuses an unclaimed org and stores no row", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+
+    expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
+    expect(replies[1]?.text).toMatch(/claimed/i);
+  });
+
+  it("refuses a non-admin member", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("join", 10, 3));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 3, { threadId: 77, args: "owner/repo" }));
+
+    expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
+    expect(replies[2]?.text).toMatch(/admin/i);
+  });
+
+  it("refuses when run outside a topic (general chat) and instructs the admin to run it inside the intended topic", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { args: "owner/repo" }));
+
+    expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
+    expect(replies[1]?.text).toMatch(/topic/i);
+  });
+
+  it("refuses a malformed repo argument with a usage reply", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "not-a-repo" }));
+
+    expect(replies[1]?.text).toMatch(/usage/i);
+  });
+
+  it("re-linking an already-linked repo moves it and the reply names the previous topic", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 88, args: "owner/repo" }));
+
+    expect(deps.repoTopicLinkRepo.rows).toMatchObject([{ repoFullName: "owner/repo", threadId: 88 }]);
+    // REL-001: pin the exact direction (previous topic -> new topic), not
+    // just that both numbers appear somewhere in the reply.
+    expect(replies[2]?.text).toBe(
+      "Moved owner/repo from topic 77 to topic 88. Topic 77 will no longer receive alerts for this repo.",
+    );
+  });
+});
+
+describe("registerCommands — /unlinkrepo (repo-topic-links spec)", () => {
+  it("an admin unlinks a repo when run inside a topic", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+
+    await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+
+    expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
+    expect(replies[2]?.text).toMatch(/unlinked/i);
+  });
+
+  it("refuses a non-admin member", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("join", 10, 3));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+
+    await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 3, { threadId: 77, args: "owner/repo" }));
+
+    expect(deps.repoTopicLinkRepo.rows).toHaveLength(1);
+    expect(replies[3]?.text).toMatch(/admin/i);
+  });
+
+  it("refuses when run outside a topic (general chat)", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+
+    await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 1, { args: "owner/repo" }));
+
+    expect(replies[1]?.text).toMatch(/topic/i);
+  });
+});
+
+describe("registerCommands — /repos (repo-topic-links spec)", () => {
+  it("a non-admin member lists the team's claimed-org links from the general chat", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("join", 10, 3));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo-a" }));
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 78, args: "owner/repo-b" }));
+
+    await bot.handleUpdate(commandUpdate("repos", 10, 3));
+
+    expect(replies.at(-1)?.text).toContain("owner/repo-a");
+    expect(replies.at(-1)?.text).toContain("owner/repo-b");
+    expect(deps.repoTopicLinkRepo.rows).toHaveLength(2);
+  });
+
+  it("refuses a non-member", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+
+    await bot.handleUpdate(commandUpdate("repos", 10, 999));
+
+    expect(replies[1]?.text).toMatch(/member/i);
+  });
+
+  it("excludes a link whose org claim was later removed", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    deps.githubOrgClaimRepo.rows.push({ teamId: deps.teamRepo.rows[0]!.id, orgLogin: "owner" });
+    await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+    deps.githubOrgClaimRepo.rows.length = 0;
+
+    await bot.handleUpdate(commandUpdate("repos", 10, 1));
+
+    expect(replies.at(-1)?.text).not.toContain("owner/repo");
+  });
+
+  // REL-002: pin the exact zero-links reply text.
+  it("replies with the exact zero-links message when the team has no links", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+
+    await bot.handleUpdate(commandUpdate("repos", 10, 1));
+
+    expect(replies.at(-1)?.text).toBe("No repos linked yet.");
+  });
+
+  // RES-001: past Telegram's 4096-char limit, an unbounded reply would make
+  // ctx.reply throw, runCommand would rethrow it as an unrecognized error
+  // (it is not a domain error), and the route would answer 500 — which
+  // Telegram retries forever, permanently breaking /repos for any team with
+  // enough links. This team has 300 links, comfortably enough to exceed the
+  // limit with the "owner/repo-N -> topic 1" line format.
+  it("caps the reply below Telegram's 4096-char limit and ends with a fixed summary line", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    const teamId = deps.teamRepo.rows[0]!.id;
+    deps.githubOrgClaimRepo.rows.push({ teamId, orgLogin: "owner" });
+    const total = 300;
+    for (let i = 0; i < total; i++) {
+      deps.repoTopicLinkRepo.rows.push({
+        teamId,
+        repoFullName: `owner/repo-${i}` as never,
+        orgLogin: "owner",
+        threadId: 1,
+        createdAt: 0,
+        updatedAt: 0,
+      });
+    }
+
+    await bot.handleUpdate(commandUpdate("repos", 10, 1));
+
+    const text = replies.at(-1)!.text;
+    expect(text.length).toBeLessThanOrEqual(4096);
+    const includedLines = text.split("\n").filter((line) => line.startsWith("owner/repo-")).length;
+    expect(text.endsWith(`...and ${total - includedLines} more`)).toBe(true);
+    expect(includedLines).toBeLessThan(total);
+    expect(includedLines).toBeGreaterThan(0);
   });
 });
