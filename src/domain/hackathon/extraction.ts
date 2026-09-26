@@ -39,6 +39,16 @@ export type ValidateExtractionResult =
 // window used for verbatim-in-page checking below; the stored cap is 200.
 const SNIPPET_MAX = 200;
 
+// design.md "Storage": "The validated extraction JSON, bounded; no page
+// text" — every string field's `value` is capped so the persisted JSON
+// stays bounded even when a field legitimately needs more room than a
+// short field like `name` (e.g. `prizes` and `tracks` can describe several
+// items in one sentence). 500 is generous enough for those longer fields
+// while still rejecting a runaway or hallucinated value (RISK-001: the
+// probe showed a 100,000-char `name` passing validation). `teamSize` is
+// numeric and unaffected.
+const VALUE_MAX = 500;
+
 const FIELD_NAMES: Array<keyof ExtractedFields> = [
   "name",
   "format",
@@ -106,14 +116,20 @@ function hasValidFieldType(name: keyof ExtractedFields, value: unknown): boolean
 }
 
 // Demotes a syntactically valid field to null when it fails a content
-// guard: an oversized snippet (spec: "Bounded Source Snippet") or a snippet
-// that is not verbatim in the page text (design.md "fields whose snippet
-// is not found in the page" become null).
+// guard: an empty/whitespace-only snippet (RISK-001 — trivially "found" in
+// any page, defeating the anti-hallucination verbatim check), an oversized
+// snippet (spec: "Bounded Source Snippet"), a snippet that is not verbatim
+// in the page text (design.md "fields whose snippet is not found in the
+// page" become null), or an oversized `value` (RISK-001, VALUE_MAX above).
 function sanitizeField(
   field: ExtractedField<unknown>,
   pageText: string,
 ): Field<unknown> {
+  if (field.snippet.trim().length === 0) return null;
   if (field.snippet.length > SNIPPET_MAX) return null;
   if (!pageText.includes(field.snippet)) return null;
+  if (typeof field.value === "string" && field.value.length > VALUE_MAX) {
+    return null;
+  }
   return field;
 }

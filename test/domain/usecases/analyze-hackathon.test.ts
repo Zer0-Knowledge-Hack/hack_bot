@@ -15,21 +15,24 @@ const TEAM_ID = asTeamId("team-1");
 const SOURCE_URL = "https://example.com/event";
 const NORMALIZED_URL = "https://example.com/event";
 
-// snippet is "" (always verbatim-in-page, see extraction.ts's
-// sanitizeField) so this fixture works against any fake page text.
-const VALID_RAW = {
-  name: { value: "Meridian", snippet: "", confidence: 0.9 },
-  format: null,
-  location: null,
-  teamSize: null,
-  submissionDeadline: null,
-  startDate: null,
-  endDate: null,
-  resultsDate: null,
-  prizes: null,
-  tracks: null,
-  eligibility: null,
-};
+// RISK-001: `sanitizeField` now nulls a field whose snippet is empty or
+// not verbatim in the page text, so every fixture below must carry a
+// snippet that actually occurs in whichever page text the LLM will see.
+function validRaw(snippet: string) {
+  return {
+    name: { value: "Meridian", snippet, confidence: 0.9 },
+    format: null,
+    location: null,
+    teamSize: null,
+    submissionDeadline: null,
+    startDate: null,
+    endDate: null,
+    resultsDate: null,
+    prizes: null,
+    tracks: null,
+    eligibility: null,
+  };
+}
 
 function makeDeps(overrides: {
   staticText?: string;
@@ -41,7 +44,13 @@ function makeDeps(overrides: {
   const renderedFetcher = overrides.renderedThrows
     ? fakePageFetcher([{ throws: overrides.renderedThrows }])
     : fakePageFetcher([{ text: overrides.renderedText ?? "y".repeat(900) }]);
-  const llmExtractor = fakeLlmExtractor([{ raw: VALID_RAW }]);
+  // The page text the LLM actually receives is the rendered text when one
+  // is supplied (the browser-fallback path), otherwise the static text —
+  // mirrors resolvePageText's own selection.
+  const llmSourceText = overrides.renderedText ?? staticText;
+  const llmExtractor = fakeLlmExtractor([
+    { raw: validRaw(llmSourceText.slice(0, 5)) },
+  ]);
   return {
     staticFetcher,
     renderedFetcher,
@@ -114,7 +123,7 @@ describe("analyzeHackathon: browser rendering quota exhaustion (429) degrade pat
 describe("analyzeHackathon: primary-then-fallback LLM call", () => {
   it("calls only the primary model when its output validates", async () => {
     const deps = makeDeps();
-    const tracked = fakeLlmExtractor([{ raw: VALID_RAW }]);
+    const tracked = fakeLlmExtractor([{ raw: validRaw("xxxxx") }]);
     deps.llmExtractor = tracked;
 
     await analyzeHackathon(makeInput(), deps);
@@ -127,7 +136,7 @@ describe("analyzeHackathon: primary-then-fallback LLM call", () => {
     const deps = makeDeps();
     const tracked = fakeLlmExtractor([
       { raw: { not: "valid" } },
-      { raw: VALID_RAW },
+      { raw: validRaw("xxxxx") },
     ]);
     deps.llmExtractor = tracked;
 

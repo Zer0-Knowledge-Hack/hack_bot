@@ -190,6 +190,101 @@ describe("validateExtraction", () => {
     expect(result).toEqual({ ok: false, reason: "invalid-shape" });
   });
 
+  it("nulls a field whose snippet is empty (RISK-001: an empty snippet trivially 'matches' any page)", () => {
+    const result = validateExtraction(
+      {
+        name: { value: "A".repeat(100_000), snippet: "", confidence: 1 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      pageText,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.fields.name).toBeNull();
+  });
+
+  it("nulls a field whose snippet is whitespace-only (RISK-001)", () => {
+    const whitespacePage = `${pageText}    `;
+    const result = validateExtraction(
+      {
+        name: { value: "Meridian 2026", snippet: "    ", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      whitespacePage,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.fields.name).toBeNull();
+  });
+
+  it("nulls a field whose string value exceeds the max length (RISK-001)", () => {
+    const overValue = "p".repeat(501);
+    const withinPage = `Prizes: ${overValue} details here.`;
+    const result = validateExtraction(
+      {
+        name: null,
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: { value: overValue, snippet: "Prizes:", confidence: 0.9 },
+        tracks: null,
+        eligibility: null,
+      },
+      withinPage,
+    );
+    expect(overValue).toHaveLength(501);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.fields.prizes).toBeNull();
+  });
+
+  it("keeps a field whose string value is exactly at the max length (RISK-001)", () => {
+    const exactValue = "p".repeat(500);
+    const withinPage = `Prizes: ${exactValue} details here.`;
+    const result = validateExtraction(
+      {
+        name: null,
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: { value: exactValue, snippet: "Prizes:", confidence: 0.9 },
+        tracks: null,
+        eligibility: null,
+      },
+      withinPage,
+    );
+    expect(exactValue).toHaveLength(500);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.fields.prizes).toEqual({
+      value: exactValue,
+      snippet: "Prizes:",
+      confidence: 0.9,
+    });
+  });
+
   it("nulls a field whose snippet is not found verbatim in the page text", () => {
     const result = validateExtraction(
       {
