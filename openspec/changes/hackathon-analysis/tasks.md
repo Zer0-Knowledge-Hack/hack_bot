@@ -44,7 +44,7 @@ Chain strategy: stacked-to-main
 - [x] 1.8 GREEN: `src/domain/hackathon/extraction.ts`.
 - [x] 1.9 RED/GREEN: `src/domain/hackathon/suggest.ts` — deterministic token-overlap top-3 repo suggestion, with test.
 - [ ] 1.10 RED/GREEN: `src/domain/hackathon/format.ts` — analysis and `/hackathons` list formatting, with test.
-- [ ] 1.11 RED/GREEN: `src/domain/text-limit.ts` — `joinLinesWithinLimit` (spec hackathon-analysis: Listing Is Read-Only and Truncated, Plain Text Replies), with test.
+- [x] 1.11 RED/GREEN: `src/domain/text-limit.ts` — `joinLinesWithinLimit` (spec hackathon-analysis: Listing Is Read-Only and Truncated, Plain Text Replies), with test.
 
 ## Phase 2: Ports, Errors, analyzeHackathon (PR2)
 
