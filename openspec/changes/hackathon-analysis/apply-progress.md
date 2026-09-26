@@ -129,3 +129,93 @@ test/domain/hackathon/url.test.ts        |  26 ++++++++
 
 ### Deviations
 None. RELI-001/RESI-001 kept the file's existing "invalid shape rejects the whole response" semantics rather than introducing a new per-field null path, per the instruction to follow the file's existing design unless it clearly says otherwise.
+
+## Phase 2 (PR2: Ports, Errors, analyzeHackathon) — branch `feat/hackathon-analyze-usecase`
+
+### Scope of this batch
+
+Phase 2 only — Ports, Errors, `analyzeHackathon` use case. Phases 3-11 are untouched. Branch created from `main` right after PR #20 (Phase 1) was merged.
+
+### Completed Tasks
+
+- [x] 2.1 Ports added to `src/domain/ports.ts`: `PageFetcher`, `LlmExtractor`, `HackathonAnalysisRepo`, `AnalysisQuota`, `AnalysisJobRepo`, `AnalysisJobQueue`, `RepoMetadataSource`, `ChatPublisher`.
+- [x] 2.2 Entities added to `src/domain/entities.ts`: `HackathonAnalysis`, `AnalysisJobMessage`, `AnalysisJob`, `AnalysisJobStatus`, `NewAnalysisJob`, `ClaimResult`, `JobOutcome`.
+- [x] 2.3 Errors added to `src/domain/errors.ts`: `UnsafeUrlError`, `PageFetchFailedError`, `PageTooThinError`, `ExtractionFailedError`, `LlmQuotaExceededError`, `QueueSendFailedError`, `AnalysisBusyError`, `DailyCapReachedError`, `AnalysisNotFoundError`, `PublishFailedError`, `BrowserQuotaExceededError`. `ConfigError` re-exported (not duplicated) from the pre-existing `src/config-error.ts`.
+- [x] 2.4 Fakes added to `test/fakes/index.ts` for every new port (`fakePageFetcher`, `fakeLlmExtractor`, `fakeHackathonAnalysisRepo`, `fakeAnalysisQuota`, `fakeAnalysisJobRepo`, `fakeAnalysisJobQueue`, `fakeRepoMetadataSource`, `fakeChatPublisher`).
+- [x] 2.5 RED: `test/domain/usecases/analyze-hackathon.test.ts` — 9 tests across 4 groups: static-then-browser fallback below 800 chars, 429-degrade path (both scenarios), primary-then-fallback LLM call, persist+suggestions (including slug-collision and same-URL-refresh wiring).
+- [x] 2.6 GREEN: `src/domain/usecases/analyze-hackathon.ts`.
+
+All 6 Phase 2 tasks complete. Phases 3-11 remain pending (not assigned to this batch).
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.5/2.6 | `test/domain/usecases/analyze-hackathon.test.ts` | Unit | N/A (new) | Written, confirmed failing (`Cannot find module '.../analyze-hackathon'`) | 9/9 passed after one fixture fix (the `VALID_RAW` fixture's `snippet: "Meridian"` was not verbatim in any fake page text, so `validateExtraction`'s snippet-verbatim guard nulled the field; changed to `snippet: ""`, always verbatim) | 9 cases: fallback triggered vs skipped on the 800-char threshold, 429-degrade with >=200 vs <200 static chars, primary-only vs primary-then-fallback LLM calls, fresh persist+suggestions, slug-collision suffix, same-URL refresh keeps slug/id/threadId | None needed — single orchestration function plus 3 small private helpers (`resolvePageText`, `extractFields`, `deriveUniqueSlug`), no duplication to remove |
+
+#### Test Summary
+- **Total tests written**: 9 (Phase 2 `analyzeHackathon` tests)
+- **Total tests passing**: 9/9
+- **Layers used**: Unit (9)
+- **Approval tests** (refactoring): None — new file
+- **Pure/orchestration functions created**: `analyzeHackathon`, `resolvePageText`, `extractFields`, `deriveUniqueSlug`
+
+### Work Unit Evidence
+
+| Work unit | Focused test command | Result | Runtime harness | Rollback boundary |
+|---|---|---|---|---|
+| 2.1-2.3 ports/entities/errors | `npm run typecheck` (no dedicated test file — pure type additions consumed by 2.5/2.6's tests) | Clean, no errors | N/A — type-only additions, no runtime behavior | revert commit `a9676ae` (`src/domain/{ports,entities,errors}.ts`) |
+| 2.4 fakes | `npm run typecheck` (fakes are exercised transitively by 2.5/2.6's tests) | Clean, no errors | N/A — in-memory test fixtures | revert commit `a05ee2e` (`test/fakes/index.ts`) |
+| 2.5/2.6 analyzeHackathon | `npx vitest run test/domain/usecases/analyze-hackathon.test.ts` | 9/9 passed | N/A — pure Vitest with fakes (no D1/Workers AI/Browser Rendering/queue calls) | revert commit `7474d52` (`src/domain/usecases/analyze-hackathon.ts`, `test/domain/usecases/analyze-hackathon.test.ts`, tasks.md checkboxes) |
+
+Full-suite and typecheck evidence (after all 3 commits):
+- `npx vitest run` → 46 files, **411/411 tests passed** (0 failed)
+- `npm run typecheck` → clean, no errors
+- `rg -n "workers-ai|puppeteer|grammy|cloudflare:workers|@cloudflare/puppeteer|D1Database" src/domain` → no matches (domain stays framework-free)
+
+### Files Changed
+
+| File | Action | What was done |
+|------|--------|----------------|
+| `src/domain/ports.ts` | Modified | Added `PageFetcher`, `LlmExtractor`, `HackathonAnalysisRepo`, `AnalysisQuota`, `AnalysisJobRepo`, `AnalysisJobQueue`, `RepoMetadataSource`, `ChatPublisher` |
+| `src/domain/entities.ts` | Modified | Added `HackathonAnalysis`, `AnalysisJobMessage`, `AnalysisJob`, `AnalysisJobStatus`, `NewAnalysisJob`, `ClaimResult`, `JobOutcome` |
+| `src/domain/errors.ts` | Modified | Added the 11 new hackathon error classes; re-exported the existing `ConfigError` |
+| `test/fakes/index.ts` | Modified | Added 8 fake factories, one per new port |
+| `src/domain/usecases/analyze-hackathon.ts` | Created | `analyzeHackathon` use case |
+| `test/domain/usecases/analyze-hackathon.test.ts` | Created | 9 tests across the 4 scenario groups named in task 2.5 |
+| `openspec/changes/hackathon-analysis/tasks.md` | Modified | Phase 2 tasks 2.1-2.6 marked `[x]` |
+
+### Deviations from Design
+
+- **`RepoMetadataSource` defined but not wired into `analyzeHackathon` yet.** design.md's Data Flow line reads `... → validate → repoLinks+metadata → suggest → persist+mark`, suggesting GitHub repo metadata enriches the suggestion step. Task 2.5's named test scenarios (the acceptance criteria for this batch) do not include a metadata-enrichment case, and the concrete adapter (`src/adapters/github/repo-metadata.ts`) is explicitly scoped to PR8 in design.md's File Changes table. Implemented the port interface now (task 2.1 requires it) but left `analyzeHackathon`'s suggestion step as token-overlap only (`suggestRepos` over `RepoTopicLinkRepo.list`), with a code comment pointing at this note. Wiring `RepoMetadataSource` into `analyzeHackathon` (or a documented decision that it belongs elsewhere, e.g. `showAnalysis`) is deferred to whichever PR actually implements the adapter.
+- **`RepoMetadataSource`'s method shape (`fetchDescription(repo): Promise<string | null>`) is inferred**, not copied from an explicit contract in design.md (the design doc says these ports are "unchanged" from an earlier draft not included in this excerpt). Kept minimal and adjustable — no caller depends on its exact shape yet.
+- **Random hex slug suffix (attempt 100+) uses the injected `IdGen`, not `crypto.randomUUID()` directly.** design.md says slug.ts "never calls crypto directly" and the caller supplies the random hex; using the already-injected `IdGen` (rather than a raw global) keeps `analyzeHackathon` fully deterministic under test. Not covered by a RED test (unrealistic to collide 99 times for one team); noted as an untested branch.
+- **`analyzeHackathon` does not re-run `assertSafeUrl`.** Per design.md, the guard runs at the producer (`requestHackathonAnalysis`, PR3) and again inside each fetcher adapter on every redirect/sub-request (PR6/PR7). `analyzeHackathon` receives an already-guarded `sourceUrl` and does not duplicate the guard — consistent with task 2.5's scenario list, which does not name a guard test for this use case.
+- No other deviations. Ports, entities and errors match every name listed in tasks.md 2.1-2.3.
+
+### Issues Found
+
+None.
+
+### Remaining Tasks (not in this batch)
+
+- [ ] Phase 3: `requestHackathonAnalysis` + `runHackathonJob` (PR3)
+- [ ] Phase 4: Show, Link, List Use Cases (PR4)
+- [ ] Phase 5: Migration + D1 Repos (PR5)
+- [ ] Phase 6: Static Fetcher (PR6)
+- [ ] Phase 7: Rendered (Browser) Fetcher (PR7)
+- [ ] Phase 8: Workers AI Extractor + GitHub Metadata (PR8)
+- [ ] Phase 9: Queue Adapter, Consumer Wiring, Handler Tests (PR9)
+- [ ] Phase 10: Publisher, Commands, Env, Wrangler (PR10)
+- [ ] Phase 11: Operator Rollout (manual, not performed by apply)
+
+### Workload / PR Boundary
+
+- Mode: chained PR slice (stacked-to-main, per tasks.md's Chain strategy)
+- Current work unit: PR2 (Phase 2 — Ports, Errors, analyzeHackathon)
+- Boundary: starts from `feat/hackathon-analyze-usecase`, branched off `main` right after PR1 (#20) merged; ends with the 8 new ports, 7 new entity types, 11 new error classes, 8 new fakes and the `analyzeHackathon` use case all in place, Phase 2 tasks marked `[x]`, full suite and typecheck green.
+- Estimated review budget impact: **exceeds the 400-line guard**, same as PR1. `git diff --shortstat main` reports 871 insertions + 7 deletions = 878 changed lines (src: 472, test: 393+1, openspec/tasks.md: 6+6), well above the forecast's ~350 estimate. Reported as-is per the instruction to flag but not self-split; the maintainer should decide whether to split this PR further or accept it with `size:exception`.
+
+### Status
+
+6/6 Phase 2 tasks complete (17/56 cumulative across Phases 1-2, counting each Phase 1/2 checkbox once). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 3) once PR2 is reviewed/merged per the stacked-to-main chain strategy.
