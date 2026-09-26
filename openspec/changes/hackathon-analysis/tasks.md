@@ -34,8 +34,8 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Domain Foundation — Pure Modules (PR1)
 
-- [ ] 1.1 RED: `test/domain/hackathon/argument.test.ts` — slug vs URL classification (spec hackathon-analysis: Argument Classified as Slug or URL, both scenarios).
-- [ ] 1.2 GREEN: `src/domain/hackathon/argument.ts` classifier.
+- [x] 1.1 RED: `test/domain/hackathon/argument.test.ts` — slug vs URL classification (spec hackathon-analysis: Argument Classified as Slug or URL, both scenarios).
+- [x] 1.2 GREEN: `src/domain/hackathon/argument.ts` classifier.
 - [ ] 1.3 RED: `test/domain/hackathon/url.test.ts` — scheme/userinfo/port/IP-literal/private-suffix guard, normalization key (spec page-fetch: Scheme and Destination Guard, both scenarios).
 - [ ] 1.4 GREEN: `src/domain/hackathon/url.ts` guard + normalize.
 - [ ] 1.5 RED: `test/domain/hackathon/slug.test.ts` — name/host derivation, NFKD, 40-char cap, collision suffixes (spec hackathon-analysis: Slug Generation and Uniqueness, both scenarios).
