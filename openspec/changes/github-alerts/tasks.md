@@ -73,6 +73,6 @@ Chain strategy: stacked-to-main
 
 ## Phase 6: Operator Rollout
 
-- [ ] 6.1 (after PR3 merges) `npx wrangler secret put GITHUB_WEBHOOK_SECRET`.
-- [ ] 6.2 (after PR4 merges) Configure org webhook: content type `application/json`, same secret, Pull requests + Issues events; verify ping returns 200.
+- [x] 6.1 (after PR3 merges) `npx wrangler secret put GITHUB_WEBHOOK_SECRET`.
+- [x] 6.2 (after PR4 merges) Configure org webhook: content type `application/json`, same secret, Pull requests + Issues events; verify ping returns 200.
 - [x] 6.3 (after PR1 merges, before PR5's `/linkrepo` is used) Claim the org via `wrangler d1 execute` insert into `github_org_claims`.
