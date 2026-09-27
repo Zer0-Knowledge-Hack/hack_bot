@@ -235,3 +235,87 @@ The sub-agent stalled after the first two commits. The orchestrator finished RES
 Evidence: `npx vitest run` → 46 files, 422/422 passed. `npm run typecheck` is clean.
 
 Warnings recorded but not fixed here: RISK-002 (`save` has no explicit teamId guard), RELI-002/003/004/006 (missing boundary and keep-prior tests), RELI-005 (RepoMetadataSource wiring deferred to PR8), RESI-002 (the slug fallback at attempt 100 skips `slugExists`).
+
+## Phase 3 (PR3: requestHackathonAnalysis + runHackathonJob) — branch `feat/hackathon-job-usecases`
+
+### Scope of this batch
+
+Phase 3 only — `requestHackathonAnalysis` (producer) and `runHackathonJob` (consumer). Phases 4-11 are untouched. Branch created from `main` right after PR #21 (Phase 2) was merged.
+
+### Completed Tasks
+
+- [x] 3.1 RED: `test/domain/usecases/request-hackathon-analysis.test.ts` — admin gate (both scenarios), busy refusal, cap-reached refusal, enqueue failure refunds.
+- [x] 3.2 GREEN: `src/domain/usecases/request-hackathon-analysis.ts`.
+- [x] 3.3 RED: `test/domain/usecases/run-hackathon-job.test.ts` — terminal no-op ack, held claim retries, persisted job only posts, stale job refunded, claimed happy path, transient error retries then fails on the final attempt.
+- [x] 3.4 GREEN: `src/domain/usecases/run-hackathon-job.ts`.
+
+All 4 Phase 3 tasks complete. Phases 4-11 remain pending (not assigned to this batch).
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1/3.2 | `test/domain/usecases/request-hackathon-analysis.test.ts` | Unit | N/A (new) | Written with the implementation temporarily moved aside; confirmed failing (`Cannot find module '.../request-hackathon-analysis'`); implementation restored | 5/5 passed on first run | 5 cases: admin succeeds, non-admin refused, busy refused, cap-reached refused, enqueue-failure refunds | None needed — single orchestration function, one small `utcDayOf` helper |
+| 3.3/3.4 | `test/domain/usecases/run-hackathon-job.test.ts` | Unit | N/A (new) | Written, confirmed failing (`Cannot find module '.../run-hackathon-job'`) | 6/6 passed on first run | 6 cases: terminal ack, held retry, persisted-only-post, stale-refunded, claimed happy path, transient retry-then-final-fail | None needed — `runClaimedJob`/`postPersistedResult`/`classifyJobError`/`handleJobError`/`safePost` are already small single-purpose helpers |
+
+#### Test Summary
+- **Total tests written**: 11 (5 + 6)
+- **Total tests passing**: 11/11
+- **Layers used**: Unit (11)
+- **Approval tests** (refactoring): None — both files are new
+- **Functions created**: `requestHackathonAnalysis`, `utcDayOf`; `runHackathonJob`, `postPersistedResult`, `runClaimedJob`, `classifyJobError`, `handleJobError`, `safePost`
+
+### Work Unit Evidence
+
+| Work unit | Focused test command | Result | Runtime harness | Rollback boundary |
+|---|---|---|---|---|
+| 3.1/3.2 requestHackathonAnalysis | `npx vitest run test/domain/usecases/request-hackathon-analysis.test.ts` | 5/5 passed | N/A — pure Vitest with fakes (no D1/queue) | revert commit `9990c8e` (`src/domain/usecases/request-hackathon-analysis.ts`, its test, tasks.md checkboxes) |
+| 3.3/3.4 runHackathonJob | `npx vitest run test/domain/usecases/run-hackathon-job.test.ts` | 6/6 passed | N/A — pure Vitest with fakes (no D1/Workers AI/Browser Rendering/queue/Telegram) | revert commit `9ca5741` (`src/domain/usecases/run-hackathon-job.ts`, its test, tasks.md checkboxes) |
+
+Full-suite and typecheck evidence (after both commits):
+- `npx vitest run` → 48 files, **433/433 tests passed** (0 failed)
+- `npm run typecheck` → clean, no errors
+
+### Files Changed
+
+| File | Action | What was done |
+|------|--------|----------------|
+| `src/domain/usecases/request-hackathon-analysis.ts` | Created | `requestHackathonAnalysis` — admin gate, atomic cap+lease reservation, enqueue, ack reply; refunds on enqueue failure |
+| `test/domain/usecases/request-hackathon-analysis.test.ts` | Created | 5 tests across the named scenarios |
+| `src/domain/usecases/run-hackathon-job.ts` | Created | `runHackathonJob` — claim dispatch (terminal/held/persisted/claimed), stale-job refund, 180 s attempt deadline via `analyzeHackathon`, error-taxonomy classification (permanent vs transient), post + terminal mark + quota release |
+| `test/domain/usecases/run-hackathon-job.test.ts` | Created | 6 tests across the named scenarios plus one happy-path wiring test |
+| `openspec/changes/hackathon-analysis/tasks.md` | Modified | Phase 3 tasks 3.1-3.4 marked `[x]` |
+
+### Deviations from Design
+
+- **`runHackathonJob`'s `attempt` parameter is the queue's own delivery counter, not `AnalysisJob.attempts`.** design.md's "Interfaces / Contracts" names the signature `runHackathonJob(msg, attempt, deps)` without spelling out what `attempt` is. `AnalysisJob.attempts` is D1-maintained and incremented by `claim`; using it directly would require an extra D1 round trip inside a pure use case just to read the pre-claim value. Using the queue's own attempt count for the transient-retry limit keeps the function pure and matches "max_retries: 2" (3 total attempts) at the queue-consumer boundary named in design.md's "Retries" row. Noted here for `src/index.ts` (PR9) to wire from the real `Message.attempts`.
+- **A fresh (non-stale, non-erroring) `/hackathon <url>` run is always posted via `chatPublisher.post` directly — never through `linkAnalysisToTopic`.** design.md's Data Flow line groups "general chat: publisher.post" and "topic: linkAnalysisToTopic (post, pin, moveLink, unpin old)" under the same consumer step, but `linkAnalysisToTopic` is explicitly scoped to PR4 (tasks.md Phase 4) and does not exist yet. The spec's own named scenario for a fresh run ("Admin runs a fresh analysis in general chat") only requires an unpinned post; no fresh-run scenario in the hackathon-analysis spec requires pinning. Task 3.3/3.4's scenario list (the acceptance criteria for this batch) also never names a link/pin case. Wiring `runHackathonJob` to call `linkAnalysisToTopic` instead of a bare `post` when `job.threadId` is set is deferred to whichever PR actually implements and wires that use case (PR4 or later), with a decision to make at that point about whether fresh-run topic posts should also pin.
+- **`postPersistedResult` recomputes the stored analysis from `job.fetchUrl` via `normalizeUrlKey` + `HackathonAnalysisRepo.findByNormalizedUrl`, since the repo has no `findById`.** This matches design.md's own stated pattern ("the consumer recomputes the key from `fetchUrl` with the same pure function") and reuses the exact port shape already defined in PR2 without adding a new method to `HackathonAnalysisRepo`. If no analysis is found (should not happen in practice once a job reaches `persisted`), the post is skipped rather than throwing, and the job is still marked succeeded and released — a defensive fallback, not a named scenario.
+- **A `ConfigError` refunds the reserved cap slot; every other permanent job error does not.** design.md's Error Taxonomy table has "No (refund)" in the Cap column for `ConfigError` specifically, versus a bare "Yes"/"No" for the other rows — read as "counts against the cap: no, because it is refunded" (a misconfiguration is never a real run). No RED test in this batch drives the `ConfigError` branch (task 3.3's named scenarios do not include it); the classification exists for completeness with the design table and will be exercised once an adapter that can throw `ConfigError` is wired (PR8/PR10).
+- **A failure reply that itself fails to send is swallowed (`safePost`), not re-classified.** Re-entering `classifyJobError` on a failed failure-reply would risk infinite loops between "post the error" and "the post itself errored." design.md's Error Taxonomy row for `PublishFailedError rejected` says "(none possible)" for the user reply, implying failure-reply delivery is already understood to be best-effort at this layer.
+
+### Issues Found
+
+None.
+
+### Remaining Tasks (not in this batch)
+
+- [ ] Phase 4: Show, Link, List Use Cases (PR4)
+- [ ] Phase 5: Migration + D1 Repos (PR5)
+- [ ] Phase 6: Static Fetcher (PR6)
+- [ ] Phase 7: Rendered (Browser) Fetcher (PR7)
+- [ ] Phase 8: Workers AI Extractor + GitHub Metadata (PR8)
+- [ ] Phase 9: Queue Adapter, Consumer Wiring, Handler Tests (PR9)
+- [ ] Phase 10: Publisher, Commands, Env, Wrangler (PR10)
+- [ ] Phase 11: Operator Rollout (manual, not performed by apply)
+
+### Workload / PR Boundary
+
+- Mode: chained PR slice (stacked-to-main, per tasks.md's Chain strategy)
+- Current work unit: PR3 (Phase 3 — requestHackathonAnalysis + runHackathonJob)
+- Boundary: starts from `feat/hackathon-job-usecases`, branched off `main` right after PR2 (#21) merged; ends with both use cases in place, Phase 3 tasks marked `[x]`, full suite and typecheck green.
+- Estimated review budget impact: **exceeds the 400-line guard**, same as PR1/PR2. `git diff --shortstat main` reports src: 342 insertions (2 files), test: 334 insertions (2 files), openspec: 4+4 = 680 changed lines total, above the forecast's ~380 estimate. Reported as-is per the instruction to flag but not self-split; the maintainer should decide whether to split this PR further or accept it with `size:exception`.
+
+### Status
+
+4/4 Phase 3 tasks complete (23/56 cumulative across Phases 1-3, counting each checkbox once). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 4) once PR3 is reviewed/merged per the stacked-to-main chain strategy.
