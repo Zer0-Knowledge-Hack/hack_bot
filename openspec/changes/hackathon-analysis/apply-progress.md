@@ -717,3 +717,51 @@ None — one test bug was caught and fixed during 5.6/5.7 (see TDD Cycle Evidenc
 ### Status
 
 8/8 Phase 5 tasks complete (37/56 cumulative across Phases 1-5, counting 5.3a once). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 6) once PR5 is reviewed/merged per the stacked-to-main chain strategy.
+
+## PR5 correction (RELI-001/RESI-001, CRITICAL)
+
+Reviewed at HEAD `b783396`. Fixes the exact gap flagged in the Deviations section above: `HackathonAnalysisRepo.save` and `AnalysisJobRepo.markPersisted` were two separate D1 round trips, so a crash between them left a job `running` forever — a redelivery would re-run fetch + LLM (wasting the free quota) and could overwrite the analysis.
+
+### Chosen fix
+
+Added `AnalysisJobRepo.persistAnalysis(jobId, analysis): Promise<boolean>`, replacing `markPersisted`. Placed on `AnalysisJobRepo` rather than `HackathonAnalysisRepo` because the guard that gates the write — "only persist while the job is still `running`" — is a job-status concern, and `AnalysisJobRepo` already owns every other job-status transition (`claim`, `markSucceeded`, `markFailed`). `analyzeHackathon` no longer persists at all; it only builds and returns the `HackathonAnalysis`. `runHackathonJob`'s `runClaimedJob` now calls `persistAnalysis(job.id, analysis)` once, in place of the former `hackathonAnalysisRepo.save(analysis)` (moved out of `analyzeHackathon`) + `analysisJobRepo.markPersisted(job.id, analysis.id)` pair.
+
+Verified with `rg` that `analyzeHackathon` had no other callers expecting it to persist (only `run-hackathon-job.ts` and its own test call it).
+
+### D1 implementation and guard
+
+`createD1AnalysisJobRepo.persistAnalysis` runs ONE `db.batch` with two statements:
+1. `INSERT INTO hackathon_analyses (...) SELECT ... WHERE EXISTS (SELECT 1 FROM hackathon_analysis_jobs WHERE id = ? AND status = 'running') ON CONFLICT (id) DO UPDATE ...` — the same upsert SQL as `HackathonAnalysisRepo.save`, but the `SELECT ... WHERE EXISTS` guards the insert itself: when the job is not running, the SELECT yields zero rows, so nothing is inserted and no `ON CONFLICT` update fires.
+2. `UPDATE hackathon_analysis_jobs SET status='persisted', analysis_id=?, updated_at=? WHERE id=? AND status='running'` — same `status='running'` predicate, so `meta.changes` is `0` when the job wasn't running.
+
+Both statements execute in the same D1 batch (D1 batches are transactional), so the decision to write-or-not is evaluated atomically against the same job row, without a separate pre-read round trip. `persistAnalysis` returns `results[1].meta.changes === 1` — `true` only when the job UPDATE actually matched a running row.
+
+### TDD Cycle Evidence
+
+| Cycle | Test | RED | GREEN |
+|---|---|---|---|
+| 1 (D1 adapter) | `test/adapters/d1/analysis-job-repo.test.ts` — "persistAnalysis writes the analysis row and marks the job persisted in one batch" / "persistAnalysis does not write the analysis when the job is not running" (replacing the old `markPersisted` test) | Confirmed failing: `TypeError: repo.persistAnalysis is not a function` (2 failed, 11 passed) after stashing the port/adapter changes and keeping only the new tests | 13/13 passed after restoring `persistAnalysis` on the port and D1 adapter |
+| 2 (use-case wiring) | `test/domain/usecases/analyze-hackathon.test.ts` (persistence assertions removed/adjusted) + `test/domain/usecases/run-hackathon-job.test.ts` (two "claimed job" tests now pass `hackathonAnalysisRepo` to the paired fake and assert both effects) | Confirmed failing via `npx tsc --noEmit`: `Property 'markPersisted' does not exist on type 'AnalysisJobRepo'` in `run-hackathon-job.ts`, plus fake/test type errors, after updating `ports.ts`/fakes ahead of the use-case edit | Full suite green after wiring `analyzeHackathon` to stop persisting and `runHackathonJob` to call `persistAnalysis` |
+
+### Evidence
+
+- `npx vitest run`: **499/499 tests passed** (54 test files).
+- `npm run typecheck` (`tsc --noEmit`): **0 errors**.
+- `git diff --stat b783396 HEAD` (excluding this doc, added after in a follow-up commit):
+  - `openspec/changes/hackathon-analysis/design.md` | 2 +-
+  - `src/adapters/d1/analysis-job-repo.ts` | 69 ++++++++++++++++++++---
+  - `src/domain/ports.ts` | 17 ++++--
+  - `src/domain/usecases/analyze-hackathon.ts` | 8 ++-
+  - `src/domain/usecases/run-hackathon-job.ts` | 6 +-
+  - `test/adapters/d1/analysis-job-repo.test.ts` | 76 +++++++++++++++++++++-----
+  - `test/domain/usecases/analyze-hackathon.test.ts` | 11 ++--
+  - `test/domain/usecases/run-hackathon-job.test.ts` | 16 +++++-
+  - `test/fakes/index.ts` | 16 +++++-
+  - 9 files changed, 183 insertions(+), 38 deletions(-)
+
+### Rules followed
+
+- No bare `catch {}` introduced.
+- All SQL parameterized (`?` binds), including the new `INSERT ... SELECT ... WHERE EXISTS` guard.
+- Touched only the files listed above — RISK-001/002/003, READ-001, RELI-002, RESI-002 deferred, untouched.
+- Two commits, Conventional Commits, no Co-Authored-By/AI attribution, not pushed.
