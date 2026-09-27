@@ -1,6 +1,7 @@
 import { PageFetchFailedError, UnsafeUrlError, type PageFetchFailureKind } from "../../domain/errors";
 import { assertSafeUrl } from "../../domain/hackathon/url";
 import type { PageFetcher } from "../../domain/ports";
+import { htmlToText, TEXT_MAX } from "./html-to-text";
 
 // Static, non-JS-rendered page fetch (design.md "The static fetcher uses
 // redirect: manual. It follows at most 3 hops, re-guarding each one, and
@@ -28,8 +29,16 @@ export interface StaticFetcherOptions {
 
 // Thrown only by the byte-counting transform stream below; never escapes
 // this module. Caught in the loop and mapped to
-// PageFetchFailedError("too-large").
-class ResponseTooLargeError extends Error {}
+// PageFetchFailedError("too-large"). A fixed message (rather than a
+// subclass check) survives being re-wrapped by whatever consumes the
+// stream downstream (html-to-text.ts's HTMLRewriter, or a raw `.text()`
+// read) — HTMLRewriter does not guarantee the original error's prototype
+// chain reaches the caller unchanged.
+const TOO_LARGE_MESSAGE = "response exceeded the byte cap";
+
+function isTooLargeError(err: unknown): boolean {
+  return err instanceof Error && err.message.includes(TOO_LARGE_MESSAGE);
+}
 
 // Streams `response.body` through a byte counter so the size cap is
 // enforced WHILE reading, not just via a (spoofable, sometimes-absent)
@@ -44,7 +53,7 @@ function limitResponseBytes(response: Response, maxBytes: number): Response {
       transform(chunk, controller) {
         total += chunk.byteLength;
         if (total > maxBytes) {
-          controller.error(new ResponseTooLargeError("response exceeded the byte cap"));
+          controller.error(new Error(TOO_LARGE_MESSAGE));
           return;
         }
         controller.enqueue(chunk);
@@ -112,10 +121,15 @@ export function createStaticFetcher(options: StaticFetcherOptions): PageFetcher 
         }
 
         const limited = limitResponseBytes(response, maxBytes);
+        const mime = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
         try {
-          return await limited.text();
+          // text/plain has no markup to reduce; text/html is run through
+          // html-to-text.ts's HTMLRewriter pass (task 6.3).
+          return mime === "text/html"
+            ? await htmlToText(limited)
+            : (await limited.text()).slice(0, TEXT_MAX);
         } catch (err) {
-          if (err instanceof ResponseTooLargeError) fail("response exceeded the size cap", "too-large");
+          if (isTooLargeError(err)) fail("response exceeded the size cap", "too-large");
           if (signal.aborted) fail("static fetch timed out", "timeout");
           throw new PageFetchFailedError("failed to read response body", "network");
         }
