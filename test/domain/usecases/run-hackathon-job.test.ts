@@ -199,6 +199,31 @@ describe("runHackathonJob", () => {
     ]);
   });
 
+  // task 4.6 / design.md "Pin Behavior": a fresh run inside a topic links
+  // and pins from the consumer instead of a bare post (RELI-003).
+  it("claimed job inside a topic: links and pins instead of a bare post", async () => {
+    const deps = makeDeps();
+    const job = baseJob({ threadId: 500 });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+
+    const outcome = await runHackathonJob(
+      baseMsg({ threadId: 500 }),
+      1,
+      deps,
+    );
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.chatPublisher.posted[0]).toMatchObject({ chatId: job.chatId, threadId: 500 });
+    expect(deps.chatPublisher.pinned).toHaveLength(1);
+    const saved = deps.hackathonAnalysisRepo.rows.find(
+      (r) => r.id === deps.analysisJobRepo.persisted[0]?.analysisId,
+    );
+    expect(saved?.threadId).toBe(500);
+    expect(saved?.pinnedMessageId).not.toBeNull();
+    expect(deps.analysisJobRepo.succeeded).toEqual(["job-1"]);
+  });
+
   it("transient failure: retries then fails on the final attempt (spec: Transient failure exhausts retries)", async () => {
     const depsRetry = makeDeps();
     const job = baseJob();

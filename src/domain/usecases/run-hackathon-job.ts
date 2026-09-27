@@ -11,6 +11,7 @@ import { formatAnalysis } from "../hackathon/format";
 import { normalizeUrlKey } from "../hackathon/url";
 import type { AnalysisJob, AnalysisJobMessage, JobOutcome } from "../entities";
 import { analyzeHackathon, type AnalyzeHackathonDeps } from "./analyze-hackathon";
+import { postAnalysisAndLinkTopic } from "./link-analysis-to-topic";
 import type { AnalysisJobRepo, AnalysisQuota, ChatPublisher, Logger } from "../ports";
 
 // design.md "Time budget (per consumer attempt)": 180 s.
@@ -120,11 +121,22 @@ async function runClaimedJob(
       deps,
     );
     await deps.analysisJobRepo.markPersisted(job.id, analysis.id);
-    await deps.chatPublisher.post(job.chatId, job.threadId, formatAnalysis({
-      slug: analysis.slug,
-      fields: analysis.fields,
-      suggestions: analysis.suggestedRepos,
-    }));
+    // task 4.6 / design.md "Pin Behavior": a fresh run inside a topic links
+    // and pins from the consumer instead of a bare post (RELI-003). The
+    // producer already gated this on an admin (requestHackathonAnalysis),
+    // so no acting membership is needed here.
+    if (job.threadId !== null) {
+      await postAnalysisAndLinkTopic(
+        { teamId: job.teamId, chatId: job.chatId, threadId: job.threadId, analysis },
+        deps,
+      );
+    } else {
+      await deps.chatPublisher.post(job.chatId, null, formatAnalysis({
+        slug: analysis.slug,
+        fields: analysis.fields,
+        suggestions: analysis.suggestedRepos,
+      }));
+    }
     await deps.analysisJobRepo.markSucceeded(job.id);
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
     return { kind: "ack" };
