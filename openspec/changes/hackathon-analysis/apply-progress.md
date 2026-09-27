@@ -425,3 +425,14 @@ git diff --stat 250d3e0
  8 files changed, 149 insertions(+), 21 deletions(-)
 ```
 (apply-progress.md itself changed after this diff snapshot was taken; the commit below adds it.)
+
+## PR3 extra fix (authorized by the maintainer after scoped validation escalated)
+
+The scoped validator escalated **FIXV-001**. The RESI-001 and RESI-002 fixes swallowed failures in bare `catch {}` blocks whose comments claimed "logged by the adapter layer", but neither use case received a `Logger`, so those failures were invisible.
+
+- **Fix**: `logger: Logger` is added to `RunHackathonJobDeps` and `RequestHackathonAnalysisDeps`.
+  - `safePost` logs `{ event: "hackathon-job", outcome: "error", reason: "failure-reply-failed" }`.
+  - The enqueue cleanup logs `{ event: "hackathon-enqueue-cleanup", outcome: "error", reason: "mark-failed-failed" | "release-failed" }`.
+  - Only the error class name goes into `errorCode`, never the message.
+  - The shared fakes gain `fakeLogger()`.
+- **RED**: 3 failing tests (the two RESI-002 cleanup tests now also assert the log entry, plus a new one where the failure reply cannot be sent). **GREEN**: 439/439 pass, and the typecheck is clean.
