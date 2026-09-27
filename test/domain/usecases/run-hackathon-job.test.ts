@@ -477,4 +477,23 @@ describe("runHackathonJob", () => {
       expect.objectContaining({ event: "hackathon-job", outcome: "error", reason: "failure-reply-failed" }),
     );
   });
+
+  it("a lost claim (persistAnalysis returns false) posts nothing, never marks success, and acks (FIXV-001)", async () => {
+    const deps = makeDeps();
+    const job = baseJob();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({
+      claimResult: { kind: "claimed", job },
+      persistResult: false,
+    });
+
+    const outcome = await runHackathonJob(baseMsg(), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.chatPublisher.posted).toHaveLength(0);
+    expect(deps.analysisJobRepo.succeeded).toHaveLength(0);
+    expect(deps.analysisQuota.released).toHaveLength(0);
+    expect(deps.logger.entries).toContainEqual(
+      expect.objectContaining({ event: "hackathon-job", outcome: "refused", reason: "claim-lost" }),
+    );
+  });
 });

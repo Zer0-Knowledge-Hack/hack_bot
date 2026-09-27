@@ -244,6 +244,21 @@ describe("createD1AnalysisJobRepo", () => {
     expect(row?.updated_at).toBe(3_000);
   });
 
+  it("markSucceeded never overwrites a job that is not persisted (FIXV-001)", async () => {
+    await seedTeam("team-succeed-guard", 12);
+    await seedJob("job-succeed-guard", "team-succeed-guard", { status: "failed" });
+    const repo = createD1AnalysisJobRepo(env.DB, fakeClock(3_000));
+
+    await repo.markSucceeded("job-succeed-guard");
+
+    const row = await env.DB.prepare(
+      "SELECT status FROM hackathon_analysis_jobs WHERE id = ?",
+    )
+      .bind("job-succeed-guard")
+      .first<{ status: string }>();
+    expect(row?.status).toBe("failed");
+  });
+
   it("markFailed sets status=failed and stores the failure reason", async () => {
     await seedTeam("team-failed", 9);
     await seedJob("job-failed-1", "team-failed", { status: "running" });

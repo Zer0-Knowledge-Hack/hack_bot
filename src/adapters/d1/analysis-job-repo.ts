@@ -148,7 +148,9 @@ export function createD1AnalysisJobRepo(db: D1Database, clock: Clock): AnalysisJ
     async markSucceeded(id: string): Promise<void> {
       await db
         .prepare(
-          "UPDATE hackathon_analysis_jobs SET status = 'succeeded', updated_at = ? WHERE id = ?",
+          // Only a persisted job can succeed, so a late attempt can never
+          // overwrite a job another delivery already failed (FIXV-001).
+          "UPDATE hackathon_analysis_jobs SET status = 'succeeded', updated_at = ? WHERE id = ? AND status = 'persisted'",
         )
         .bind(clock.now(), id)
         .run();

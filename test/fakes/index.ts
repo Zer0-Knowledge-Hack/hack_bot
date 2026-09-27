@@ -439,6 +439,9 @@ export function fakeAnalysisJobRepo(
     // and the job's persisted transition — mirroring the D1 adapter's
     // single db.batch (createD1AnalysisJobRepo.persistAnalysis).
     hackathonAnalysisRepo?: HackathonAnalysisRepo;
+    // false models a job that is no longer `running` (claim lost): nothing
+    // is written, mirroring the D1 adapter's guarded batch (FIXV-001).
+    persistResult?: boolean;
   } = {},
 ): AnalysisJobRepo & {
   persisted: Array<{ id: string; analysisId: string }>;
@@ -454,6 +457,7 @@ export function fakeAnalysisJobRepo(
     failed,
     claim: async () => opts.claimResult ?? { kind: "missing" },
     persistAnalysis: async (jobId: string, analysis: HackathonAnalysis) => {
+      if (opts.persistResult === false) return false;
       persisted.push({ id: jobId, analysisId: analysis.id });
       await opts.hackathonAnalysisRepo?.save(analysis);
       return true;
