@@ -229,6 +229,9 @@ export interface HackathonAnalysisRepo {
   // Insert-or-update by `id` (design.md "Same-URL Refresh Keeps the Slug" —
   // a refresh reuses the existing row's id and slug).
   save(analysis: HackathonAnalysis): Promise<void>;
+  // listAnalyses (PR4, spec: "Listing Is Read-Only and Truncated") — every
+  // stored analysis for the team, read-only.
+  listByTeam(teamId: TeamId): Promise<HackathonAnalysis[]>;
 }
 
 // design.md "reserve": one atomic batch reserves the cap slot and the

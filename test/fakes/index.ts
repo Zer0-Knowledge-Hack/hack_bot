@@ -387,6 +387,7 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
       if (idx >= 0) rows[idx] = analysis;
       else rows.push(analysis);
     },
+    listByTeam: async (teamId: TeamId) => rows.filter((r) => r.teamId === teamId),
   };
 }
 
