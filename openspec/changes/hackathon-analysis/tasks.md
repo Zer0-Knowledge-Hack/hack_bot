@@ -59,8 +59,8 @@ Chain strategy: stacked-to-main
 
 - [x] 3.1 RED: `test/domain/usecases/request-hackathon-analysis.test.ts` — admin gate (spec hackathon-analysis: Admin-Only Fresh Analysis, Capped, both scenarios), busy refusal (spec: Analysis already running), cap-reached refusal (spec: Cap reached), enqueue failure refunds (spec: Enqueue failure).
 - [x] 3.2 GREEN: `src/domain/usecases/request-hackathon-analysis.ts`.
-- [ ] 3.3 RED: `test/domain/usecases/run-hackathon-job.test.ts` — terminal job is a no-op ack (spec: Duplicate delivery), held claim retries, persisted job only posts, transient error retries then fails on attempt 3 (spec: Transient failure exhausts retries), stale job refunded.
-- [ ] 3.4 GREEN: `src/domain/usecases/run-hackathon-job.ts`.
+- [x] 3.3 RED: `test/domain/usecases/run-hackathon-job.test.ts` — terminal job is a no-op ack (spec: Duplicate delivery), held claim retries, persisted job only posts, transient error retries then fails on attempt 3 (spec: Transient failure exhausts retries), stale job refunded.
+- [x] 3.4 GREEN: `src/domain/usecases/run-hackathon-job.ts`.
 
 ## Phase 4: Show, Link, List Use Cases (PR4)
 

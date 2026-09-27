@@ -1,0 +1,221 @@
+import {
+  ConfigError,
+  ExtractionFailedError,
+  LlmQuotaExceededError,
+  PageFetchFailedError,
+  PageTooThinError,
+  PublishFailedError,
+  UnsafeUrlError,
+} from "../errors";
+import { formatAnalysis } from "../hackathon/format";
+import { normalizeUrlKey } from "../hackathon/url";
+import type { AnalysisJob, AnalysisJobMessage, JobOutcome } from "../entities";
+import { analyzeHackathon, type AnalyzeHackathonDeps } from "./analyze-hackathon";
+import type { AnalysisJobRepo, AnalysisQuota, ChatPublisher } from "../ports";
+
+// design.md "Time budget (per consumer attempt)": 180 s.
+const ATTEMPT_BUDGET_MS = 180_000;
+// design.md "Stale": a queued job older than 1 h is failed as expired.
+const STALE_JOB_MS = 60 * 60 * 1000;
+// design.md "Retries": max_retries: 2 -> 3 total delivery attempts.
+const MAX_ATTEMPTS = 3;
+const HELD_RETRY_DELAY_S = 60;
+const TRANSIENT_RETRY_DELAY_S = 30;
+
+export interface RunHackathonJobDeps extends AnalyzeHackathonDeps {
+  analysisJobRepo: AnalysisJobRepo;
+  analysisQuota: AnalysisQuota;
+  chatPublisher: ChatPublisher;
+  primaryModel: string;
+  fallbackModel: string;
+}
+
+// design.md "Interfaces / Contracts": pure — `src/index.ts` (PR9) maps this
+// result to `msg.ack()`/`msg.retry()` and never throws. `attempt` is the
+// queue's own delivery counter (unrelated to `AnalysisJob.attempts`, which
+// `claim` maintains in D1); it drives the transient-error retry limit
+// without a D1 round trip.
+export async function runHackathonJob(
+  msg: AnalysisJobMessage,
+  attempt: number,
+  deps: RunHackathonJobDeps,
+): Promise<JobOutcome> {
+  const claim = await deps.analysisJobRepo.claim(msg.jobId, deps.clock.now());
+
+  switch (claim.kind) {
+    case "terminal":
+    case "missing":
+      return { kind: "ack" };
+    case "held":
+      return { kind: "retry", delaySeconds: HELD_RETRY_DELAY_S };
+    case "persisted":
+      return postPersistedResult(claim.job, deps);
+    case "claimed":
+      return runClaimedJob(claim.job, attempt, deps);
+  }
+}
+
+async function postPersistedResult(
+  job: AnalysisJob,
+  deps: RunHackathonJobDeps,
+): Promise<JobOutcome> {
+  const normalizedUrl = normalizeUrlKey(new URL(job.fetchUrl));
+  const analysis = await deps.hackathonAnalysisRepo.findByNormalizedUrl(
+    job.teamId,
+    normalizedUrl,
+  );
+  if (analysis) {
+    await deps.chatPublisher.post(job.chatId, job.threadId, formatAnalysis({
+      slug: analysis.slug,
+      fields: analysis.fields,
+      suggestions: analysis.suggestedRepos,
+    }));
+  }
+  await deps.analysisJobRepo.markSucceeded(job.id);
+  await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
+  return { kind: "ack" };
+}
+
+async function runClaimedJob(
+  job: AnalysisJob,
+  attempt: number,
+  deps: RunHackathonJobDeps,
+): Promise<JobOutcome> {
+  // design.md "Stale": only a job that never started running (its first
+  // claim) can be stale — no neurons were spent yet.
+  if (job.attempts <= 1 && deps.clock.now() - job.createdAt > STALE_JOB_MS) {
+    await deps.analysisJobRepo.markFailed(job.id, "job:expired");
+    await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, true);
+    await safePost(job, "Analysis expired; run it again.", deps.chatPublisher);
+    return { kind: "ack" };
+  }
+
+  try {
+    const deadlineAt = deps.clock.now() + ATTEMPT_BUDGET_MS;
+    const analysis = await analyzeHackathon(
+      {
+        teamId: job.teamId,
+        sourceUrl: job.fetchUrl,
+        normalizedUrl: normalizeUrlKey(new URL(job.fetchUrl)),
+        primaryModel: deps.primaryModel,
+        fallbackModel: deps.fallbackModel,
+        deadlineAt,
+      },
+      deps,
+    );
+    await deps.analysisJobRepo.markPersisted(job.id, analysis.id);
+    await deps.chatPublisher.post(job.chatId, job.threadId, formatAnalysis({
+      slug: analysis.slug,
+      fields: analysis.fields,
+      suggestions: analysis.suggestedRepos,
+    }));
+    await deps.analysisJobRepo.markSucceeded(job.id);
+    await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
+    return { kind: "ack" };
+  } catch (err) {
+    return handleJobError(err, job, attempt, deps);
+  }
+}
+
+interface JobErrorClassification {
+  transient: boolean;
+  refund: boolean;
+  reason: string;
+  reply: string | null;
+}
+
+// design.md "Error Taxonomy": maps each thrown error to its reason code,
+// user reply and whether the reserved cap slot is refunded. Anything not
+// named here (D1, an unclassified `PublishFailedError`, or an unknown
+// error) is transient and retried up to `MAX_ATTEMPTS`.
+function classifyJobError(err: unknown): JobErrorClassification {
+  if (err instanceof UnsafeUrlError) {
+    return {
+      transient: false,
+      refund: false,
+      reason: `unsafe-url:${err.reason}`,
+      reply: "Only public http(s) pages can be analyzed.",
+    };
+  }
+  if (err instanceof PageFetchFailedError) {
+    return {
+      transient: false,
+      refund: false,
+      reason: `fetch:${err.kind}`,
+      reply: `Could not read that page (${err.kind}). Any previous analysis was kept.`,
+    };
+  }
+  if (err instanceof PageTooThinError) {
+    return {
+      transient: false,
+      refund: false,
+      reason: `fetch:too-thin${err.browserQuotaDegraded ? "-browser-quota" : ""}`,
+      reply: "The page has too little readable text. Previous analysis kept.",
+    };
+  }
+  if (err instanceof LlmQuotaExceededError) {
+    return {
+      transient: false,
+      refund: false,
+      reason: "llm:quota",
+      reply: "Today's shared AI quota is used up; try after 00:00 UTC. Previous analysis kept.",
+    };
+  }
+  if (err instanceof ExtractionFailedError) {
+    return {
+      transient: false,
+      refund: false,
+      reason: `llm:${err.kind}`,
+      reply: "The AI could not produce a valid analysis. Previous analysis kept.",
+    };
+  }
+  if (err instanceof ConfigError) {
+    return {
+      transient: false,
+      refund: true,
+      reason: "config",
+      reply: "Hackathon analysis is not configured.",
+    };
+  }
+  if (err instanceof PublishFailedError && err.failureClass === "rejected") {
+    return { transient: false, refund: false, reason: "publish:rejected", reply: null };
+  }
+  const name = err instanceof Error ? err.name : "unknown";
+  return {
+    transient: true,
+    refund: false,
+    reason: `job:transient:${name}`,
+    reply: "The analysis failed due to a temporary error. Try again later.",
+  };
+}
+
+async function handleJobError(
+  err: unknown,
+  job: AnalysisJob,
+  attempt: number,
+  deps: RunHackathonJobDeps,
+): Promise<JobOutcome> {
+  const classification = classifyJobError(err);
+  if (classification.transient && attempt < MAX_ATTEMPTS) {
+    return { kind: "retry", delaySeconds: TRANSIENT_RETRY_DELAY_S };
+  }
+  await deps.analysisJobRepo.markFailed(job.id, classification.reason);
+  await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, classification.refund);
+  await safePost(job, classification.reply, deps.chatPublisher);
+  return { kind: "ack" };
+}
+
+// Best-effort: a failure reply that itself fails to send must not crash the
+// handler or re-enter error classification.
+async function safePost(
+  job: AnalysisJob,
+  text: string | null,
+  chatPublisher: ChatPublisher,
+): Promise<void> {
+  if (text === null) return;
+  try {
+    await chatPublisher.post(job.chatId, job.threadId, text);
+  } catch {
+    // logged by the adapter layer; never thrown from a pure use case.
+  }
+}
