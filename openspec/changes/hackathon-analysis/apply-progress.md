@@ -622,3 +622,98 @@ git diff --stat fe129aa
 - RELI-002/RESI-003 tracking: revert commit `3b4908d` (`tasks.md` only, no code).
 
 Each commit is independently revertible without touching the others.
+
+## Phase 5 (PR5: migration 0003 and the three D1 adapters) — branch `feat/hackathon-d1`
+
+### Scope of this batch
+
+Phase 5 only — migration `0003_hackathon_analysis.sql`, `HackathonAnalysisRepo` (D1), `AnalysisQuota` (D1), `AnalysisJobRepo` (D1), and task 5.3a's atomic `moveTopicLink`. Phases 6-11 are untouched. Branch created from `main` right after PR #23 (Phase 4 + its correction) was merged.
+
+### Completed Tasks
+
+- [x] 5.1 `migrations/0003_hackathon_analysis.sql` — `hackathon_analyses` (unique slug, unique normalized_url, partial unique `(team_id, thread_id) WHERE thread_id IS NOT NULL`, team index), `hackathon_analysis_usage` (lease owner columns), `hackathon_analysis_jobs` (status CHECK, team index).
+- [x] 5.2 RED: `test/adapters/d1/hackathon-analysis-repo.test.ts` — unique slug, unique URL, unique `thread_id` (nullable/partial), `moveTopicLink` (6 dedicated cases), tenant isolation, error propagation.
+- [x] 5.3 GREEN: `src/adapters/d1/hackathon-analysis-repo.ts`.
+- [x] 5.3a Added `HackathonAnalysisRepo.moveTopicLink(teamId, analysisId, threadId, pinnedMessageId)` to the port and to `fakeHackathonAnalysisRepo`; implemented it in the D1 adapter as one `db.batch` (clear-displaced statement first, set-new statement second — batch statements run in array order, so the clear must precede the set to avoid a transient UNIQUE-index conflict within the same transaction). Rewired `postAnalysisAndLinkTopic` (`src/domain/usecases/link-analysis-to-topic.ts`) to call `moveTopicLink` once instead of its two separate `save` calls; all 8 existing `link-analysis-to-topic.test.ts` cases stayed green unchanged.
+- [x] 5.4 RED: `test/adapters/d1/analysis-quota.test.ts` — atomic `reserve` (fresh day, re-lease after expiry, `busy` while a lease is held, `cap-reached` once `runs` hits the cap, tenant isolation), owner-checked `release` (with/without refund, stale-job cannot steal a newer job's lease), error propagation.
+- [x] 5.5 GREEN: `src/adapters/d1/analysis-quota.ts`.
+- [x] 5.6 RED: `test/adapters/d1/analysis-job-repo.test.ts` — claim transitions (queued→running, re-claim after `claim_until` expiry, held, terminal for succeeded/failed, persisted-without-reclaim, missing id), `markPersisted`/`markSucceeded`/`markFailed`, tenant scoping, error propagation.
+- [x] 5.7 GREEN: `src/adapters/d1/analysis-job-repo.ts`.
+
+All 8 Phase 5 tasks complete (37/56 cumulative across Phases 1-5, counting 5.3a once). Phases 6-11 remain pending (not assigned to this batch).
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 5.1 | (exercised via the full `test/adapters/d1` suite + `test/adapters/migrations.test.ts`) | Integration (vitest-pool-workers, real `env.DB`) | Existing 7 D1 adapter test files (45 tests) | N/A — schema-only change; confirmed the migration applies cleanly and existing tests stay green (45/45) before writing any new adapter code | Same 45/45 green after the migration was added | N/A | None needed |
+| 5.2/5.3/5.3a | `test/adapters/d1/hackathon-analysis-repo.test.ts` | Integration (vitest-pool-workers) | N/A (new) | Written, confirmed failing (`Cannot find module '.../hackathon-analysis-repo'`) | 15/15 passed on first run | 15 cases: null-miss, round-trip save/find×3, update-in-place, unique slug, unique URL, unique thread (also via `test/adapters/migrations.test.ts`'s raw-SQL CHECK/FK/UNIQUE tests), slugExists, findByThreadId, listByTeam (incl. cross-team isolation), 6 dedicated `moveTopicLink` cases (empty topic, displace-other, self-move, idempotent same-topic, tenant-scoped), error propagation | None needed |
+| 5.4/5.5 | `test/adapters/d1/analysis-quota.test.ts` | Integration (vitest-pool-workers) | N/A (new) | Written, confirmed failing (`Cannot find module '.../analysis-quota'`) | 9/9 passed on first run | 9 cases: fresh-day ok, re-lease after expiry, busy while held, cap-reached after 2 refunded runs at cap=2, tenant isolation, release-with-refund, release-without-refund, owner-checked release (stale job cannot steal a newer job's lease), error propagation | None needed |
+| 5.6/5.7 | `test/adapters/d1/analysis-job-repo.test.ts` | Integration (vitest-pool-workers) | N/A (new) | Written, confirmed failing (`Cannot find module '.../analysis-job-repo'`) | 11/12 passed first run — 1 failure (`markPersisted`: `FOREIGN KEY constraint failed` on `analysis_id`, the test hadn't seeded a `hackathon_analyses` row); fixed the TEST (seeded the FK target), not the implementation; 12/12 after | 12 cases: claim queued→running, re-claim after expiry, held (no side effects), terminal for succeeded, terminal for failed, persisted-without-reclaim, missing id, markPersisted, markSucceeded, markFailed, tenant scoping, error propagation | None needed |
+
+#### Test Summary
+- **Total tests written**: 39 new (15 + 9 + 12), plus 3 raw-SQL constraint tests added to the existing `test/adapters/migrations.test.ts` (unique slug/URL/thread_id CHECK/FK for migration 0003) and its table-list assertion updated for the 3 new tables — 42 new/changed assertions total
+- **Total tests passing**: 498/498 (full suite, up from 457 at the start of this batch)
+- **Layers used**: Integration against the real vitest-pool-workers `env.DB` with migrations applied (42), matching the project's existing D1 test harness (`test/adapters/d1/repo-topic-link-repo.test.ts`, `test/adapters/d1/github-org-claim-repo.test.ts`)
+- **Approval tests** (refactoring): None — 3 new adapter files; `link-analysis-to-topic.ts`'s refactor (5.3a) was verified against its 8 pre-existing tests, unchanged
+- **Functions/adapters created**: `createD1HackathonAnalysisRepo`, `createD1AnalysisQuota`, `createD1AnalysisJobRepo`
+
+### Work Unit Evidence
+
+| Work unit | Focused test command | Result | Runtime harness | Rollback boundary |
+|---|---|---|---|---|
+| 5.1 migration | `npx vitest run test/adapters/d1` (existing 7 files) | 45/45 passed (before adding any new adapter code) | vitest-pool-workers, real `env.DB`, migrations auto-applied by `test/setup/apply-migrations.ts` | revert commit `4d1ded7` (`migrations/0003_hackathon_analysis.sql` only) |
+| 5.2/5.3/5.3a hackathon analysis repo + moveTopicLink | `npx vitest run test/adapters/d1/hackathon-analysis-repo.test.ts test/domain/usecases/link-analysis-to-topic.test.ts` | 23/23 passed | vitest-pool-workers, real `env.DB` | revert commit `c1c63fa` (`src/adapters/d1/hackathon-analysis-repo.ts`, its test, `ports.ts`'s `moveTopicLink` signature, the fake, `link-analysis-to-topic.ts`'s rewiring, `test/adapters/migrations.test.ts`'s table-list + 0003 describe block, tasks.md checkboxes) |
+| 5.4/5.5 analysis quota | `npx vitest run test/adapters/d1/analysis-quota.test.ts` | 9/9 passed | vitest-pool-workers, real `env.DB` | revert commit `bf0eca1` (`src/adapters/d1/analysis-quota.ts`, its test, tasks.md checkboxes) |
+| 5.6/5.7 analysis job repo | `npx vitest run test/adapters/d1/analysis-job-repo.test.ts` | 12/12 passed | vitest-pool-workers, real `env.DB` | revert commit `0b29e28` (`src/adapters/d1/analysis-job-repo.ts`, its test, tasks.md checkboxes) |
+
+Full-suite and typecheck evidence (after all 4 commits):
+- `npx vitest run` → 54 files, **498/498 tests passed** (0 failed)
+- `npm run typecheck` → clean, no errors
+
+### Files Changed
+
+| File | Action | What was done |
+|------|--------|----------------|
+| `migrations/0003_hackathon_analysis.sql` | Created | `hackathon_analyses`, `hackathon_analysis_usage`, `hackathon_analysis_jobs`, partial thread index, team indexes |
+| `src/adapters/d1/hackathon-analysis-repo.ts` | Created | `createD1HackathonAnalysisRepo` — findBySlug/findById/findByNormalizedUrl/findByThreadId/slugExists/save (insert-or-update by id)/listByTeam/moveTopicLink (atomic batch) |
+| `src/adapters/d1/analysis-quota.ts` | Created | `createD1AnalysisQuota` — atomic `reserve` (2-statement batch: usage upsert gated by `runs<cap AND lease_until<now`, job insert gated by `EXISTS(... lease_job_id = ?)`), owner-checked `release` (single conditional UPDATE) |
+| `src/adapters/d1/analysis-job-repo.ts` | Created | `createD1AnalysisJobRepo(db, clock)` — `claim` (one conditional UPDATE + classification read), `markPersisted`/`markSucceeded`/`markFailed` |
+| `src/domain/ports.ts` | Modified | Added `HackathonAnalysisRepo.moveTopicLink` |
+| `test/fakes/index.ts` | Modified | `fakeHackathonAnalysisRepo` gained `moveTopicLink` (same atomic-clear-then-set semantics as the D1 adapter, in-memory) |
+| `src/domain/usecases/link-analysis-to-topic.ts` | Modified | `postAnalysisAndLinkTopic` calls `moveTopicLink` once instead of two separate `save` calls (RELI-002/RESI-003) |
+| `test/adapters/d1/{hackathon-analysis-repo,analysis-quota,analysis-job-repo}.test.ts` | Created | 39 tests across the three adapters |
+| `test/adapters/migrations.test.ts` | Modified | Table-list assertion extended for the 3 new tables; new `describe("migrations/0003_hackathon_analysis.sql")` block (unique slug/URL/thread_id, jobs status CHECK, jobs team_id FK) |
+| `openspec/changes/hackathon-analysis/tasks.md` | Modified | Phase 5 tasks 5.1-5.7 (incl. 5.3a) marked `[x]` |
+
+### Deviations from Design
+
+- **`markPersisted` does not run in the same `db.batch` as the analysis `save` insert.** design.md's "Persist" line reads: "the analysis insert or update and `status='persisted', analysis_id=?` run in one `db.batch`." `HackathonAnalysisRepo.save` and `AnalysisJobRepo.markPersisted` are two separate ports called from two different use-case call sites (`analyzeHackathon` persists the analysis; `runHackathonJob`'s `runClaimedJob` calls `markPersisted` afterward) — PR2/PR3 scope, already implemented and explicitly out of scope for this Phase-5-only batch ("Scope: Phase 5 only"). `markPersisted` itself is a single UPDATE statement, which D1 already executes atomically; the cross-port atomicity the design describes would require restructuring `analyzeHackathon`/`runHackathonJob` to share one D1 handle across both ports (or merging the two ports), which is a use-case-layer change, not a D1-adapter-layer one. Flagging this for the maintainer rather than silently reaching into Phase 2/3 files.
+- **`hackathon_analyses`'s exact column layout was authored in this batch, not copied from design.md.** design.md's own migration section says "`hackathon_analyses` and its partial thread index are unchanged" — referring to an earlier draft not included in the excerpt available to this run (also noted by the PR4 apply-progress entry above). The columns were derived directly from `entities.ts`'s `HackathonAnalysis` interface and the `HackathonAnalysisRepo` port's method signatures (`findBySlug`/`findById`/`findByNormalizedUrl`/`findByThreadId`/`slugExists`/`save`/`listByTeam`/`moveTopicLink`), plus task 5.2's named constraints (unique slug, unique URL, unique nullable thread_id). `fields`/`suggested_repos` are stored as JSON text columns (mirrors `ExtractedFields`/`RepoFullName[]` — no dedicated column per extracted field, consistent with design.md "Storage": "The validated extraction JSON, bounded; no page text").
+- **`save`'s UNIQUE-constraint violations on `(team_id, slug)`/`(team_id, normalized_url)` are not translated into a domain error class.** Unlike `RepoTopicLinkRepo`'s `TenantMismatchError` pattern, no use case in Phases 1-4 calls `save` in a way that expects a catchable domain error on a slug/URL collision (`deriveUniqueSlug` in `analyze-hackathon.ts` already avoids the collision before calling `save`). The raw D1 `UNIQUE constraint failed` error propagates, mirroring `repo-topic-link-repo.test.ts`'s existing "RES-001" pattern (errors propagate, are never swallowed) rather than inventing a new domain error nobody consumes yet.
+- **`moveTopicLink`'s two-statement `db.batch` order (clear-displaced first, set-new second) is a design decision made in this batch**, not stated explicitly in design.md/tasks.md beyond "clears ... and sets ... in the same batch." Running the clear first is necessary: the partial UNIQUE index on `(team_id, thread_id)` would reject the set-new statement first if the displaced row still held that `thread_id` at that point in the transaction (SQLite checks UNIQUE constraints per-statement, not deferred). Verified by the "clears the displaced analysis's link in the same atomic batch" test.
+- No other deviations. Every named task-5.2/5.4/5.6 scenario (unique slug, unique URL, unique nullable thread_id, `moveTopicLink`, atomic `reserve`, busy/cap-reached classification, owner-checked `release` with/without refund, claim transitions incl. re-claim after expiry, persisted-without-reclaim) has a passing test.
+
+### Issues Found
+
+None — one test bug was caught and fixed during 5.6/5.7 (see TDD Cycle Evidence: `markPersisted`'s FOREIGN KEY failure was a missing test fixture, not a production bug).
+
+### Remaining Tasks (not in this batch)
+
+- [ ] Phase 6: Static Fetcher (PR6)
+- [ ] Phase 7: Rendered (Browser) Fetcher (PR7)
+- [ ] Phase 8: Workers AI Extractor + GitHub Metadata (PR8)
+- [ ] Phase 9: Queue Adapter, Consumer Wiring, Handler Tests (PR9)
+- [ ] Phase 10: Publisher, Commands, Env, Wrangler (PR10)
+- [ ] Phase 11: Operator Rollout (manual, not performed by apply)
+
+### Workload / PR Boundary
+
+- Mode: chained PR slice (stacked-to-main, per tasks.md's Chain strategy)
+- Current work unit: PR5 (Phase 5 — Migration + D1 Repos)
+- Boundary: starts from `feat/hackathon-d1`, branched off `main` right after PR4 (#23, including its correction) merged; ends with the migration and all three D1 adapters in place (including the atomic `moveTopicLink`), Phase 5 tasks marked `[x]`, full suite and typecheck green.
+- Estimated review budget impact: **exceeds the 400-line guard**, same as PR1-PR4. `git diff --shortstat af19748` reports 1480 insertions + 15 deletions = 1495 changed lines total (src: 404+7=411, test: 1000, migrations: 68, openspec: 16), well above the forecast's ~390 estimate. Reported as-is per the instruction to flag but not self-split (each individual commit within this batch is its own reasonably-scoped work unit — 5.1 alone is 68 lines, 5.2/5.3/5.3a is ~648, 5.4/5.5 is ~396, 5.6/5.7 is ~368 — the maintainer may choose to review/merge them as 4 separate smaller PRs off this same branch instead of one PR5, or accept the aggregate with `size:exception`).
+
+### Status
+
+8/8 Phase 5 tasks complete (37/56 cumulative across Phases 1-5, counting 5.3a once). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 6) once PR5 is reviewed/merged per the stacked-to-main chain strategy.
