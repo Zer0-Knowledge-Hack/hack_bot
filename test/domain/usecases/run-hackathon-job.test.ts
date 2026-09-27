@@ -129,6 +129,7 @@ describe("runHackathonJob", () => {
       },
       suggestedRepos: [],
       threadId: null,
+      pinnedMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });

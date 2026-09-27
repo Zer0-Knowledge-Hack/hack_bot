@@ -108,6 +108,11 @@ export interface HackathonAnalysis {
   fields: ExtractedFields;
   suggestedRepos: RepoFullName[];
   threadId: number | null;
+  // The pinned message id for `threadId`, if pinning succeeded (design.md
+  // "Pin Behavior": the link persists even when the pin fails). Null
+  // whenever `threadId` is null, or when it is set but the pin attempt
+  // failed (link-analysis-to-topic.ts, PR4).
+  pinnedMessageId: number | null;
   createdAt: number;
   updatedAt: number;
 }
