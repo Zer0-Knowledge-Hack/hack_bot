@@ -532,3 +532,93 @@ None.
 ### Status
 
 6/6 Phase 4 tasks complete (29/56 cumulative across Phases 1-4). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 5) once PR4 is reviewed/merged per the stacked-to-main chain strategy.
+
+## PR4 correction (one transaction, reviewed at HEAD `fe129aa`)
+
+Three corroborated findings fixed with Strict TDD (RED confirmed failing before each GREEN). READ-002/003/004 are deferred (out of scope for this correction).
+
+### RELI-001 / RESI-002 — persisted redeliveries must link+pin, and linking must never throw
+
+**Problem**: a job redelivered in `persisted` state with `job.threadId !== null` did a bare `chatPublisher.post`, silently dropping the topic link/pin that a fresh completion would have made. Separately, `postPersistedResult` had no `try/catch`, so a `chatPublisher.post`/link failure in that path escaped `runHackathonJob`'s "never throws" contract instead of routing through `classifyJobError`/`handleJobError` like `runClaimedJob` does.
+
+Investigation also confirmed `postAnalysisAndLinkTopic`'s existing conflict checks (`displaced.id !== analysis.id`, `analysis.threadId !== threadId`) already made it idempotent for the same analysis re-linked to the same topic — no self-unpin/unlink/moved-note bug was found there; a regression test was added to lock that in rather than a production fix.
+
+**RED** (`test/domain/usecases/run-hackathon-job.test.ts`):
+```
+npx vitest run test/domain/usecases/run-hackathon-job.test.ts
+Tests  2 failed | 12 passed (14)
+  persisted claim with a threadId: links and pins instead of a bare post (RELI-001/RESI-002)
+    — expected [] to have a length of 1 but got +0 (chatPublisher.pinned)
+  persisted claim: a transient post failure retries, then fails on the final attempt (RESI-001)
+    — Error: Telegram unavailable (thrown out of runHackathonJob instead of returning `retry`)
+```
+Third new test (`persisted claim redelivered for an analysis already linked to that topic: does not unpin or unlink itself`) passed immediately, confirming the idempotency guard already existed.
+
+**GREEN**: `postPersistedResult` now takes `attempt` and, when `job.threadId !== null`, calls `postAnalysisAndLinkTopic` (same completion path as `runClaimedJob`'s fresh path) instead of a bare post; its post/link step is wrapped in `try/catch` and any failure routes through `handleJobError(err, job, attempt, deps)` — same transient-retry/final-failure classification `runClaimedJob` uses. `runHackathonJob`'s `case "persisted"` now passes `attempt` through.
+```
+npx vitest run test/domain/usecases/run-hackathon-job.test.ts
+Tests  14 passed (14)
+```
+Commit: `e4926a2 fix(hackathon-job): link+pin persisted redeliveries, never throw out (RELI-001/RESI-002/RESI-001)`
+
+### READ-001 — truncate the analysis body, not the notes, past REPLY_MAX
+
+**Problem**: `postAnalysisAndLinkTopic`'s reply concatenated `formatAnalysis(...)` (already truncated to 4096) with move/replace/pin-failure notes, so `text.length + "\n\n".length + notes.length` could exceed Telegram's 4096-char cap.
+
+**RED** (`test/domain/usecases/link-analysis-to-topic.test.ts`) — a maximal-length analysis (6000-char name field, truncated by `formatAnalysis` to exactly `REPLY_MAX`) plus a "Replaced the topic's previous link" note:
+```
+npx vitest run test/domain/usecases/link-analysis-to-topic.test.ts
+Tests  1 failed | 7 passed (8)
+  truncates the analysis body, not the notes, to keep the reply within REPLY_MAX (READ-001)
+    — expected 4145 to be less than or equal to 4096
+```
+
+**GREEN**: exported `REPLY_MAX` and the existing `truncate()` helper from `src/domain/hackathon/format.ts` (both were private before). Added `withNotes(text, notes)` in `link-analysis-to-topic.ts`: reserves room for `"\n\n" + notes.join("\n")` and truncates only the analysis body to fit, never the notes.
+```
+npx vitest run test/domain/usecases/link-analysis-to-topic.test.ts
+Tests  8 passed (8)
+```
+Commit: `bb0dccb fix(hackathon-link): truncate the analysis body, not the notes, past REPLY_MAX (READ-001)`
+
+### RELI-002 / RESI-003 — tracking only (docs)
+
+Added `tasks.md` item 5.3a: the D1 adapter must make the topic move-link atomic (clear the displaced analysis's link and set the new one in a single `DB.batch`), via a new `HackathonAnalysisRepo.moveTopicLink(teamId, analysisId, threadId, pinnedMessageId)` port method replacing `postAnalysisAndLinkTopic`'s two separate `save` calls. No code change in this batch — this is a Phase 5 (D1 adapter) concern; the in-memory fake repo used by domain tests has no such atomicity boundary to violate.
+Commit: `3b4908d docs(hackathon-analysis): track atomic D1 moveTopicLink (RELI-002/RESI-003)`
+
+### Deferred (not in scope for this correction)
+
+READ-002, READ-003, READ-004 — left untouched per instruction.
+
+### Full-suite evidence (after all four commits)
+
+```
+npx vitest run
+Test Files  51 passed (51)
+     Tests  457 passed (457)
+
+npm run typecheck
+> tsc --noEmit
+(no errors, exit 0)
+```
+
+### Diff vs `fe129aa`
+
+```
+git diff --stat fe129aa
+ openspec/changes/hackathon-analysis/tasks.md       |   1 +
+ src/domain/hackathon/format.ts                     |   5 +-
+ src/domain/usecases/link-analysis-to-topic.ts      |  15 +-
+ src/domain/usecases/run-hackathon-job.ts           |  34 ++++-
+ test/domain/usecases/link-analysis-to-topic.test.ts |  26 ++++
+ test/domain/usecases/run-hackathon-job.test.ts     | 167 +++++++++++++++++++
+ 6 files changed, 238 insertions(+), 10 deletions(-)
+```
+(this table excludes `apply-progress.md` itself, taken before this section was appended; the final commit below adds it.)
+
+### Rollback boundary
+
+- RELI-001/RESI-002/RESI-001: revert commit `e4926a2` (`src/domain/usecases/run-hackathon-job.ts`, its test).
+- READ-001: revert commit `bb0dccb` (`src/domain/hackathon/format.ts`'s two new exports, `src/domain/usecases/link-analysis-to-topic.ts`'s `withNotes`, its test).
+- RELI-002/RESI-003 tracking: revert commit `3b4908d` (`tasks.md` only, no code).
+
+Each commit is independently revertible without touching the others.
