@@ -142,7 +142,21 @@ async function runClaimedJob(
       },
       deps,
     );
-    await deps.analysisJobRepo.markPersisted(job.id, analysis.id);
+    // RELI-001/RESI-001 (PR5 correction): persist the analysis and mark the
+    // job persisted atomically (design.md "persist+mark (one batch)").
+    const persisted = await deps.analysisJobRepo.persistAnalysis(job.id, analysis);
+    if (!persisted) {
+      // FIXV-001: the job is no longer `running` — this attempt outlived its
+      // claim and another delivery already owns (or finished) the job. Nothing
+      // was saved, so post nothing, leave its status and lease alone, and ack.
+      deps.logger.log({
+        event: "hackathon-job",
+        teamId: job.teamId,
+        outcome: "refused",
+        reason: "claim-lost",
+      });
+      return { kind: "ack" };
+    }
     // task 4.6 / design.md "Pin Behavior": a fresh run inside a topic links
     // and pins from the consumer instead of a bare post (RELI-003). The
     // producer already gated this on an admin (requestHackathonAnalysis),

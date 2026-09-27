@@ -127,8 +127,12 @@ export async function analyzeHackathon(
     updatedAt: now,
   };
 
-  await deps.hackathonAnalysisRepo.save(analysis);
-
+  // RELI-001/RESI-001 (PR5 correction): this use case no longer persists.
+  // The caller (runHackathonJob) persists the returned analysis together
+  // with the job's persisted transition through AnalysisJobRepo.
+  // persistAnalysis, in one D1 batch — a separate save() here plus a later
+  // markPersisted() left a crash window where the job stayed `running`
+  // forever (design.md "persist+mark (one batch)").
   return analysis;
 }
 

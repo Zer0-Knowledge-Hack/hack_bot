@@ -388,6 +388,24 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
       else rows.push(analysis);
     },
     listByTeam: async (teamId: TeamId) => rows.filter((r) => r.teamId === teamId),
+    moveTopicLink: async (
+      teamId: TeamId,
+      analysisId: string,
+      threadId: number,
+      pinnedMessageId: number | null,
+    ) => {
+      for (const row of rows) {
+        if (row.teamId === teamId && row.threadId === threadId && row.id !== analysisId) {
+          row.threadId = null;
+          row.pinnedMessageId = null;
+        }
+      }
+      const existing = rows.find((r) => r.teamId === teamId && r.id === analysisId);
+      if (existing) {
+        existing.threadId = threadId;
+        existing.pinnedMessageId = pinnedMessageId;
+      }
+    },
   };
 }
 
@@ -413,7 +431,18 @@ export function fakeAnalysisQuota(
 }
 
 export function fakeAnalysisJobRepo(
-  opts: { claimResult?: ClaimResult } = {},
+  opts: {
+    claimResult?: ClaimResult;
+    // PR5 correction (RELI-001/RESI-001): paired with the SAME
+    // fakeHackathonAnalysisRepo instance a test already holds, so
+    // persistAnalysis records both effects together — the analysis upsert
+    // and the job's persisted transition — mirroring the D1 adapter's
+    // single db.batch (createD1AnalysisJobRepo.persistAnalysis).
+    hackathonAnalysisRepo?: HackathonAnalysisRepo;
+    // false models a job that is no longer `running` (claim lost): nothing
+    // is written, mirroring the D1 adapter's guarded batch (FIXV-001).
+    persistResult?: boolean;
+  } = {},
 ): AnalysisJobRepo & {
   persisted: Array<{ id: string; analysisId: string }>;
   succeeded: string[];
@@ -427,8 +456,11 @@ export function fakeAnalysisJobRepo(
     succeeded,
     failed,
     claim: async () => opts.claimResult ?? { kind: "missing" },
-    markPersisted: async (id: string, analysisId: string) => {
-      persisted.push({ id, analysisId });
+    persistAnalysis: async (jobId: string, analysis: HackathonAnalysis) => {
+      if (opts.persistResult === false) return false;
+      persisted.push({ id: jobId, analysisId: analysis.id });
+      await opts.hackathonAnalysisRepo?.save(analysis);
+      return true;
     },
     markSucceeded: async (id: string) => {
       succeeded.push(id);
