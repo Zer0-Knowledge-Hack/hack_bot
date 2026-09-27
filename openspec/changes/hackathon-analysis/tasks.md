@@ -69,6 +69,7 @@ Chain strategy: stacked-to-main
 - [ ] 4.3 RED: `test/domain/usecases/link-analysis-to-topic.test.ts` — link into empty topic, move-link + unpin old on conflict, both directions (spec hackathon-analysis: One Analysis Per Topic, Conflicts Move the Link, all three scenarios), pin-failure fallback (spec: Pin Failure Falls Back to Unpinned Posting).
 - [ ] 4.4 GREEN: `src/domain/usecases/link-analysis-to-topic.ts`.
 - [ ] 4.5 RED/GREEN: `test/domain/usecases/list-analyses.test.ts` + `src/domain/usecases/list-analyses.ts` — slug/name/deadline/linked status, truncation at 4096 (spec: Listing Is Read-Only and Truncated, both scenarios).
+- [ ] 4.6 Wire `linkAnalysisToTopic` into `runHackathonJob`'s fresh-completion path (`src/domain/usecases/run-hackathon-job.ts`) when `job.threadId` is not null — design.md: "a `/hackathon <url>` run inside a topic links and pins from the consumer" (review finding RELI-003).
 
 ## Phase 5: Migration + D1 Repos (PR5)
 
