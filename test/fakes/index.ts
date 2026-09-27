@@ -388,6 +388,24 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
       else rows.push(analysis);
     },
     listByTeam: async (teamId: TeamId) => rows.filter((r) => r.teamId === teamId),
+    moveTopicLink: async (
+      teamId: TeamId,
+      analysisId: string,
+      threadId: number,
+      pinnedMessageId: number | null,
+    ) => {
+      for (const row of rows) {
+        if (row.teamId === teamId && row.threadId === threadId && row.id !== analysisId) {
+          row.threadId = null;
+          row.pinnedMessageId = null;
+        }
+      }
+      const existing = rows.find((r) => r.teamId === teamId && r.id === analysisId);
+      if (existing) {
+        existing.threadId = threadId;
+        existing.pinnedMessageId = pinnedMessageId;
+      }
+    },
   };
 }
 

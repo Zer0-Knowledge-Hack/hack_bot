@@ -18,6 +18,13 @@ describe("migrations/0001_init.sql", () => {
       // github_org_claims and repo_topic_links: migrations/0002_github_alerts.sql
       // (PR2 covers their own FK/UNIQUE/CHECK migration tests).
       "github_org_claims",
+      // hackathon_analyses, hackathon_analysis_jobs, hackathon_analysis_usage:
+      // migrations/0003_hackathon_analysis.sql (PR5 — see the describe block
+      // below plus test/adapters/d1/hackathon-analysis-repo.test.ts for the
+      // adapter-level coverage).
+      "hackathon_analyses",
+      "hackathon_analysis_jobs",
+      "hackathon_analysis_usage",
       "members",
       "memberships",
       "profile_fields",
@@ -298,5 +305,121 @@ describe("migrations/0002_github_alerts.sql", () => {
     expect(rowsForA.results.map((r) => r.repo_full_name)).toEqual([
       "iso-org-a/repo",
     ]);
+  });
+});
+
+// migrations/0003_hackathon_analysis.sql (design.md "Migration
+// `0003_hackathon_analysis.sql`"). Raw SQL-level constraint verification;
+// adapter-level coverage lives in
+// test/adapters/d1/hackathon-analysis-repo.test.ts.
+describe("migrations/0003_hackathon_analysis.sql", () => {
+  async function seedTeam(teamId: string, chatId: number) {
+    await env.DB.prepare(
+      "INSERT INTO teams (id, telegram_chat_id, created_at) VALUES (?, ?, ?)",
+    )
+      .bind(teamId, chatId, 0)
+      .run();
+  }
+
+  const fields = "{}";
+  const suggestedRepos = "[]";
+
+  it("rejects a second analysis for the same (team_id, slug) (task 5.2: unique slug)", async () => {
+    await seedTeam("team-hk-slug", 700);
+    await env.DB.prepare(
+      `INSERT INTO hackathon_analyses
+        (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind("a-hk-1", "team-hk-slug", "dup-slug", "https://a", "https://a", fields, suggestedRepos, 0, 0)
+      .run();
+
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO hackathon_analyses
+          (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("a-hk-2", "team-hk-slug", "dup-slug", "https://b", "https://b", fields, suggestedRepos, 0, 0)
+        .run(),
+    ).rejects.toThrow(/UNIQUE constraint failed/i);
+  });
+
+  it("rejects a second analysis for the same (team_id, normalized_url) (task 5.2: unique URL)", async () => {
+    await seedTeam("team-hk-url", 701);
+    await env.DB.prepare(
+      `INSERT INTO hackathon_analyses
+        (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind("a-hk-url-1", "team-hk-url", "slug-a", "https://shared", "https://shared", fields, suggestedRepos, 0, 0)
+      .run();
+
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO hackathon_analyses
+          (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("a-hk-url-2", "team-hk-url", "slug-b", "https://shared", "https://shared", fields, suggestedRepos, 0, 0)
+        .run(),
+    ).rejects.toThrow(/UNIQUE constraint failed/i);
+  });
+
+  it("allows two analyses with a null thread_id, but rejects a second one linked to the same (team_id, thread_id) (task 5.2: unique thread_id, nullable/partial)", async () => {
+    await seedTeam("team-hk-thread", 702);
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO hackathon_analyses
+          (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, thread_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind("a-hk-thr-null-1", "team-hk-thread", "n1", "https://n1", "https://n1", fields, suggestedRepos, null, 0, 0),
+      env.DB.prepare(
+        `INSERT INTO hackathon_analyses
+          (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, thread_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind("a-hk-thr-null-2", "team-hk-thread", "n2", "https://n2", "https://n2", fields, suggestedRepos, null, 0, 0),
+      env.DB.prepare(
+        `INSERT INTO hackathon_analyses
+          (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, thread_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind("a-hk-thr-1", "team-hk-thread", "t1", "https://t1", "https://t1", fields, suggestedRepos, 900, 0, 0),
+    ]);
+
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO hackathon_analyses
+          (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, thread_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("a-hk-thr-2", "team-hk-thread", "t2", "https://t2", "https://t2", fields, suggestedRepos, 900, 0, 0)
+        .run(),
+    ).rejects.toThrow(/UNIQUE constraint failed/i);
+  });
+
+  it("rejects a hackathon_analysis_jobs row whose status is outside the CHECK constraint", async () => {
+    await seedTeam("team-hk-job-check", 703);
+
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO hackathon_analysis_jobs
+          (id, team_id, chat_id, utc_day, fetch_url, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("job-bad-status", "team-hk-job-check", 1, "2026-01-01", "https://x", "bogus", 0, 0)
+        .run(),
+    ).rejects.toThrow(/CHECK constraint failed/i);
+  });
+
+  it("rejects a hackathon_analysis_jobs row whose team_id has no matching team (FK enforced)", async () => {
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO hackathon_analysis_jobs
+          (id, team_id, chat_id, utc_day, fetch_url, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind("job-orphan", "missing-team-for-job", 1, "2026-01-01", "https://x", "queued", 0, 0)
+        .run(),
+    ).rejects.toThrow(/FOREIGN KEY constraint failed/i);
   });
 });

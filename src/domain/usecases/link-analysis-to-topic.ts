@@ -82,15 +82,13 @@ export async function postAnalysisAndLinkTopic(
   const notes: string[] = [];
 
   // spec: "Topic already holds a different analysis" — move the link,
-  // unpinning whichever other analysis currently occupies this topic.
+  // unpinning whichever other analysis currently occupies this topic. The
+  // displaced row's own D1 link/pin columns are cleared atomically below
+  // (task 5.3a: moveTopicLink), together with setting the new link — never
+  // as a separate `save` here.
   const displaced = await deps.hackathonAnalysisRepo.findByThreadId(teamId, threadId);
   if (displaced && displaced.id !== analysis.id) {
     await safeUnpin(chatId, displaced.pinnedMessageId, deps);
-    await deps.hackathonAnalysisRepo.save({
-      ...displaced,
-      threadId: null,
-      pinnedMessageId: null,
-    });
     notes.push(`Replaced the topic's previous link (was ${displaced.slug}).`);
   }
 
@@ -130,7 +128,16 @@ export async function postAnalysisAndLinkTopic(
     notes.push("Pinning failed; the message was posted unpinned.");
   }
 
-  await deps.hackathonAnalysisRepo.save({ ...analysis, threadId, pinnedMessageId });
+  // task 5.3a (RELI-002/RESI-003): one atomic D1 batch replaces the two
+  // separate `save` calls (displaced-clear, this-analysis-set) that used to
+  // run here — a crash between them could leave a topic un-linked or
+  // double-linked.
+  await deps.hackathonAnalysisRepo.moveTopicLink(
+    teamId,
+    analysis.id,
+    threadId,
+    pinnedMessageId,
+  );
 
   // READ-001: the notes must never push the reply over REPLY_MAX — reserve
   // room for them and truncate the analysis body, never the notes.

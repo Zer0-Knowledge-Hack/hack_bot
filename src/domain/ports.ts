@@ -232,6 +232,17 @@ export interface HackathonAnalysisRepo {
   // listAnalyses (PR4, spec: "Listing Is Read-Only and Truncated") — every
   // stored analysis for the team, read-only.
   listByTeam(teamId: TeamId): Promise<HackathonAnalysis[]>;
+  // task 5.3a (RELI-002/RESI-003): atomically clears whichever OTHER
+  // analysis currently holds `threadId` for this team (if any) and sets
+  // `threadId`/`pinnedMessageId` on `analysisId`, in one D1 batch — replaces
+  // postAnalysisAndLinkTopic's two separate `save` calls so a crash between
+  // them can never leave a topic un-linked or double-linked.
+  moveTopicLink(
+    teamId: TeamId,
+    analysisId: string,
+    threadId: number,
+    pinnedMessageId: number | null,
+  ): Promise<void>;
 }
 
 // design.md "reserve": one atomic batch reserves the cap slot and the
