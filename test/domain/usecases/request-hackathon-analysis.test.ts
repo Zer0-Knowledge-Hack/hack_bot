@@ -130,4 +130,40 @@ describe("requestHackathonAnalysis", () => {
     expect(deps.analysisQuota.released).toHaveLength(1);
     expect(deps.analysisQuota.released[0]!.refund).toBe(true);
   });
+
+  it("enqueue failure: markFailed throwing still releases the slot and rethrows the original error (RESI-002)", async () => {
+    const deps = makeDeps("ok", true);
+    const actorMembershipId = pushAdmin(deps);
+    deps.analysisJobRepo.markFailed = async () => {
+      throw new Error("D1 unavailable");
+    };
+
+    await expect(
+      requestHackathonAnalysis(
+        { teamId, actorMembershipId, chatId: CHAT_ID, threadId: null, sourceUrl: SOURCE_URL },
+        deps,
+      ),
+    ).rejects.toThrow(QueueSendFailedError);
+
+    expect(deps.analysisQuota.released).toHaveLength(1);
+    expect(deps.analysisQuota.released[0]!.refund).toBe(true);
+  });
+
+  it("enqueue failure: release throwing still rethrows the original error (RESI-002)", async () => {
+    const deps = makeDeps("ok", true);
+    const actorMembershipId = pushAdmin(deps);
+    deps.analysisQuota.release = async () => {
+      throw new Error("D1 unavailable");
+    };
+
+    await expect(
+      requestHackathonAnalysis(
+        { teamId, actorMembershipId, chatId: CHAT_ID, threadId: null, sourceUrl: SOURCE_URL },
+        deps,
+      ),
+    ).rejects.toThrow(QueueSendFailedError);
+
+    expect(deps.analysisJobRepo.failed).toHaveLength(1);
+    expect(deps.analysisJobRepo.failed[0]!.reason).toBe("enqueue");
+  });
 });

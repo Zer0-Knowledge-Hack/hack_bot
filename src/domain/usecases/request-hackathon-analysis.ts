@@ -106,8 +106,21 @@ export async function requestHackathonAnalysis(
     });
   } catch (err) {
     if (err instanceof QueueSendFailedError) {
-      await deps.analysisJobRepo.markFailed(jobId, "enqueue");
-      await deps.analysisQuota.release(input.teamId, utcDay, jobId, true);
+      // Best-effort cleanup (RESI-002): each step is guarded independently
+      // so a `markFailed` failure never skips `release`, and the original
+      // `QueueSendFailedError` — not a cleanup error — is always rethrown.
+      try {
+        await deps.analysisJobRepo.markFailed(jobId, "enqueue");
+      } catch {
+        // logged by the adapter layer; the reserved slot must still be
+        // released below.
+      }
+      try {
+        await deps.analysisQuota.release(input.teamId, utcDay, jobId, true);
+      } catch {
+        // logged by the adapter layer; the original enqueue failure still
+        // wins below.
+      }
     }
     throw err;
   }
