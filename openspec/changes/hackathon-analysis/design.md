@@ -125,7 +125,7 @@ When the job insert changes no row, the adapter reads the usage row to return `b
 interface AnalysisJobMessage { v: 1; jobId: string; teamId: TeamId; chatId: number; threadId: number | null; fetchUrl: string; }
 interface AnalysisJobQueue { enqueue(m: AnalysisJobMessage): Promise<void>; } // throws QueueSendFailedError
 interface AnalysisQuota { reserve(i: { team: TeamId; day: string; cap: number; now: number; leaseMs: number; job: NewJob }): Promise<"ok" | "busy" | "cap-reached">; release(team: TeamId, day: string, jobId: string, refund: boolean): Promise<void>; }
-interface AnalysisJobRepo { claim(id: string, now: number): Promise<ClaimResult>; markPersisted; markSucceeded; markFailed(id: string, reason: JobFailureReason): Promise<void>; }
+interface AnalysisJobRepo { claim(id: string, now: number): Promise<ClaimResult>; persistAnalysis(jobId: string, analysis: HackathonAnalysis): Promise<boolean>; markSucceeded; markFailed(id: string, reason: JobFailureReason): Promise<void>; } // persistAnalysis: analysis upsert + status='persisted' in one db.batch (PR5 correction, RELI-001/RESI-001); false when the job wasn't running
 type ClaimResult = { kind: "claimed"; job: Job } | { kind: "persisted"; job: Job } | { kind: "terminal" } | { kind: "held" } | { kind: "missing" };
 interface ChatPublisher { post(chatId: number, threadId: number | null, text: string): Promise<number>; pin; unpin; } // post throws PublishFailedError(AlertSendFailureClass)
 type JobOutcome = { kind: "ack" } | { kind: "retry"; delaySeconds: number };

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { createD1AnalysisJobRepo } from "../../../src/adapters/d1/analysis-job-repo";
+import { asTeamId } from "../../../src/domain/ids";
 
 async function seedTeam(teamId: string, chatId: number) {
   await env.DB.prepare(
@@ -161,7 +162,7 @@ describe("createD1AnalysisJobRepo", () => {
   function analysisFixture(id: string, teamId: string, slug: string) {
     return {
       id,
-      teamId,
+      teamId: asTeamId(teamId),
       slug,
       sourceUrl: "https://x",
       normalizedUrl: "https://x",

@@ -100,7 +100,7 @@ export function createD1AnalysisJobRepo(db: D1Database, clock: Clock): AnalysisJ
     // both driven by the SAME job-status predicate, evaluated atomically.
     async persistAnalysis(jobId: string, analysis: HackathonAnalysis): Promise<boolean> {
       const now = clock.now();
-      const [, jobUpdate] = await db.batch([
+      const results = await db.batch([
         db
           .prepare(
             `INSERT INTO hackathon_analyses
@@ -142,7 +142,7 @@ export function createD1AnalysisJobRepo(db: D1Database, clock: Clock): AnalysisJ
           )
           .bind(analysis.id, now, jobId),
       ]);
-      return jobUpdate.meta.changes === 1;
+      return results.at(1)?.meta.changes === 1;
     },
 
     async markSucceeded(id: string): Promise<void> {

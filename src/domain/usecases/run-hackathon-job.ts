@@ -142,7 +142,11 @@ async function runClaimedJob(
       },
       deps,
     );
-    await deps.analysisJobRepo.markPersisted(job.id, analysis.id);
+    // RELI-001/RESI-001 (PR5 correction): persist the analysis and mark the
+    // job persisted atomically (design.md "persist+mark (one batch)"). The
+    // job was just claimed above, so it is guaranteed `running` here; the
+    // adapter's own guard is defensive (see AnalysisJobRepo.persistAnalysis).
+    await deps.analysisJobRepo.persistAnalysis(job.id, analysis);
     // task 4.6 / design.md "Pin Behavior": a fresh run inside a topic links
     // and pins from the consumer instead of a bare post (RELI-003). The
     // producer already gated this on an admin (requestHackathonAnalysis),

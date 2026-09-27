@@ -271,8 +271,11 @@ describe("analyzeHackathon: primary-then-fallback LLM call", () => {
   });
 });
 
-describe("analyzeHackathon: persist and suggestions", () => {
-  it("persists the analysis with a derived slug and token-overlap repo suggestions", async () => {
+describe("analyzeHackathon: builds (does not persist) and suggests", () => {
+  // PR5 correction (RELI-001/RESI-001): analyzeHackathon only builds and
+  // returns the analysis now — persistence moved to runHackathonJob via
+  // AnalysisJobRepo.persistAnalysis (see run-hackathon-job.test.ts).
+  it("builds the analysis with a derived slug and token-overlap repo suggestions, without persisting it", async () => {
     const deps = makeDeps();
     deps.repoTopicLinkRepo.rows.push({
       teamId: TEAM_ID,
@@ -287,8 +290,7 @@ describe("analyzeHackathon: persist and suggestions", () => {
 
     expect(result.slug).toBe("meridian");
     expect(result.suggestedRepos).toEqual(["acme/meridian-app"]);
-    expect(deps.hackathonAnalysisRepo.rows).toHaveLength(1);
-    expect(deps.hackathonAnalysisRepo.rows[0]?.slug).toBe("meridian");
+    expect(deps.hackathonAnalysisRepo.rows).toHaveLength(0);
   });
 
   it("appends a numeric suffix when the derived slug already exists for the team", async () => {
@@ -334,6 +336,7 @@ describe("analyzeHackathon: persist and suggestions", () => {
     expect(result.slug).toBe("meridian");
     expect(result.threadId).toBe(7);
     expect(result.pinnedMessageId).toBe(42);
+    // Only the pre-seeded row exists — analyzeHackathon does not write.
     expect(deps.hackathonAnalysisRepo.rows).toHaveLength(1);
   });
 });

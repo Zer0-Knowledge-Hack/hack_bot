@@ -431,7 +431,15 @@ export function fakeAnalysisQuota(
 }
 
 export function fakeAnalysisJobRepo(
-  opts: { claimResult?: ClaimResult } = {},
+  opts: {
+    claimResult?: ClaimResult;
+    // PR5 correction (RELI-001/RESI-001): paired with the SAME
+    // fakeHackathonAnalysisRepo instance a test already holds, so
+    // persistAnalysis records both effects together — the analysis upsert
+    // and the job's persisted transition — mirroring the D1 adapter's
+    // single db.batch (createD1AnalysisJobRepo.persistAnalysis).
+    hackathonAnalysisRepo?: HackathonAnalysisRepo;
+  } = {},
 ): AnalysisJobRepo & {
   persisted: Array<{ id: string; analysisId: string }>;
   succeeded: string[];
@@ -445,8 +453,10 @@ export function fakeAnalysisJobRepo(
     succeeded,
     failed,
     claim: async () => opts.claimResult ?? { kind: "missing" },
-    markPersisted: async (id: string, analysisId: string) => {
-      persisted.push({ id, analysisId });
+    persistAnalysis: async (jobId: string, analysis: HackathonAnalysis) => {
+      persisted.push({ id: jobId, analysisId: analysis.id });
+      await opts.hackathonAnalysisRepo?.save(analysis);
+      return true;
     },
     markSucceeded: async (id: string) => {
       succeeded.push(id);

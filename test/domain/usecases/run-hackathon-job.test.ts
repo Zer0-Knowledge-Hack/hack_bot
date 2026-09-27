@@ -353,12 +353,21 @@ describe("runHackathonJob", () => {
   it("claimed job: runs the pipeline, persists, posts, and succeeds", async () => {
     const deps = makeDeps();
     const job = baseJob();
-    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({
+      claimResult: { kind: "claimed", job },
+      hackathonAnalysisRepo: deps.hackathonAnalysisRepo,
+    });
 
     const outcome = await runHackathonJob(baseMsg(), 1, deps);
 
     expect(outcome).toEqual({ kind: "ack" });
+    // PR5 correction (RELI-001/RESI-001): persistAnalysis records BOTH the
+    // job's persisted transition AND the analysis upsert in one call.
     expect(deps.analysisJobRepo.persisted).toHaveLength(1);
+    expect(deps.hackathonAnalysisRepo.rows).toHaveLength(1);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.id).toBe(
+      deps.analysisJobRepo.persisted[0]?.analysisId,
+    );
     expect(deps.chatPublisher.posted).toHaveLength(1);
     expect(deps.analysisJobRepo.succeeded).toEqual(["job-1"]);
     expect(deps.analysisQuota.released).toEqual([
@@ -371,7 +380,10 @@ describe("runHackathonJob", () => {
   it("claimed job inside a topic: links and pins instead of a bare post", async () => {
     const deps = makeDeps();
     const job = baseJob({ threadId: 500 });
-    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({
+      claimResult: { kind: "claimed", job },
+      hackathonAnalysisRepo: deps.hackathonAnalysisRepo,
+    });
 
     const outcome = await runHackathonJob(
       baseMsg({ threadId: 500 }),
