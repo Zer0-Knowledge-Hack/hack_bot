@@ -1,7 +1,11 @@
 import type {
+  AnalysisJobMessage,
   AuditDraft,
+  ClaimResult,
+  HackathonAnalysis,
   Member,
   Membership,
+  NewAnalysisJob,
   ProfileField,
   DmSelection,
   RepoTopicLink,
@@ -176,4 +180,95 @@ export interface AlertSender {
   // return the "send-failed" outcome instead of a 500 (design.md "GitHub
   // route status policy").
   send(chatId: number, threadId: number, text: string): Promise<void>;
+}
+
+// --- Hackathon analysis ports (design.md "Interfaces / Contracts") ---
+
+// A single instance implements the static path; a second, separate
+// instance implements the Browser Rendering fallback (design.md "Ports":
+// "PageFetcher (static and rendered instances)"). Throws PageFetchFailedError
+// or UnsafeUrlError on failure; the rendered instance also throws
+// BrowserQuotaExceededError on a 429 (design.md "A 429 raises
+// BrowserQuotaExceededError").
+// `signal` carries the per-step timeout derived from the attempt deadline
+// (design.md "Time budget": static fetch 10 s, rendered fetch 45 s) — the
+// caller (analyzeHackathon) computes it from the injected Clock so the
+// adapter never reads the wall clock itself.
+export interface PageFetcher {
+  fetch(url: string, signal: AbortSignal): Promise<string>;
+}
+
+// Throws ExtractionFailedError or LlmQuotaExceededError. Otherwise returns
+// the model's raw parsed JSON output — `validateExtraction` (the ONLY
+// place a raw model response is trusted, hackathon/extraction.ts) decides
+// whether it is usable. `signal` carries the per-attempt LLM timeout
+// (design.md "Time budget": 45 s per LLM attempt).
+export interface LlmExtractor {
+  extract(pageText: string, modelId: string, signal: AbortSignal): Promise<unknown>;
+}
+
+export interface HackathonAnalysisRepo {
+  findBySlug(teamId: TeamId, slug: string): Promise<HackathonAnalysis | null>;
+  findByNormalizedUrl(
+    teamId: TeamId,
+    normalizedUrl: string,
+  ): Promise<HackathonAnalysis | null>;
+  slugExists(teamId: TeamId, slug: string): Promise<boolean>;
+  // Insert-or-update by `id` (design.md "Same-URL Refresh Keeps the Slug" —
+  // a refresh reuses the existing row's id and slug).
+  save(analysis: HackathonAnalysis): Promise<void>;
+}
+
+// design.md "reserve": one atomic batch reserves the cap slot and the
+// team lease together with the job insert, so a redelivery cannot
+// double-count (design.md "Cap and lease"). `release` is owner-checked by
+// `jobId`; `refund` only decrements `runs` (spec: "Enqueue failure",
+// "job expired").
+export interface AnalysisQuota {
+  reserve(input: {
+    team: TeamId;
+    day: string;
+    cap: number;
+    now: number;
+    leaseMs: number;
+    job: NewAnalysisJob;
+  }): Promise<"ok" | "busy" | "cap-reached">;
+  release(
+    team: TeamId,
+    day: string,
+    jobId: string,
+    refund: boolean,
+  ): Promise<void>;
+}
+
+// design.md "Job State (D1) and Idempotency". `markPersisted` records the
+// analysis id produced by the persist step; `markSucceeded`/`markFailed`
+// are the two terminal transitions.
+export interface AnalysisJobRepo {
+  claim(id: string, now: number): Promise<ClaimResult>;
+  markPersisted(id: string, analysisId: string): Promise<void>;
+  markSucceeded(id: string): Promise<void>;
+  markFailed(id: string, reason: string): Promise<void>;
+}
+
+// Throws QueueSendFailedError (design.md "Interfaces / Contracts").
+export interface AnalysisJobQueue {
+  enqueue(message: AnalysisJobMessage): Promise<void>;
+}
+
+// Public GitHub repo metadata used to enrich a suggested repo (design.md
+// "Data Flow": "repoLinks+metadata"). The adapter (src/adapters/github/
+// repo-metadata.ts, PR8) is the only implementation; wiring this into
+// analyzeHackathon is deferred past PR2 (see apply-progress deviations).
+export interface RepoMetadataSource {
+  fetchDescription(repo: RepoFullName): Promise<string | null>;
+}
+
+// design.md "Interfaces / Contracts". `post` returns the new message id
+// (needed to `pin`/`unpin` it later) and throws PublishFailedError on
+// failure, mirroring AlertSender.
+export interface ChatPublisher {
+  post(chatId: number, threadId: number | null, text: string): Promise<number>;
+  pin(chatId: number, messageId: number): Promise<void>;
+  unpin(chatId: number, messageId: number): Promise<void>;
 }

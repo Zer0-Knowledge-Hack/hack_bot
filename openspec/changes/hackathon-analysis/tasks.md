@@ -48,12 +48,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Ports, Errors, analyzeHackathon (PR2)
 
-- [ ] 2.1 Add ports to `src/domain/ports.ts`: `PageFetcher`, `LlmExtractor`, `HackathonAnalysisRepo`, `AnalysisQuota`, `AnalysisJobRepo`, `AnalysisJobQueue`, `RepoMetadataSource`, `ChatPublisher`.
-- [ ] 2.2 Add entities to `src/domain/entities.ts`: analysis record, `AnalysisJobMessage`, `ClaimResult`, `JobOutcome`.
-- [ ] 2.3 Add errors to `src/domain/errors.ts`: `UnsafeUrlError`, `PageFetchFailedError`, `PageTooThinError`, `ExtractionFailedError`, `LlmQuotaExceededError`, `QueueSendFailedError`, `AnalysisBusyError`, `DailyCapReachedError`, `ConfigError`, `AnalysisNotFoundError`, `PublishFailedError`, `BrowserQuotaExceededError`.
-- [ ] 2.4 Add fakes to `test/fakes/index.ts` for every new port (in-memory, injectable failure modes).
-- [ ] 2.5 RED: `test/domain/usecases/analyze-hackathon.test.ts` — static-then-browser fallback below 800 chars (spec page-fetch: Browser Rendering Fallback on Thin Static Text), 429-degrade path (spec page-fetch: Browser Rendering Quota Exhaustion, both scenarios), primary-then-fallback LLM call, persist+suggestions.
-- [ ] 2.6 GREEN: `src/domain/usecases/analyze-hackathon.ts`.
+- [x] 2.1 Add ports to `src/domain/ports.ts`: `PageFetcher`, `LlmExtractor`, `HackathonAnalysisRepo`, `AnalysisQuota`, `AnalysisJobRepo`, `AnalysisJobQueue`, `RepoMetadataSource`, `ChatPublisher`.
+- [x] 2.2 Add entities to `src/domain/entities.ts`: analysis record, `AnalysisJobMessage`, `ClaimResult`, `JobOutcome`.
+- [x] 2.3 Add errors to `src/domain/errors.ts`: `UnsafeUrlError`, `PageFetchFailedError`, `PageTooThinError`, `ExtractionFailedError`, `LlmQuotaExceededError`, `QueueSendFailedError`, `AnalysisBusyError`, `DailyCapReachedError`, `ConfigError`, `AnalysisNotFoundError`, `PublishFailedError`, `BrowserQuotaExceededError`.
+- [x] 2.4 Add fakes to `test/fakes/index.ts` for every new port (in-memory, injectable failure modes).
+- [x] 2.5 RED: `test/domain/usecases/analyze-hackathon.test.ts` — static-then-browser fallback below 800 chars (spec page-fetch: Browser Rendering Fallback on Thin Static Text), 429-degrade path (spec page-fetch: Browser Rendering Quota Exhaustion, both scenarios), primary-then-fallback LLM call, persist+suggestions.
+- [x] 2.6 GREEN: `src/domain/usecases/analyze-hackathon.ts`.
 
 ## Phase 3: requestHackathonAnalysis + runHackathonJob (PR3)
 
