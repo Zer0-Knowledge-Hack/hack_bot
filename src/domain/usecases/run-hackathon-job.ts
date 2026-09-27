@@ -84,9 +84,12 @@ async function runClaimedJob(
   // design.md "Stale": only a job that never started running (its first
   // claim) can be stale — no neurons were spent yet.
   if (job.attempts <= 1 && deps.clock.now() - job.createdAt > STALE_JOB_MS) {
+    // Post then mark (design.md "Post then mark ... never silence"): a
+    // crash after this point yields at most a duplicate expiry reply on
+    // redelivery, never silence.
+    await safePost(job, "Analysis expired; run it again.", deps.chatPublisher);
     await deps.analysisJobRepo.markFailed(job.id, "job:expired");
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, true);
-    await safePost(job, "Analysis expired; run it again.", deps.chatPublisher);
     return { kind: "ack" };
   }
 
@@ -199,9 +202,12 @@ async function handleJobError(
   if (classification.transient && attempt < MAX_ATTEMPTS) {
     return { kind: "retry", delaySeconds: TRANSIENT_RETRY_DELAY_S };
   }
+  // Post then mark (design.md "Post then mark ... never silence"): a crash
+  // after this point yields at most a duplicate failure reply on
+  // redelivery, never silence.
+  await safePost(job, classification.reply, deps.chatPublisher);
   await deps.analysisJobRepo.markFailed(job.id, classification.reason);
   await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, classification.refund);
-  await safePost(job, classification.reply, deps.chatPublisher);
   return { kind: "ack" };
 }
 

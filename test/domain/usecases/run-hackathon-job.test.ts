@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runHackathonJob } from "../../../src/domain/usecases/run-hackathon-job";
+import { UnsafeUrlError } from "../../../src/domain/errors";
 import { asTeamId } from "../../../src/domain/ids";
 import type { AnalysisJob, AnalysisJobMessage } from "../../../src/domain/entities";
 import {
@@ -197,5 +198,38 @@ describe("runHackathonJob", () => {
       { team: teamId, day: job.utcDay, jobId: job.id, refund: false },
     ]);
     expect(depsFinal.chatPublisher.posted[0]!.text).toContain("temporary error");
+  });
+
+  it("stale job: posts the expiry reply before marking failed, never silently (RESI-001, design.md 'Post then mark')", async () => {
+    const deps = makeDeps();
+    const job = baseJob({ attempts: 1, createdAt: deps.clock.now() - 61 * 60 * 1000 });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.analysisJobRepo.markFailed = async () => {
+      throw new Error("D1 unavailable after post");
+    };
+
+    await expect(runHackathonJob(baseMsg(), 1, deps)).rejects.toThrow(
+      "D1 unavailable after post",
+    );
+
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.chatPublisher.posted[0]!.text).toContain("expired");
+  });
+
+  it("permanent failure: posts the failure reply before marking failed, never silently (RESI-001, design.md 'Post then mark')", async () => {
+    const deps = makeDeps();
+    const job = baseJob();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.staticFetcher = fakePageFetcher([{ throws: new UnsafeUrlError("blocked", "private-ip") }]);
+    deps.analysisJobRepo.markFailed = async () => {
+      throw new Error("D1 unavailable after post");
+    };
+
+    await expect(runHackathonJob(baseMsg(), 1, deps)).rejects.toThrow(
+      "D1 unavailable after post",
+    );
+
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.chatPublisher.posted[0]!.text).toContain("public http(s)");
   });
 });
