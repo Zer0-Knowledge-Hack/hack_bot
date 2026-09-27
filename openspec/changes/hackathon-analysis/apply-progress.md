@@ -436,3 +436,99 @@ The scoped validator escalated **FIXV-001**. The RESI-001 and RESI-002 fixes swa
   - Only the error class name goes into `errorCode`, never the message.
   - The shared fakes gain `fakeLogger()`.
 - **RED**: 3 failing tests (the two RESI-002 cleanup tests now also assert the log entry, plus a new one where the failure reply cannot be sent). **GREEN**: 439/439 pass, and the typecheck is clean.
+
+## Phase 4 (PR4: Show, Link, List Use Cases + 4.6) — branch `feat/hackathon-show-link-list`
+
+### Scope of this batch
+
+Phase 4 only — `showAnalysis`, `linkAnalysisToTopic`, `listAnalyses`, and task 4.6 (wiring `linkAnalysisToTopic` into `runHackathonJob`'s fresh-completion path). Phases 5-11 are untouched. Branch created from `main` right after PR #22 (Phase 3 + PR3 corrections) was merged.
+
+### Completed Tasks
+
+- [x] 4.1 RED: `test/domain/usecases/show-analysis.test.ts` — re-show by slug free of cap, not-found error.
+- [x] 4.2 GREEN: `src/domain/usecases/show-analysis.ts`.
+- [x] 4.3 RED: `test/domain/usecases/link-analysis-to-topic.test.ts` — link into empty topic, move-link + unpin old on both conflict directions, pin-failure fallback.
+- [x] 4.4 GREEN: `src/domain/usecases/link-analysis-to-topic.ts`.
+- [x] 4.5 RED/GREEN: `test/domain/usecases/list-analyses.test.ts` + `src/domain/usecases/list-analyses.ts`.
+- [x] 4.6 Wired `postAnalysisAndLinkTopic` into `runHackathonJob`'s fresh-completion path when `job.threadId` is not null (RELI-003).
+
+All 6 Phase 4 tasks complete (29/56 cumulative across Phases 1-4). Phases 5-11 remain pending (not assigned to this batch).
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 4.1/4.2 | `test/domain/usecases/show-analysis.test.ts` | Unit | N/A (new) | Written, confirmed failing (`Cannot find module '.../show-analysis'`) | 3/3 passed on first run | 3 cases: any-member re-show, not-found, non-member actor | None needed |
+| 4.3/4.4 | `test/domain/usecases/link-analysis-to-topic.test.ts` | Unit | N/A (new) | Written, confirmed failing (`Cannot find module '.../link-analysis-to-topic'`) | 5/7 passed first run (2 failures were the test's own lowercase "replaced"/"moved" assertions vs the implementation's capitalized wording — fixed the test, not the implementation); 7/7 after | 7 cases: empty-topic link, topic-holds-different-analysis, analysis-linked-elsewhere, pin-failure fallback, not-found, non-admin, non-member | None needed — `postAnalysisAndLinkTopic` extracted as the permission-free core up front (needed for 4.6), not as a later refactor |
+| 4.5 | `test/domain/usecases/list-analyses.test.ts` | Unit | N/A (new) | Written, confirmed failing (`Cannot find module '.../list-analyses'`) | 3/3 passed on first run | 3 cases: field mapping (name/deadline/linked), truncation past 4096 with a "...and N more" note, non-member actor | None needed |
+| 4.6 | `test/domain/usecases/run-hackathon-job.test.ts` (added case) | Unit | Full existing 10-test file (regression) | Added "claimed job inside a topic: links and pins instead of a bare post"; confirmed failing (`pinned` array empty — bare `post` was still used) | 11/11 passed after wiring `postAnalysisAndLinkTopic` into `runClaimedJob`'s happy path (only when `job.threadId !== null`) | Existing general-chat happy-path test (`threadId: null`) re-run unchanged — proves the `null` branch still uses a bare post | None needed |
+
+#### Test Summary
+- **Total tests written**: 18 (3 + 7 + 3 + 1 new case in an existing file, plus 2 pre-existing analyze-hackathon.test.ts assertions updated for the new `pinnedMessageId` field)
+- **Total tests passing**: 453/453 (full suite)
+- **Layers used**: Unit (18)
+- **Approval tests** (refactoring): None — new files, and run-hackathon-job.ts's existing tests all still pass unchanged
+- **Functions created**: `showAnalysis`; `linkAnalysisToTopic`, `postAnalysisAndLinkTopic`, `safeUnpin`; `listAnalyses`
+
+### Work Unit Evidence
+
+| Work unit | Focused test command | Result | Runtime harness | Rollback boundary |
+|---|---|---|---|---|
+| 4.1/4.2 showAnalysis | `npx vitest run test/domain/usecases/show-analysis.test.ts` | 3/3 passed | N/A — pure Vitest with fakes | revert commit `b5b9a67` (`src/domain/usecases/show-analysis.ts`, its test, `entities.ts`'s `pinnedMessageId` field, `analyze-hackathon.ts`'s persist line, 2 pre-existing test literals, tasks.md checkboxes) |
+| 4.3/4.4 linkAnalysisToTopic | `npx vitest run test/domain/usecases/link-analysis-to-topic.test.ts` | 7/7 passed | N/A — pure Vitest with fakes (no D1/Telegram) | revert commit `098d70f` (`src/domain/usecases/link-analysis-to-topic.ts`, its test, `ports.ts`'s `findByThreadId`, the fake, tasks.md checkboxes) |
+| 4.5 listAnalyses | `npx vitest run test/domain/usecases/list-analyses.test.ts` | 3/3 passed | N/A — pure Vitest with fakes | revert commit `fba8e40` (`src/domain/usecases/list-analyses.ts`, its test, `ports.ts`'s `listByTeam`, the fake, tasks.md checkboxes) |
+| 4.6 runHackathonJob wiring | `npx vitest run test/domain/usecases/run-hackathon-job.test.ts` | 11/11 passed | N/A — pure Vitest with fakes | revert commit `6d5457c` (`src/domain/usecases/run-hackathon-job.ts`'s `if (job.threadId !== null)` branch, the added test case, tasks.md checkbox) |
+
+Full-suite and typecheck evidence (after all 4 commits):
+- `npx vitest run` → 51 files, **453/453 tests passed** (0 failed)
+- `npm run typecheck` → clean, no errors
+
+### Files Changed
+
+| File | Action | What was done |
+|------|--------|----------------|
+| `src/domain/entities.ts` | Modified | Added `HackathonAnalysis.pinnedMessageId: number \| null` |
+| `src/domain/ports.ts` | Modified | Added `HackathonAnalysisRepo.findByThreadId` and `.listByTeam` |
+| `src/domain/usecases/analyze-hackathon.ts` | Modified | Persists `pinnedMessageId`, carried through on a same-URL refresh |
+| `src/domain/usecases/show-analysis.ts` | Created | `showAnalysis` — any-member re-show by slug, `AnalysisNotFoundError` on a miss |
+| `src/domain/usecases/link-analysis-to-topic.ts` | Created | `linkAnalysisToTopic` (admin-gated) + `postAnalysisAndLinkTopic` (permission-free core, reused by 4.6) |
+| `src/domain/usecases/list-analyses.ts` | Created | `listAnalyses` — any-member listing via `formatHackathonsList` |
+| `src/domain/usecases/run-hackathon-job.ts` | Modified | `runClaimedJob`'s fresh-completion path calls `postAnalysisAndLinkTopic` when `job.threadId !== null`, else the prior bare `post` |
+| `test/domain/usecases/{show-analysis,link-analysis-to-topic,list-analyses}.test.ts` | Created | 13 tests across the named scenarios |
+| `test/domain/usecases/run-hackathon-job.test.ts` | Modified | Added the 4.6 in-topic wiring test |
+| `test/domain/usecases/analyze-hackathon.test.ts` | Modified | Updated 2 pre-existing `HackathonAnalysis` literals for the new field; added a `pinnedMessageId` carry-through assertion |
+| `test/fakes/index.ts` | Modified | `fakeHackathonAnalysisRepo` gained `findByThreadId` and `listByTeam` |
+| `openspec/changes/hackathon-analysis/tasks.md` | Modified | Phase 4 tasks 4.1-4.6 marked `[x]` |
+
+### Deviations from Design
+
+- **`HackathonAnalysisRepo` gained `findByThreadId` and `listByTeam`, and `HackathonAnalysis` gained `pinnedMessageId`.** design.md's "Interfaces / Contracts" section says `HackathonAnalysisRepo` is "unchanged," but Phase 5's own D1 test list (tasks.md 5.2) already names "unique `thread_id` (nullable), `moveLink`" — implying the repo's real shape was always going to grow for linking. Phase 4's use cases need a way to (a) find whichever analysis currently occupies a topic before moving the link, and (b) list every stored analysis; and the domain needs somewhere to persist the pinned message id so an old pin can be unpinned later (`ChatPublisher.unpin` takes a message id, which nothing before PR4 stored). Added the minimal port surface Phase 4 needs (`findByThreadId`, `listByTeam`, `save`-based mutation) rather than a combined atomic `moveLink` method — the atomicity Phase 5 will need for the D1 unique-`thread_id` constraint is a concrete-adapter concern; the domain port only needs to express the read/write shape, and `save` already exists. Phase 5 can add a dedicated atomic method to the D1 adapter (and to this port, if warranted) without changing Phase 4's use cases.
+- **`postAnalysisAndLinkTopic` was extracted as a permission-free core in the same commit as `linkAnalysisToTopic` (4.3/4.4), one work unit before task 4.6 needed it.** This was called out at task 4.3/4.4 time (not deferred) because task 4.6's requirement — "wire `linkAnalysisToTopic` into `runHackathonJob`... design.md: a `/hackathon <url>` run inside a topic links and pins from the consumer" — cannot reuse the admin-gated `linkAnalysisToTopic` as-is: the queue consumer has no acting `MembershipId` to authorize (the producer already gated the fresh run on an admin in `requestHackathonAnalysis`, PR3). Extracting the core early avoided writing it twice.
+- **The "reply states the link moved/was replaced" wording is plain English chosen by this batch, not a literal string from design.md or the spec.** Both spec scenarios only require that the reply "states" the outcome (spec: "the reply states the topic's previous link was replaced" / "the reply states the analysis moved from topic A to topic B"), without dictating exact phrasing. Chose `Replaced the topic's previous link (was <slug>).` and `Moved this analysis's link from another topic.` — topic identity is expressed by slug (a human-readable identifier already used everywhere else in replies) rather than by raw numeric thread ids, which would be meaningless to a reader.
+- **`showAnalysis` and `listAnalyses` check that the actor is a registered member (via `MembershipRepo.get`), but do not check role.** This mirrors the existing `listRepoLinks` pattern exactly (`src/domain/usecases/list-repo-links.ts`: "Any registered member may list ... no admin check, unlike link/unlink") and the spec's own wording ("any registered member"/"any registered member run `/hackathon <slug>`").
+- No other deviations. All three use cases and the 4.6 wiring match every named scenario in task 4.1-4.6 and design.md's "Pin Behavior" / "One Analysis Per Topic, Conflicts Move the Link" / "Pin Failure Falls Back to Unpinned Posting" sections.
+
+### Issues Found
+
+None.
+
+### Remaining Tasks (not in this batch)
+
+- [ ] Phase 5: Migration + D1 Repos (PR5)
+- [ ] Phase 6: Static Fetcher (PR6)
+- [ ] Phase 7: Rendered (Browser) Fetcher (PR7)
+- [ ] Phase 8: Workers AI Extractor + GitHub Metadata (PR8)
+- [ ] Phase 9: Queue Adapter, Consumer Wiring, Handler Tests (PR9)
+- [ ] Phase 10: Publisher, Commands, Env, Wrangler (PR10)
+- [ ] Phase 11: Operator Rollout (manual, not performed by apply)
+
+### Workload / PR Boundary
+
+- Mode: chained PR slice (stacked-to-main, per tasks.md's Chain strategy)
+- Current work unit: PR4 (Phase 4 — Show, Link, List Use Cases + 4.6)
+- Boundary: starts from `feat/hackathon-show-link-list`, branched off `main` right after PR3 (#22, including its correction and extra fix) merged; ends with all three use cases in place, `runHackathonJob` wired to link+pin fresh in-topic runs, Phase 4 tasks marked `[x]`, full suite and typecheck green.
+- Estimated review budget impact: **exceeds the 400-line guard**, same as PR1-PR3. `git diff --shortstat main` reports src: 291 changed lines (7 files), test: 458 changed lines (6 files), openspec: 12 changed lines (1 file) = 761 changed lines total, above the forecast's ~300 estimate. Reported as-is per the instruction to flag but not self-split; the maintainer should decide whether to split this PR further or accept it with `size:exception`.
+
+### Status
+
+6/6 Phase 4 tasks complete (29/56 cumulative across Phases 1-4). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 5) once PR4 is reviewed/merged per the stacked-to-main chain strategy.
