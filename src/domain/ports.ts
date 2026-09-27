@@ -267,12 +267,21 @@ export interface AnalysisQuota {
   ): Promise<void>;
 }
 
-// design.md "Job State (D1) and Idempotency". `markPersisted` records the
-// analysis id produced by the persist step; `markSucceeded`/`markFailed`
-// are the two terminal transitions.
+// design.md "Job State (D1) and Idempotency" / state diagram "running
+// -persist+mark (one batch)-> persisted". `persistAnalysis` replaces the
+// former two-round-trip HackathonAnalysisRepo.save + AnalysisJobRepo.
+// markPersisted pair (RELI-001/RESI-001 correction): a crash between two
+// separate writes left the job `running` forever, so a redelivery re-ran
+// fetch + LLM and wasted the free quota. It lives on AnalysisJobRepo, not
+// HackathonAnalysisRepo, because the guard that gates the write — "only
+// persist while the job is still running" — is a job-status concern, and
+// this port already owns every other job-status transition (claim,
+// markSucceeded, markFailed). Returns `false` (and performs NO write to
+// either table) when the job is not `running` (e.g. already terminal);
+// `markSucceeded`/`markFailed` are the two terminal transitions.
 export interface AnalysisJobRepo {
   claim(id: string, now: number): Promise<ClaimResult>;
-  markPersisted(id: string, analysisId: string): Promise<void>;
+  persistAnalysis(jobId: string, analysis: HackathonAnalysis): Promise<boolean>;
   markSucceeded(id: string): Promise<void>;
   markFailed(id: string, reason: string): Promise<void>;
 }

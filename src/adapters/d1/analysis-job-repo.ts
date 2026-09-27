@@ -1,4 +1,9 @@
-import type { AnalysisJob, AnalysisJobStatus, ClaimResult } from "../../domain/entities";
+import type {
+  AnalysisJob,
+  AnalysisJobStatus,
+  ClaimResult,
+  HackathonAnalysis,
+} from "../../domain/entities";
 import { asTeamId } from "../../domain/ids";
 import type { Clock } from "../../domain/ports";
 import type { AnalysisJobRepo } from "../../domain/ports";
@@ -83,13 +88,61 @@ export function createD1AnalysisJobRepo(db: D1Database, clock: Clock): AnalysisJ
       return { kind: "held" };
     },
 
-    async markPersisted(id: string, analysisId: string): Promise<void> {
-      await db
-        .prepare(
-          "UPDATE hackathon_analysis_jobs SET status = 'persisted', analysis_id = ?, updated_at = ? WHERE id = ?",
-        )
-        .bind(analysisId, clock.now(), id)
-        .run();
+    // RELI-001/RESI-001 correction: the analysis upsert (same SQL as
+    // createD1HackathonAnalysisRepo.save) and the job's persisted
+    // transition run in ONE db.batch, so a crash between them is
+    // impossible (design.md "persist+mark (one batch)"). The guard is
+    // embedded in the SQL itself rather than a pre-read check, so the whole
+    // decision stays inside the same atomic batch: the analysis row's
+    // `INSERT ... SELECT ... WHERE EXISTS (job is running)` inserts/updates
+    // nothing when the job is not running, and the job UPDATE's own
+    // `AND status = 'running'` guard reports 0 changed rows in that case —
+    // both driven by the SAME job-status predicate, evaluated atomically.
+    async persistAnalysis(jobId: string, analysis: HackathonAnalysis): Promise<boolean> {
+      const now = clock.now();
+      const [, jobUpdate] = await db.batch([
+        db
+          .prepare(
+            `INSERT INTO hackathon_analyses
+              (id, team_id, slug, source_url, normalized_url, fields, suggested_repos,
+               thread_id, pinned_message_id, created_at, updated_at)
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM hackathon_analysis_jobs WHERE id = ? AND status = 'running'
+             )
+             ON CONFLICT (id) DO UPDATE SET
+               slug = excluded.slug,
+               source_url = excluded.source_url,
+               normalized_url = excluded.normalized_url,
+               fields = excluded.fields,
+               suggested_repos = excluded.suggested_repos,
+               thread_id = excluded.thread_id,
+               pinned_message_id = excluded.pinned_message_id,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(
+            analysis.id,
+            analysis.teamId,
+            analysis.slug,
+            analysis.sourceUrl,
+            analysis.normalizedUrl,
+            JSON.stringify(analysis.fields),
+            JSON.stringify(analysis.suggestedRepos),
+            analysis.threadId,
+            analysis.pinnedMessageId,
+            analysis.createdAt,
+            analysis.updatedAt,
+            jobId,
+          ),
+        db
+          .prepare(
+            `UPDATE hackathon_analysis_jobs
+              SET status = 'persisted', analysis_id = ?, updated_at = ?
+              WHERE id = ? AND status = 'running'`,
+          )
+          .bind(analysis.id, now, jobId),
+      ]);
+      return jobUpdate.meta.changes === 1;
     },
 
     async markSucceeded(id: string): Promise<void> {

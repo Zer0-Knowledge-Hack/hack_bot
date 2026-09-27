@@ -154,28 +154,77 @@ describe("createD1AnalysisJobRepo", () => {
     });
   });
 
-  it("markPersisted sets status=persisted and stores analysis_id", async () => {
+  // RELI-001/RESI-001 (PR5 correction): the analysis upsert and the job's
+  // persisted transition must run in ONE db.batch (design.md "persist+mark
+  // (one batch)") — replaces the former two-round-trip
+  // HackathonAnalysisRepo.save + AnalysisJobRepo.markPersisted pair.
+  function analysisFixture(id: string, teamId: string, slug: string) {
+    return {
+      id,
+      teamId,
+      slug,
+      sourceUrl: "https://x",
+      normalizedUrl: "https://x",
+      fields: {} as import("../../../src/domain/hackathon/extraction").ExtractedFields,
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+  }
+
+  it("persistAnalysis writes the analysis row and marks the job persisted in one batch", async () => {
     await seedTeam("team-persist", 7);
     await seedJob("job-persist-1", "team-persist", { status: "running" });
-    await env.DB.prepare(
-      `INSERT INTO hackathon_analyses
-        (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind("analysis-abc", "team-persist", "persist-slug", "https://x", "https://x", "{}", "[]", 0, 0)
-      .run();
     const repo = createD1AnalysisJobRepo(env.DB, fakeClock(2_000));
 
-    await repo.markPersisted("job-persist-1", "analysis-abc");
+    const result = await repo.persistAnalysis(
+      "job-persist-1",
+      analysisFixture("analysis-abc", "team-persist", "persist-slug"),
+    );
 
-    const row = await env.DB.prepare(
+    expect(result).toBe(true);
+    const job = await env.DB.prepare(
       "SELECT status, analysis_id, updated_at FROM hackathon_analysis_jobs WHERE id = ?",
     )
       .bind("job-persist-1")
       .first<{ status: string; analysis_id: string; updated_at: number }>();
-    expect(row?.status).toBe("persisted");
-    expect(row?.analysis_id).toBe("analysis-abc");
-    expect(row?.updated_at).toBe(2_000);
+    expect(job?.status).toBe("persisted");
+    expect(job?.analysis_id).toBe("analysis-abc");
+    expect(job?.updated_at).toBe(2_000);
+    const analysisRow = await env.DB.prepare(
+      "SELECT id, slug FROM hackathon_analyses WHERE id = ?",
+    )
+      .bind("analysis-abc")
+      .first<{ id: string; slug: string }>();
+    expect(analysisRow?.id).toBe("analysis-abc");
+    expect(analysisRow?.slug).toBe("persist-slug");
+  });
+
+  it("persistAnalysis does not write the analysis when the job is not running (e.g. already terminal)", async () => {
+    await seedTeam("team-persist-terminal", 71);
+    await seedJob("job-persist-terminal", "team-persist-terminal", { status: "succeeded" });
+    const repo = createD1AnalysisJobRepo(env.DB, fakeClock(2_000));
+
+    const result = await repo.persistAnalysis(
+      "job-persist-terminal",
+      analysisFixture("analysis-should-not-exist", "team-persist-terminal", "unwritten"),
+    );
+
+    expect(result).toBe(false);
+    const analysisRow = await env.DB.prepare(
+      "SELECT id FROM hackathon_analyses WHERE id = ?",
+    )
+      .bind("analysis-should-not-exist")
+      .first<{ id: string }>();
+    expect(analysisRow).toBeNull();
+    const job = await env.DB.prepare(
+      "SELECT status FROM hackathon_analysis_jobs WHERE id = ?",
+    )
+      .bind("job-persist-terminal")
+      .first<{ status: string }>();
+    expect(job?.status).toBe("succeeded");
   });
 
   it("markSucceeded sets status=succeeded", async () => {
