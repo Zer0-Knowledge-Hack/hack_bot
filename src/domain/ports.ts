@@ -209,6 +209,10 @@ export interface LlmExtractor {
 
 export interface HackathonAnalysisRepo {
   findBySlug(teamId: TeamId, slug: string): Promise<HackathonAnalysis | null>;
+  // Used by the persisted-redelivery path (design.md "Post then mark") to
+  // repost the exact analysis the job produced, instead of re-deriving it
+  // by URL (RELI-002).
+  findById(teamId: TeamId, id: string): Promise<HackathonAnalysis | null>;
   findByNormalizedUrl(
     teamId: TeamId,
     normalizedUrl: string,

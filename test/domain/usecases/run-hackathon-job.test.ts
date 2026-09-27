@@ -144,6 +144,26 @@ describe("runHackathonJob", () => {
     ]);
   });
 
+  it("persisted claim with a missing analysis: posts a failure reply and does not mark succeeded (RELI-002)", async () => {
+    const deps = makeDeps();
+    const job = baseJob({ status: "persisted", analysisId: "analysis-missing" });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "persisted", job } });
+    // Deliberately no matching row in hackathonAnalysisRepo for "analysis-missing".
+
+    const outcome = await runHackathonJob(baseMsg(), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.chatPublisher.posted[0]!.text).toContain("could not be found");
+    expect(deps.analysisJobRepo.succeeded).toEqual([]);
+    expect(deps.analysisJobRepo.failed).toEqual([
+      { id: "job-1", reason: "job:missing-analysis" },
+    ]);
+    expect(deps.analysisQuota.released).toEqual([
+      { team: teamId, day: job.utcDay, jobId: job.id, refund: false },
+    ]);
+  });
+
   it("stale job (queued past 1h): refunded and expired without fetching", async () => {
     const deps = makeDeps();
     const job = baseJob({ attempts: 1, createdAt: deps.clock.now() - 61 * 60 * 1000 });

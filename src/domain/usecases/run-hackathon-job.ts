@@ -59,18 +59,30 @@ async function postPersistedResult(
   job: AnalysisJob,
   deps: RunHackathonJobDeps,
 ): Promise<JobOutcome> {
-  const normalizedUrl = normalizeUrlKey(new URL(job.fetchUrl));
-  const analysis = await deps.hackathonAnalysisRepo.findByNormalizedUrl(
-    job.teamId,
-    normalizedUrl,
-  );
-  if (analysis) {
-    await deps.chatPublisher.post(job.chatId, job.threadId, formatAnalysis({
-      slug: analysis.slug,
-      fields: analysis.fields,
-      suggestions: analysis.suggestedRepos,
-    }));
+  // RELI-002: repost the exact analysis this job produced (by id), never
+  // re-derive it by URL — a same-team same-URL refresh could otherwise
+  // repost the wrong (newer) row.
+  const analysis = job.analysisId
+    ? await deps.hackathonAnalysisRepo.findById(job.teamId, job.analysisId)
+    : null;
+  if (!analysis) {
+    // The persisted analysis is missing: this is a permanent failure, not
+    // a silent success — post then mark (design.md "Post then mark ...
+    // never silence").
+    await safePost(
+      job,
+      "The saved analysis could not be found; run it again.",
+      deps.chatPublisher,
+    );
+    await deps.analysisJobRepo.markFailed(job.id, "job:missing-analysis");
+    await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
+    return { kind: "ack" };
   }
+  await deps.chatPublisher.post(job.chatId, job.threadId, formatAnalysis({
+    slug: analysis.slug,
+    fields: analysis.fields,
+    suggestions: analysis.suggestedRepos,
+  }));
   await deps.analysisJobRepo.markSucceeded(job.id);
   await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
   return { kind: "ack" };

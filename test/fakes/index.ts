@@ -370,6 +370,8 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
     rows,
     findBySlug: async (teamId: TeamId, slug: string) =>
       rows.find((r) => r.teamId === teamId && r.slug === slug) ?? null,
+    findById: async (teamId: TeamId, id: string) =>
+      rows.find((r) => r.teamId === teamId && r.id === id) ?? null,
     findByNormalizedUrl: async (teamId: TeamId, normalizedUrl: string) =>
       rows.find(
         (r) => r.teamId === teamId && r.normalizedUrl === normalizedUrl,
