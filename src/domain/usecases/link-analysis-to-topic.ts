@@ -1,5 +1,5 @@
 import { AnalysisNotFoundError, NotFoundError, UnauthorizedError } from "../errors";
-import { formatAnalysis } from "../hackathon/format";
+import { formatAnalysis, REPLY_MAX, truncate } from "../hackathon/format";
 import type { HackathonAnalysis } from "../entities";
 import type { MembershipId, TeamId } from "../ids";
 import type { ChatPublisher, HackathonAnalysisRepo, Logger, MembershipRepo } from "../ports";
@@ -132,8 +132,19 @@ export async function postAnalysisAndLinkTopic(
 
   await deps.hackathonAnalysisRepo.save({ ...analysis, threadId, pinnedMessageId });
 
-  const replyText = notes.length > 0 ? `${text}\n\n${notes.join("\n")}` : text;
+  // READ-001: the notes must never push the reply over REPLY_MAX — reserve
+  // room for them and truncate the analysis body, never the notes.
+  const replyText = notes.length > 0 ? withNotes(text, notes) : text;
   return { replyText };
+}
+
+// READ-001: joins the analysis body with its notes, truncating only the
+// body (never the notes) so the combined reply never exceeds REPLY_MAX.
+function withNotes(text: string, notes: string[]): string {
+  const notesBlock = notes.join("\n");
+  const separator = "\n\n";
+  const bodyMax = Math.max(0, REPLY_MAX - separator.length - notesBlock.length);
+  return `${truncate(text, bodyMax)}${separator}${notesBlock}`;
 }
 
 // Best-effort (spec "Pin Behavior": unpins are best-effort too). Never

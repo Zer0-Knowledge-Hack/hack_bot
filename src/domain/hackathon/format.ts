@@ -5,7 +5,7 @@ import { joinLinesWithinLimit } from "../text-limit";
 // listing (spec hackathon-analysis: "Listing Is Read-Only and Truncated",
 // "Plain Text Replies"). Both replies stay at most 4096 characters and use
 // no `parse_mode` — formatting is plain lines, never markdown/HTML.
-const REPLY_MAX = 4096;
+export const REPLY_MAX = 4096;
 
 const FIELD_LABELS: Record<keyof ExtractedFields, string> = {
   name: "Name",
@@ -60,6 +60,7 @@ export function formatHackathonsList(entries: HackathonListEntry[]): string {
   return joinLinesWithinLimit(lines, REPLY_MAX, NO_ANALYSES_MESSAGE);
 }
 
-function truncate(text: string, max: number): string {
+export function truncate(text: string, max: number): string {
+  if (max <= 0) return "";
   return text.length > max ? text.slice(0, max) : text;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { linkAnalysisToTopic } from "../../../src/domain/usecases/link-analysis-to-topic";
+import { REPLY_MAX } from "../../../src/domain/hackathon/format";
 import {
   AnalysisNotFoundError,
   NotFoundError,
@@ -131,6 +132,31 @@ describe("linkAnalysisToTopic", () => {
     expect(alpha?.threadId).toBe(600);
     expect(alpha?.pinnedMessageId).not.toBeNull();
     expect(result.replyText).toContain("Moved");
+  });
+
+  // READ-001: notes appended after a maximal-length analysis body must not
+  // push the reply over Telegram's REPLY_MAX — the analysis body is
+  // truncated to make room, never the notes.
+  it("truncates the analysis body, not the notes, to keep the reply within REPLY_MAX (READ-001)", async () => {
+    const deps = makeDeps();
+    const actorMembershipId = pushAdmin(deps);
+    deps.hackathonAnalysisRepo.rows.push(
+      analysis({ id: "a-alpha", slug: "alpha", threadId: 500, pinnedMessageId: 900 }),
+    );
+    const maximalAnalysis = analysis({ id: "a-beta", slug: "beta" });
+    maximalAnalysis.fields = {
+      ...maximalAnalysis.fields,
+      name: { value: "x".repeat(6000), snippet: "", confidence: 0.9 },
+    };
+    deps.hackathonAnalysisRepo.rows.push(maximalAnalysis);
+
+    const result = await linkAnalysisToTopic(
+      { teamId, actorMembershipId, chatId: CHAT_ID, threadId: 500, slug: "beta" },
+      deps,
+    );
+
+    expect(result.replyText.length).toBeLessThanOrEqual(REPLY_MAX);
+    expect(result.replyText).toContain("Replaced");
   });
 
   // spec hackathon-analysis "Pin Failure Falls Back to Unpinned Posting".
