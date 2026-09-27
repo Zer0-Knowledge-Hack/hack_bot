@@ -122,6 +122,7 @@ export async function analyzeHackathon(
     fields,
     suggestedRepos,
     threadId: existing?.threadId ?? null,
+    pinnedMessageId: existing?.pinnedMessageId ?? null,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };

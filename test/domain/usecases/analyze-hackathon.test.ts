@@ -302,6 +302,7 @@ describe("analyzeHackathon: persist and suggestions", () => {
       fields: {} as never,
       suggestedRepos: [],
       threadId: null,
+      pinnedMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -322,6 +323,7 @@ describe("analyzeHackathon: persist and suggestions", () => {
       fields: {} as never,
       suggestedRepos: [],
       threadId: 7,
+      pinnedMessageId: 42,
       createdAt: 10,
       updatedAt: 10,
     });
@@ -331,6 +333,7 @@ describe("analyzeHackathon: persist and suggestions", () => {
     expect(result.id).toBe("existing-1");
     expect(result.slug).toBe("meridian");
     expect(result.threadId).toBe(7);
+    expect(result.pinnedMessageId).toBe(42);
     expect(deps.hackathonAnalysisRepo.rows).toHaveLength(1);
   });
 });

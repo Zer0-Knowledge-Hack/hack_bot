@@ -378,6 +378,8 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
       rows.find(
         (r) => r.teamId === teamId && r.normalizedUrl === normalizedUrl,
       ) ?? null,
+    findByThreadId: async (teamId: TeamId, threadId: number) =>
+      rows.find((r) => r.teamId === teamId && r.threadId === threadId) ?? null,
     slugExists: async (teamId: TeamId, slug: string) =>
       rows.some((r) => r.teamId === teamId && r.slug === slug),
     save: async (analysis: HackathonAnalysis) => {
@@ -385,6 +387,7 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
       if (idx >= 0) rows[idx] = analysis;
       else rows.push(analysis);
     },
+    listByTeam: async (teamId: TeamId) => rows.filter((r) => r.teamId === teamId),
   };
 }
 

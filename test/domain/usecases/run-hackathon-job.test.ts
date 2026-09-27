@@ -129,6 +129,7 @@ describe("runHackathonJob", () => {
       },
       suggestedRepos: [],
       threadId: null,
+      pinnedMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -142,6 +143,173 @@ describe("runHackathonJob", () => {
     expect(deps.chatPublisher.posted[0]!.text).toContain("meridian");
     expect(deps.analysisJobRepo.succeeded).toEqual(["job-1"]);
     expect(deps.analysisQuota.released).toEqual([
+      { team: teamId, day: job.utcDay, jobId: job.id, refund: false },
+    ]);
+  });
+
+  // RELI-001/RESI-002: a persisted job redelivered with a threadId must
+  // link and pin, not silently bare-post (which would drop the topic link).
+  it("persisted claim with a threadId: links and pins instead of a bare post (RELI-001/RESI-002)", async () => {
+    const deps = makeDeps();
+    const job = baseJob({ status: "persisted", analysisId: "analysis-1", threadId: 500 });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "persisted", job } });
+    await deps.hackathonAnalysisRepo.save({
+      id: "analysis-1",
+      teamId,
+      slug: "meridian",
+      sourceUrl: job.fetchUrl,
+      normalizedUrl: "https://example.com/event",
+      fields: {
+        name: { value: "Meridian", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    const outcome = await runHackathonJob(baseMsg({ threadId: 500 }), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.chatPublisher.posted[0]).toMatchObject({ chatId: job.chatId, threadId: 500 });
+    expect(deps.chatPublisher.pinned).toHaveLength(1);
+    const saved = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "analysis-1");
+    expect(saved?.threadId).toBe(500);
+    expect(saved?.pinnedMessageId).not.toBeNull();
+    expect(deps.analysisJobRepo.succeeded).toEqual(["job-1"]);
+  });
+
+  // RELI-001/RESI-002: re-running the persisted link for an analysis
+  // already linked to that exact topic must not self-unpin or self-unlink.
+  it("persisted claim redelivered for an analysis already linked to that topic: does not unpin or unlink itself (RELI-001/RESI-002)", async () => {
+    const deps = makeDeps();
+    const job = baseJob({ status: "persisted", analysisId: "analysis-1", threadId: 500 });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "persisted", job } });
+    await deps.hackathonAnalysisRepo.save({
+      id: "analysis-1",
+      teamId,
+      slug: "meridian",
+      sourceUrl: job.fetchUrl,
+      normalizedUrl: "https://example.com/event",
+      fields: {
+        name: { value: "Meridian", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      // Already linked and pinned to the SAME topic this redelivery targets.
+      threadId: 500,
+      pinnedMessageId: 900,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    const outcome = await runHackathonJob(baseMsg({ threadId: 500 }), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.chatPublisher.unpinned).toHaveLength(0);
+    const saved = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "analysis-1");
+    expect(saved?.threadId).toBe(500);
+    expect(saved?.pinnedMessageId).not.toBeNull();
+  });
+
+  // RESI-001: a persisted job's post/link step must never throw out of
+  // runHackathonJob; failures route through the same transient-retry /
+  // final-failure path runClaimedJob uses.
+  it("persisted claim: a transient post failure retries, then fails on the final attempt (RESI-001)", async () => {
+    const depsRetry = makeDeps();
+    const job = baseJob({ status: "persisted", analysisId: "analysis-1" });
+    depsRetry.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "persisted", job } });
+    await depsRetry.hackathonAnalysisRepo.save({
+      id: "analysis-1",
+      teamId,
+      slug: "meridian",
+      sourceUrl: job.fetchUrl,
+      normalizedUrl: "https://example.com/event",
+      fields: {
+        name: { value: "Meridian", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    depsRetry.chatPublisher.post = async () => {
+      throw new Error("Telegram unavailable");
+    };
+
+    const retryOutcome = await runHackathonJob(baseMsg(), 1, depsRetry);
+    expect(retryOutcome).toEqual({ kind: "retry", delaySeconds: 30 });
+    expect(depsRetry.analysisJobRepo.failed).toHaveLength(0);
+    expect(depsRetry.analysisJobRepo.succeeded).toHaveLength(0);
+
+    const depsFinal = makeDeps();
+    depsFinal.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "persisted", job } });
+    await depsFinal.hackathonAnalysisRepo.save({
+      id: "analysis-1",
+      teamId,
+      slug: "meridian",
+      sourceUrl: job.fetchUrl,
+      normalizedUrl: "https://example.com/event",
+      fields: {
+        name: { value: "Meridian", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    depsFinal.chatPublisher.post = async () => {
+      throw new Error("Telegram unavailable");
+    };
+
+    const finalOutcome = await runHackathonJob(baseMsg(), 3, depsFinal);
+    expect(finalOutcome).toEqual({ kind: "ack" });
+    expect(depsFinal.analysisJobRepo.failed).toHaveLength(1);
+    expect(depsFinal.analysisJobRepo.failed[0]!.reason).toContain("job:transient:");
+    expect(depsFinal.analysisQuota.released).toEqual([
       { team: teamId, day: job.utcDay, jobId: job.id, refund: false },
     ]);
   });
@@ -196,6 +364,31 @@ describe("runHackathonJob", () => {
     expect(deps.analysisQuota.released).toEqual([
       { team: teamId, day: job.utcDay, jobId: job.id, refund: false },
     ]);
+  });
+
+  // task 4.6 / design.md "Pin Behavior": a fresh run inside a topic links
+  // and pins from the consumer instead of a bare post (RELI-003).
+  it("claimed job inside a topic: links and pins instead of a bare post", async () => {
+    const deps = makeDeps();
+    const job = baseJob({ threadId: 500 });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+
+    const outcome = await runHackathonJob(
+      baseMsg({ threadId: 500 }),
+      1,
+      deps,
+    );
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.chatPublisher.posted[0]).toMatchObject({ chatId: job.chatId, threadId: 500 });
+    expect(deps.chatPublisher.pinned).toHaveLength(1);
+    const saved = deps.hackathonAnalysisRepo.rows.find(
+      (r) => r.id === deps.analysisJobRepo.persisted[0]?.analysisId,
+    );
+    expect(saved?.threadId).toBe(500);
+    expect(saved?.pinnedMessageId).not.toBeNull();
+    expect(deps.analysisJobRepo.succeeded).toEqual(["job-1"]);
   });
 
   it("transient failure: retries then fails on the final attempt (spec: Transient failure exhausts retries)", async () => {

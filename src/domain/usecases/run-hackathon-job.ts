@@ -11,6 +11,7 @@ import { formatAnalysis } from "../hackathon/format";
 import { normalizeUrlKey } from "../hackathon/url";
 import type { AnalysisJob, AnalysisJobMessage, JobOutcome } from "../entities";
 import { analyzeHackathon, type AnalyzeHackathonDeps } from "./analyze-hackathon";
+import { postAnalysisAndLinkTopic } from "./link-analysis-to-topic";
 import type { AnalysisJobRepo, AnalysisQuota, ChatPublisher, Logger } from "../ports";
 
 // design.md "Time budget (per consumer attempt)": 180 s.
@@ -50,7 +51,7 @@ export async function runHackathonJob(
     case "held":
       return { kind: "retry", delaySeconds: HELD_RETRY_DELAY_S };
     case "persisted":
-      return postPersistedResult(claim.job, deps);
+      return postPersistedResult(claim.job, attempt, deps);
     case "claimed":
       return runClaimedJob(claim.job, attempt, deps);
   }
@@ -58,6 +59,7 @@ export async function runHackathonJob(
 
 async function postPersistedResult(
   job: AnalysisJob,
+  attempt: number,
   deps: RunHackathonJobDeps,
 ): Promise<JobOutcome> {
   // RELI-002: repost the exact analysis this job produced (by id), never
@@ -79,11 +81,32 @@ async function postPersistedResult(
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
     return { kind: "ack" };
   }
-  await deps.chatPublisher.post(job.chatId, job.threadId, formatAnalysis({
-    slug: analysis.slug,
-    fields: analysis.fields,
-    suggestions: analysis.suggestedRepos,
-  }));
+
+  try {
+    // RELI-001/RESI-002: a redelivered persisted job with a threadId must
+    // use the same link+pin completion as a fresh run, not a bare post —
+    // otherwise the topic link/pin is silently lost on redelivery.
+    // `postAnalysisAndLinkTopic` is idempotent for the SAME analysis id
+    // already occupying that topic (no self-unpin/unlink/moved note).
+    if (job.threadId !== null) {
+      await postAnalysisAndLinkTopic(
+        { teamId: job.teamId, chatId: job.chatId, threadId: job.threadId, analysis },
+        deps,
+      );
+    } else {
+      await deps.chatPublisher.post(job.chatId, null, formatAnalysis({
+        slug: analysis.slug,
+        fields: analysis.fields,
+        suggestions: analysis.suggestedRepos,
+      }));
+    }
+  } catch (err) {
+    // RESI-001: postPersistedResult must never throw out of
+    // runHackathonJob — route through the same transient-retry /
+    // final-failure classification runClaimedJob uses.
+    return handleJobError(err, job, attempt, deps);
+  }
+
   await deps.analysisJobRepo.markSucceeded(job.id);
   await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
   return { kind: "ack" };
@@ -120,11 +143,22 @@ async function runClaimedJob(
       deps,
     );
     await deps.analysisJobRepo.markPersisted(job.id, analysis.id);
-    await deps.chatPublisher.post(job.chatId, job.threadId, formatAnalysis({
-      slug: analysis.slug,
-      fields: analysis.fields,
-      suggestions: analysis.suggestedRepos,
-    }));
+    // task 4.6 / design.md "Pin Behavior": a fresh run inside a topic links
+    // and pins from the consumer instead of a bare post (RELI-003). The
+    // producer already gated this on an admin (requestHackathonAnalysis),
+    // so no acting membership is needed here.
+    if (job.threadId !== null) {
+      await postAnalysisAndLinkTopic(
+        { teamId: job.teamId, chatId: job.chatId, threadId: job.threadId, analysis },
+        deps,
+      );
+    } else {
+      await deps.chatPublisher.post(job.chatId, null, formatAnalysis({
+        slug: analysis.slug,
+        fields: analysis.fields,
+        suggestions: analysis.suggestedRepos,
+      }));
+    }
     await deps.analysisJobRepo.markSucceeded(job.id);
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
     return { kind: "ack" };
