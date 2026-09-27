@@ -219,3 +219,19 @@ None.
 ### Status
 
 6/6 Phase 2 tasks complete (17/56 cumulative across Phases 1-2, counting each Phase 1/2 checkbox once). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 3) once PR2 is reviewed/merged per the stacked-to-main chain strategy.
+
+## PR2 correction (one transaction, review at `e5b59df`)
+
+A 4R review found three severe issues; the orchestrator confirmed each with a runtime probe before fixing.
+
+| Finding | Problem | Fix | RED → GREEN |
+|---|---|---|---|
+| RISK-001 | An empty snippet passed the verbatim rule, and `value` had no length bound (a 100,000-char value was kept) | A non-empty trimmed snippet is required, and string values are capped; either violation nulls the field | `4ff97ea` |
+| RELI-001 | 10 of 11 invented snippets validated as ok with 0 non-null fields, so the fallback never ran | `validateExtraction` reports `rejectedCount`; the fallback runs when more than half the fields are rejected; there are at most 2 calls | `e271f4a` |
+| RESI-001 | Neither the ports nor the use case had a deadline, so "fallback only if ≥ 50 s remain" could not be enforced | `deadlineAt` (epoch ms) is added to the input. `PageFetcher.fetch` and `LlmExtractor.extract` take an `AbortSignal` capped at min(step cap, time left): static 10 s, rendered 45 s, LLM 45 s. With less than 50 s left, the fallback is skipped and `ExtractionFailedError("timeout")` is raised | 2 RED (the timeout case and the signals) → GREEN; the 50 s boundary test passed before and after (`e440479`) |
+
+The sub-agent stalled after the first two commits. The orchestrator finished RESI-001 inline in the same transaction.
+
+Evidence: `npx vitest run` → 46 files, 422/422 passed. `npm run typecheck` is clean.
+
+Warnings recorded but not fixed here: RISK-002 (`save` has no explicit teamId guard), RELI-002/003/004/006 (missing boundary and keep-prior tests), RELI-005 (RepoMetadataSource wiring deferred to PR8), RESI-002 (the slug fallback at attempt 100 skips `slugExists`).
