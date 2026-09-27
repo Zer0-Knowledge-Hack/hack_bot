@@ -156,7 +156,7 @@ The system MUST enforce a per-team daily cap of 5 fetch+LLM runs per UTC day, co
 
 ### Requirement: Fresh Analysis Job Safety Under Concurrency and Delivery Faults
 
-The system MUST refuse a second fresh analysis request for a team while one is already queued or running, without consuming a cap slot. The system MUST refuse cleanly and consume no cap slot when enqueuing the job itself fails. The system MUST guarantee that a job delivered more than once produces no second cap count, no second LLM call, and no second posted result. The system MUST post a failure reply and preserve any previously stored analysis when a job exhausts its retries.
+The system MUST refuse a second fresh analysis request for a team while one is already queued or running, without consuming a cap slot. The system MUST refuse cleanly and consume no cap slot when enqueuing the job itself fails. The system MUST guarantee that a job redelivered after reaching a terminal state produces no second cap count, no second LLM call, and no second posted result. The system MUST post a failure reply and preserve any previously stored analysis when a job exhausts its retries.
 
 #### Scenario: Analysis already running
 
@@ -174,11 +174,11 @@ The system MUST refuse a second fresh analysis request for a team while one is a
 
 #### Scenario: Duplicate delivery
 
-- GIVEN a job has already reached a persisted or terminal state
-- WHEN the queue delivers that same job a second time
-- THEN the system MUST NOT count it again against the cap
-- AND MUST NOT call the LLM again
-- AND MUST NOT post the result a second time
+- GIVEN a job has already reached a terminal state (succeeded or failed)
+- WHEN the queue delivers that same job again
+- THEN the system MUST ack it with no second cap count, no LLM call, and no post
+- AND a job redelivered while still `persisted` MUST skip the fetch and the LLM call and only post the stored result again
+- AND the design accepts that a crash between posting and marking the job succeeded can cause that post to repeat once (design.md "Post then mark")
 
 #### Scenario: Transient failure exhausts retries
 

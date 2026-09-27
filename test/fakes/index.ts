@@ -32,6 +32,8 @@ import type {
   GithubOrgClaimRepo,
   HackathonAnalysisRepo,
   IdGen,
+  LogEvent,
+  Logger,
   LlmExtractor,
   MemberRepo,
   MembershipRepo,
@@ -370,6 +372,8 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
     rows,
     findBySlug: async (teamId: TeamId, slug: string) =>
       rows.find((r) => r.teamId === teamId && r.slug === slug) ?? null,
+    findById: async (teamId: TeamId, id: string) =>
+      rows.find((r) => r.teamId === teamId && r.id === id) ?? null,
     findByNormalizedUrl: async (teamId: TeamId, normalizedUrl: string) =>
       rows.find(
         (r) => r.teamId === teamId && r.normalizedUrl === normalizedUrl,
@@ -495,4 +499,16 @@ export function membership(
   role: Role = "member",
 ): Membership {
   return { role, joinedAt: 0, ...overrides };
+}
+
+// Records every structured log entry so tests can assert that a swallowed
+// failure is still observable.
+export function fakeLogger(): Logger & { entries: LogEvent[] } {
+  const entries: LogEvent[] = [];
+  return {
+    entries,
+    log: (entry: LogEvent) => {
+      entries.push(entry);
+    },
+  };
 }

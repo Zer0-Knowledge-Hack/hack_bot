@@ -57,10 +57,10 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: requestHackathonAnalysis + runHackathonJob (PR3)
 
-- [ ] 3.1 RED: `test/domain/usecases/request-hackathon-analysis.test.ts` — admin gate (spec hackathon-analysis: Admin-Only Fresh Analysis, Capped, both scenarios), busy refusal (spec: Analysis already running), cap-reached refusal (spec: Cap reached), enqueue failure refunds (spec: Enqueue failure).
-- [ ] 3.2 GREEN: `src/domain/usecases/request-hackathon-analysis.ts`.
-- [ ] 3.3 RED: `test/domain/usecases/run-hackathon-job.test.ts` — terminal job is a no-op ack (spec: Duplicate delivery), held claim retries, persisted job only posts, transient error retries then fails on attempt 3 (spec: Transient failure exhausts retries), stale job refunded.
-- [ ] 3.4 GREEN: `src/domain/usecases/run-hackathon-job.ts`.
+- [x] 3.1 RED: `test/domain/usecases/request-hackathon-analysis.test.ts` — admin gate (spec hackathon-analysis: Admin-Only Fresh Analysis, Capped, both scenarios), busy refusal (spec: Analysis already running), cap-reached refusal (spec: Cap reached), enqueue failure refunds (spec: Enqueue failure).
+- [x] 3.2 GREEN: `src/domain/usecases/request-hackathon-analysis.ts`.
+- [x] 3.3 RED: `test/domain/usecases/run-hackathon-job.test.ts` — terminal job is a no-op ack (spec: Duplicate delivery), held claim retries, persisted job only posts, transient error retries then fails on attempt 3 (spec: Transient failure exhausts retries), stale job refunded.
+- [x] 3.4 GREEN: `src/domain/usecases/run-hackathon-job.ts`.
 
 ## Phase 4: Show, Link, List Use Cases (PR4)
 
@@ -69,6 +69,7 @@ Chain strategy: stacked-to-main
 - [ ] 4.3 RED: `test/domain/usecases/link-analysis-to-topic.test.ts` — link into empty topic, move-link + unpin old on conflict, both directions (spec hackathon-analysis: One Analysis Per Topic, Conflicts Move the Link, all three scenarios), pin-failure fallback (spec: Pin Failure Falls Back to Unpinned Posting).
 - [ ] 4.4 GREEN: `src/domain/usecases/link-analysis-to-topic.ts`.
 - [ ] 4.5 RED/GREEN: `test/domain/usecases/list-analyses.test.ts` + `src/domain/usecases/list-analyses.ts` — slug/name/deadline/linked status, truncation at 4096 (spec: Listing Is Read-Only and Truncated, both scenarios).
+- [ ] 4.6 Wire `linkAnalysisToTopic` into `runHackathonJob`'s fresh-completion path (`src/domain/usecases/run-hackathon-job.ts`) when `job.threadId` is not null — design.md: "a `/hackathon <url>` run inside a topic links and pins from the consumer" (review finding RELI-003).
 
 ## Phase 5: Migration + D1 Repos (PR5)
 
