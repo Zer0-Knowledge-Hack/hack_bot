@@ -319,3 +319,109 @@ None.
 ### Status
 
 4/4 Phase 3 tasks complete (23/56 cumulative across Phases 1-3, counting each checkbox once). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 4) once PR3 is reviewed/merged per the stacked-to-main chain strategy.
+
+## PR3 correction (reviewed at HEAD `250d3e0`)
+
+One correction transaction applying four corroborated findings from the post-apply review of PR3. Findings RISK-001, RELI-004, RELI-005 are deferred (out of scope).
+
+### RESI-001 — post failure reply before marking terminal
+
+**Problem**: `handleJobError` and the stale-job path did `markFailed` → `release` → `safePost`. A crash after `markFailed` leaves the job terminal, so redelivery acks silently and the reply is lost.
+
+**RED** (`test/domain/usecases/run-hackathon-job.test.ts`): added two tests — stale-job and permanent-failure paths — each overriding `analysisJobRepo.markFailed` to throw, asserting `chatPublisher.posted` already has 1 entry despite the throw propagating.
+```
+npx vitest run test/domain/usecases/run-hackathon-job.test.ts
+Tests  2 failed | 6 passed (8)
+  stale job: posts the expiry reply before marking failed ... — expected [] to have length 1
+  permanent failure: posts the failure reply before marking failed ... — expected [] to have length 1
+```
+
+**GREEN**: reordered both paths in `src/domain/usecases/run-hackathon-job.ts` to `safePost` → `markFailed` → `release` (mirrors the success path's post-then-mark, design.md "Post then mark ... never silence").
+```
+npx vitest run test/domain/usecases/run-hackathon-job.test.ts
+Tests  8 passed (8)
+```
+Commit: `11d2cc3 fix(hackathon-job): post failure reply before marking terminal (RESI-001)`
+
+### RESI-002 — enqueue-failure cleanup is best-effort
+
+**Problem**: in `requestHackathonAnalysis`'s enqueue-failure catch, if `markFailed` or `release` threw, the original `QueueSendFailedError` was lost and the slot could stay reserved (the un-run `release` never executed).
+
+**RED** (`test/domain/usecases/request-hackathon-analysis.test.ts`): two tests — `markFailed` throws (assert `release` still called with `refund: true`, original error rethrown); `release` throws (assert `markFailed` was still called, original error rethrown).
+```
+npx vitest run test/domain/usecases/request-hackathon-analysis.test.ts
+Tests  2 failed | 5 passed (7)
+  enqueue failure: markFailed throwing still releases the slot ... — expected error to be instance of QueueSendFailedError, got plain Error
+  enqueue failure: release throwing still rethrows the original error ... — same
+```
+
+**GREEN**: wrapped `markFailed` and `release` each in their own try/catch (swallow-and-continue) in `src/domain/usecases/request-hackathon-analysis.ts`, then always `throw err` (the original `QueueSendFailedError`).
+```
+npx vitest run test/domain/usecases/request-hackathon-analysis.test.ts
+Tests  7 passed (7)
+```
+Commit: `8c1e983 fix(request-hackathon-analysis): make enqueue-failure cleanup best-effort (RESI-002)`
+
+### RELI-002 — repost the persisted analysis by id, fail loudly if missing
+
+**Problem**: `postPersistedResult` re-derived the analysis by normalized URL instead of `job.analysisId`; a lookup miss silently skipped the post but still called `markSucceeded`.
+
+**RED** (`test/domain/usecases/run-hackathon-job.test.ts`): new test — persisted job with `analysisId: "analysis-missing"` and no matching row — asserts a failure reply is posted, `succeeded` stays empty, and `failed` records `job:missing-analysis`.
+```
+npx vitest run test/domain/usecases/run-hackathon-job.test.ts
+Tests  1 failed | 8 passed (9)
+  persisted claim with a missing analysis: posts a failure reply ... — expected [] to have length 1
+```
+
+**GREEN**:
+- Added `findById(teamId, id)` to `HackathonAnalysisRepo` (`src/domain/ports.ts`, TeamId-first per the port convention) and to its fake (`test/fakes/index.ts`).
+- `postPersistedResult` now looks up `deps.hackathonAnalysisRepo.findById(job.teamId, job.analysisId)`; on a miss it treats this as a permanent failure using the RESI-001 post-then-mark ordering (post failure reply, `markFailed("job:missing-analysis")`, `release(..., refund: false)`) instead of marking success.
+```
+npx vitest run test/domain/usecases/run-hackathon-job.test.ts
+Tests  9 passed (9)
+```
+Commit: `d94fe46 fix(hackathon-job): repost persisted analysis by id, fail loudly if missing (RELI-002)`
+
+### RELI-001 — spec text alignment (docs only, no code change)
+
+**Problem**: `openspec/changes/hackathon-analysis/specs/hackathon-analysis/spec.md`'s "Duplicate delivery" scenario said a job in a "persisted or terminal state" MUST NOT be posted again, contradicting the approved design's accepted one-post-duplicate crash window (design.md "Post then mark").
+
+**Fix**: reworded the requirement paragraph and the "Duplicate delivery" scenario to state the guaranteed behavior — terminal-state redelivery acks with no second cap/LLM/post; persisted-state redelivery skips fetch+LLM and only reposts, and the design accepts that this repost can happen once after a crash.
+Commit: `4de2867 docs(hackathon-analysis): align duplicate-delivery spec with post-then-mark design`
+
+### RELI-003 — tracking only (docs)
+
+Added `tasks.md` item 4.6: wire `linkAnalysisToTopic` into `runHackathonJob`'s fresh-completion path when `job.threadId` is not null (design.md: "a `/hackathon <url>` run inside a topic links and pins from the consumer"). No code change in this batch — `linkAnalysisToTopic` itself is Phase 4 (PR4), not yet implemented.
+Commit: `27f251f docs(hackathon-analysis): track linkAnalysisToTopic wiring into run-hackathon-job (RELI-003)`
+
+### Deferred (not in scope for this correction)
+
+RISK-001, RELI-004, RELI-005 — left untouched per instruction.
+
+### Full-suite evidence (after all four fixes)
+
+```
+npx vitest run
+Test Files  48 passed (48)
+     Tests  438 passed (438)
+
+npm run typecheck
+> tsc --noEmit
+(no errors, exit 0)
+```
+
+### Diff vs `250d3e0`
+
+```
+git diff --stat 250d3e0
+ .../specs/hackathon-analysis/spec.md               | 12 ++---
+ openspec/changes/hackathon-analysis/tasks.md       |  1 +
+ src/domain/ports.ts                                |  4 ++
+ src/domain/usecases/request-hackathon-analysis.ts  | 17 ++++++-
+ src/domain/usecases/run-hackathon-job.ts           | 44 ++++++++++++------
+ .../usecases/request-hackathon-analysis.test.ts    | 36 +++++++++++++++
+ test/domain/usecases/run-hackathon-job.test.ts     | 54 ++++++++++++++++++++++
+ test/fakes/index.ts                                |  2 +
+ 8 files changed, 149 insertions(+), 21 deletions(-)
+```
+(apply-progress.md itself changed after this diff snapshot was taken; the commit below adds it.)
