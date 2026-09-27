@@ -11,7 +11,7 @@ import { formatAnalysis } from "../hackathon/format";
 import { normalizeUrlKey } from "../hackathon/url";
 import type { AnalysisJob, AnalysisJobMessage, JobOutcome } from "../entities";
 import { analyzeHackathon, type AnalyzeHackathonDeps } from "./analyze-hackathon";
-import type { AnalysisJobRepo, AnalysisQuota, ChatPublisher } from "../ports";
+import type { AnalysisJobRepo, AnalysisQuota, ChatPublisher, Logger } from "../ports";
 
 // design.md "Time budget (per consumer attempt)": 180 s.
 const ATTEMPT_BUDGET_MS = 180_000;
@@ -26,6 +26,7 @@ export interface RunHackathonJobDeps extends AnalyzeHackathonDeps {
   analysisJobRepo: AnalysisJobRepo;
   analysisQuota: AnalysisQuota;
   chatPublisher: ChatPublisher;
+  logger: Logger;
   primaryModel: string;
   fallbackModel: string;
 }
@@ -72,7 +73,7 @@ async function postPersistedResult(
     await safePost(
       job,
       "The saved analysis could not be found; run it again.",
-      deps.chatPublisher,
+      deps,
     );
     await deps.analysisJobRepo.markFailed(job.id, "job:missing-analysis");
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
@@ -99,7 +100,7 @@ async function runClaimedJob(
     // Post then mark (design.md "Post then mark ... never silence"): a
     // crash after this point yields at most a duplicate expiry reply on
     // redelivery, never silence.
-    await safePost(job, "Analysis expired; run it again.", deps.chatPublisher);
+    await safePost(job, "Analysis expired; run it again.", deps);
     await deps.analysisJobRepo.markFailed(job.id, "job:expired");
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, true);
     return { kind: "ack" };
@@ -217,23 +218,30 @@ async function handleJobError(
   // Post then mark (design.md "Post then mark ... never silence"): a crash
   // after this point yields at most a duplicate failure reply on
   // redelivery, never silence.
-  await safePost(job, classification.reply, deps.chatPublisher);
+  await safePost(job, classification.reply, deps);
   await deps.analysisJobRepo.markFailed(job.id, classification.reason);
   await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, classification.refund);
   return { kind: "ack" };
 }
 
 // Best-effort: a failure reply that itself fails to send must not crash the
-// handler or re-enter error classification.
+// handler or re-enter error classification, but it must stay observable
+// (FIXV-001). Only the error class name is logged, never its message.
 async function safePost(
   job: AnalysisJob,
   text: string | null,
-  chatPublisher: ChatPublisher,
+  deps: Pick<RunHackathonJobDeps, "chatPublisher" | "logger">,
 ): Promise<void> {
   if (text === null) return;
   try {
-    await chatPublisher.post(job.chatId, job.threadId, text);
-  } catch {
-    // logged by the adapter layer; never thrown from a pure use case.
+    await deps.chatPublisher.post(job.chatId, job.threadId, text);
+  } catch (err) {
+    deps.logger.log({
+      event: "hackathon-job",
+      teamId: job.teamId,
+      outcome: "error",
+      errorCode: err instanceof Error ? err.name : "UnknownError",
+      reason: "failure-reply-failed",
+    });
   }
 }

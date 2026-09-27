@@ -13,6 +13,7 @@ import {
   fakeAnalysisQuota,
   fakeClock,
   fakeIdGen,
+  fakeLogger,
   fakeMemberRepo,
   fakeMembershipRepo,
 } from "../../fakes";
@@ -31,6 +32,7 @@ function makeDeps(quotaResult?: "ok" | "busy" | "cap-reached", queueThrows = fal
     analysisJobRepo: fakeAnalysisJobRepo(),
     clock: fakeClock(),
     idGen: fakeIdGen(),
+    logger: fakeLogger(),
   };
 }
 
@@ -129,6 +131,7 @@ describe("requestHackathonAnalysis", () => {
     expect(deps.analysisJobRepo.failed[0]!.reason).toBe("enqueue");
     expect(deps.analysisQuota.released).toHaveLength(1);
     expect(deps.analysisQuota.released[0]!.refund).toBe(true);
+    expect(deps.logger.entries).toHaveLength(0);
   });
 
   it("enqueue failure: markFailed throwing still releases the slot and rethrows the original error (RESI-002)", async () => {
@@ -147,6 +150,9 @@ describe("requestHackathonAnalysis", () => {
 
     expect(deps.analysisQuota.released).toHaveLength(1);
     expect(deps.analysisQuota.released[0]!.refund).toBe(true);
+    expect(deps.logger.entries).toContainEqual(
+      expect.objectContaining({ event: "hackathon-enqueue-cleanup", outcome: "error", reason: "mark-failed-failed" }),
+    );
   });
 
   it("enqueue failure: release throwing still rethrows the original error (RESI-002)", async () => {
@@ -165,5 +171,8 @@ describe("requestHackathonAnalysis", () => {
 
     expect(deps.analysisJobRepo.failed).toHaveLength(1);
     expect(deps.analysisJobRepo.failed[0]!.reason).toBe("enqueue");
+    expect(deps.logger.entries).toContainEqual(
+      expect.objectContaining({ event: "hackathon-enqueue-cleanup", outcome: "error", reason: "release-failed" }),
+    );
   });
 });

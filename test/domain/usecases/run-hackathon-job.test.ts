@@ -11,6 +11,7 @@ import {
   fakeHackathonAnalysisRepo,
   fakeIdGen,
   fakeLlmExtractor,
+  fakeLogger,
   fakePageFetcher,
   fakeRepoTopicLinkRepo,
 } from "../../fakes";
@@ -76,6 +77,7 @@ function makeDeps() {
     ]),
     clock: fakeClock(1_700_000_000_000),
     idGen: fakeIdGen(),
+    logger: fakeLogger(),
     primaryModel: "@cf/primary",
     fallbackModel: "@cf/fallback",
   };
@@ -251,5 +253,23 @@ describe("runHackathonJob", () => {
 
     expect(deps.chatPublisher.posted).toHaveLength(1);
     expect(deps.chatPublisher.posted[0]!.text).toContain("public http(s)");
+  });
+
+  it("a failure reply that cannot be sent is logged, and the job is still acked and failed (FIXV-001)", async () => {
+    const deps = makeDeps();
+    const job = baseJob();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.staticFetcher = fakePageFetcher([{ throws: new UnsafeUrlError("blocked", "private-ip") }]);
+    deps.chatPublisher.post = async () => {
+      throw new Error("Telegram unavailable");
+    };
+
+    const outcome = await runHackathonJob(baseMsg(), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.analysisJobRepo.failed).toHaveLength(1);
+    expect(deps.logger.entries).toContainEqual(
+      expect.objectContaining({ event: "hackathon-job", outcome: "error", reason: "failure-reply-failed" }),
+    );
   });
 });

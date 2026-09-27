@@ -32,6 +32,8 @@ import type {
   GithubOrgClaimRepo,
   HackathonAnalysisRepo,
   IdGen,
+  LogEvent,
+  Logger,
   LlmExtractor,
   MemberRepo,
   MembershipRepo,
@@ -497,4 +499,16 @@ export function membership(
   role: Role = "member",
 ): Membership {
   return { role, joinedAt: 0, ...overrides };
+}
+
+// Records every structured log entry so tests can assert that a swallowed
+// failure is still observable.
+export function fakeLogger(): Logger & { entries: LogEvent[] } {
+  const entries: LogEvent[] = [];
+  return {
+    entries,
+    log: (entry: LogEvent) => {
+      entries.push(entry);
+    },
+  };
 }

@@ -12,6 +12,7 @@ import type {
   AnalysisQuota,
   Clock,
   IdGen,
+  Logger,
   MembershipRepo,
 } from "../ports";
 
@@ -39,6 +40,7 @@ export interface RequestHackathonAnalysisDeps {
   analysisJobRepo: AnalysisJobRepo;
   clock: Clock;
   idGen: IdGen;
+  logger: Logger;
 }
 
 export interface RequestHackathonAnalysisResult {
@@ -111,15 +113,15 @@ export async function requestHackathonAnalysis(
       // `QueueSendFailedError` — not a cleanup error — is always rethrown.
       try {
         await deps.analysisJobRepo.markFailed(jobId, "enqueue");
-      } catch {
-        // logged by the adapter layer; the reserved slot must still be
-        // released below.
+      } catch (cleanupErr) {
+        // The reserved slot must still be released below (FIXV-001).
+        logCleanupFailure(deps.logger, input.teamId, cleanupErr, "mark-failed-failed");
       }
       try {
         await deps.analysisQuota.release(input.teamId, utcDay, jobId, true);
-      } catch {
-        // logged by the adapter layer; the original enqueue failure still
-        // wins below.
+      } catch (cleanupErr) {
+        // The original enqueue failure still wins below (FIXV-001).
+        logCleanupFailure(deps.logger, input.teamId, cleanupErr, "release-failed");
       }
     }
     throw err;
@@ -131,4 +133,21 @@ export async function requestHackathonAnalysis(
 
 function utcDayOf(nowMs: number): string {
   return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+// A swallowed cleanup failure stays observable (FIXV-001). Only the error
+// class name is logged, never its message.
+function logCleanupFailure(
+  logger: Logger,
+  teamId: TeamId,
+  err: unknown,
+  reason: "mark-failed-failed" | "release-failed",
+): void {
+  logger.log({
+    event: "hackathon-enqueue-cleanup",
+    teamId,
+    outcome: "error",
+    errorCode: err instanceof Error ? err.name : "UnknownError",
+    reason,
+  });
 }
