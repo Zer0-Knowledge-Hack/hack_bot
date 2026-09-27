@@ -217,6 +217,14 @@ export interface HackathonAnalysisRepo {
     teamId: TeamId,
     normalizedUrl: string,
   ): Promise<HackathonAnalysis | null>;
+  // Used by linkAnalysisToTopic (PR4, spec: "One Analysis Per Topic,
+  // Conflicts Move the Link") to find whichever analysis currently holds a
+  // topic before moving the link. Nullable `threadId` — most rows have no
+  // link at all.
+  findByThreadId(
+    teamId: TeamId,
+    threadId: number,
+  ): Promise<HackathonAnalysis | null>;
   slugExists(teamId: TeamId, slug: string): Promise<boolean>;
   // Insert-or-update by `id` (design.md "Same-URL Refresh Keeps the Slug" —
   // a refresh reuses the existing row's id and slug).

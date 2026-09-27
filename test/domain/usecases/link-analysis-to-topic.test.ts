@@ -1,0 +1,212 @@
+import { describe, expect, it } from "vitest";
+import { linkAnalysisToTopic } from "../../../src/domain/usecases/link-analysis-to-topic";
+import {
+  AnalysisNotFoundError,
+  NotFoundError,
+  UnauthorizedError,
+} from "../../../src/domain/errors";
+import type { HackathonAnalysis } from "../../../src/domain/entities";
+import { asMemberId, asMembershipId, asTeamId } from "../../../src/domain/ids";
+import {
+  fakeChatPublisher,
+  fakeHackathonAnalysisRepo,
+  fakeLogger,
+  fakeMemberRepo,
+  fakeMembershipRepo,
+} from "../../fakes";
+
+const teamId = asTeamId("team-1");
+const CHAT_ID = 111;
+
+function makeDeps() {
+  const memberRepo = fakeMemberRepo();
+  const membershipRepo = fakeMembershipRepo(memberRepo);
+  return {
+    membershipRepo,
+    hackathonAnalysisRepo: fakeHackathonAnalysisRepo(),
+    chatPublisher: fakeChatPublisher(),
+    logger: fakeLogger(),
+  };
+}
+
+function pushAdmin(deps: ReturnType<typeof makeDeps>) {
+  const adminId = asMembershipId("m-admin");
+  deps.membershipRepo.rows.push({
+    id: adminId,
+    teamId,
+    memberId: asMemberId("u-admin"),
+    role: "admin",
+    joinedAt: 0,
+  });
+  return adminId;
+}
+
+function analysis(overrides: Partial<HackathonAnalysis> & { id: string; slug: string }): HackathonAnalysis {
+  return {
+    teamId,
+    sourceUrl: `https://example.com/${overrides.slug}`,
+    normalizedUrl: `https://example.com/${overrides.slug}`,
+    fields: {
+      name: { value: overrides.slug, snippet: "", confidence: 0.9 },
+      format: null,
+      location: null,
+      teamSize: null,
+      submissionDeadline: null,
+      startDate: null,
+      endDate: null,
+      resultsDate: null,
+      prizes: null,
+      tracks: null,
+      eligibility: null,
+    },
+    suggestedRepos: [],
+    threadId: null,
+    pinnedMessageId: null,
+    createdAt: 0,
+    updatedAt: 0,
+    ...overrides,
+  };
+}
+
+describe("linkAnalysisToTopic", () => {
+  // spec hackathon-analysis "Linking into an empty topic".
+  it("links and pins the analysis when the topic has no existing link", async () => {
+    const deps = makeDeps();
+    const actorMembershipId = pushAdmin(deps);
+    deps.hackathonAnalysisRepo.rows.push(analysis({ id: "a-1", slug: "meridian" }));
+
+    const result = await linkAnalysisToTopic(
+      { teamId, actorMembershipId, chatId: CHAT_ID, threadId: 500, slug: "meridian" },
+      deps,
+    );
+
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.chatPublisher.posted[0]).toMatchObject({ chatId: CHAT_ID, threadId: 500 });
+    expect(deps.chatPublisher.pinned).toEqual([1]);
+    const stored = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "a-1");
+    expect(stored?.threadId).toBe(500);
+    expect(stored?.pinnedMessageId).toBe(1);
+    expect(result.replyText).toContain("meridian");
+  });
+
+  // spec hackathon-analysis "Topic already holds a different analysis".
+  it("unpins the old message and moves the link when the topic already holds a different analysis", async () => {
+    const deps = makeDeps();
+    const actorMembershipId = pushAdmin(deps);
+    deps.hackathonAnalysisRepo.rows.push(
+      analysis({ id: "a-alpha", slug: "alpha", threadId: 500, pinnedMessageId: 900 }),
+    );
+    deps.hackathonAnalysisRepo.rows.push(analysis({ id: "a-beta", slug: "beta" }));
+
+    const result = await linkAnalysisToTopic(
+      { teamId, actorMembershipId, chatId: CHAT_ID, threadId: 500, slug: "beta" },
+      deps,
+    );
+
+    expect(deps.chatPublisher.unpinned).toEqual([900]);
+    const alpha = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "a-alpha");
+    expect(alpha?.threadId).toBeNull();
+    expect(alpha?.pinnedMessageId).toBeNull();
+    const beta = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "a-beta");
+    expect(beta?.threadId).toBe(500);
+    expect(beta?.pinnedMessageId).not.toBeNull();
+    expect(result.replyText).toContain("Replaced");
+  });
+
+  // spec hackathon-analysis "Analysis already linked to another topic".
+  it("unpins the old message and moves the link when the analysis is already linked elsewhere", async () => {
+    const deps = makeDeps();
+    const actorMembershipId = pushAdmin(deps);
+    deps.hackathonAnalysisRepo.rows.push(
+      analysis({ id: "a-alpha", slug: "alpha", threadId: 500, pinnedMessageId: 900 }),
+    );
+
+    const result = await linkAnalysisToTopic(
+      { teamId, actorMembershipId, chatId: CHAT_ID, threadId: 600, slug: "alpha" },
+      deps,
+    );
+
+    expect(deps.chatPublisher.unpinned).toEqual([900]);
+    const alpha = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "a-alpha");
+    expect(alpha?.threadId).toBe(600);
+    expect(alpha?.pinnedMessageId).not.toBeNull();
+    expect(result.replyText).toContain("Moved");
+  });
+
+  // spec hackathon-analysis "Pin Failure Falls Back to Unpinned Posting".
+  it("posts unpinned and states the pin failure when pin() throws", async () => {
+    const deps = makeDeps();
+    const actorMembershipId = pushAdmin(deps);
+    deps.hackathonAnalysisRepo.rows.push(analysis({ id: "a-1", slug: "meridian" }));
+    deps.chatPublisher.pin = async () => {
+      throw new Error("bot lacks pin rights");
+    };
+
+    const result = await linkAnalysisToTopic(
+      { teamId, actorMembershipId, chatId: CHAT_ID, threadId: 500, slug: "meridian" },
+      deps,
+    );
+
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    const stored = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "a-1");
+    expect(stored?.threadId).toBe(500);
+    expect(stored?.pinnedMessageId).toBeNull();
+    expect(result.replyText).toContain("pin");
+    expect(deps.logger.entries).toHaveLength(1);
+    expect(deps.logger.entries[0]).toMatchObject({
+      outcome: "error",
+      errorCode: "Error",
+      reason: "pin-failed",
+    });
+  });
+
+  it("throws AnalysisNotFoundError when the slug has no stored analysis", async () => {
+    const deps = makeDeps();
+    const actorMembershipId = pushAdmin(deps);
+
+    await expect(
+      linkAnalysisToTopic(
+        { teamId, actorMembershipId, chatId: CHAT_ID, threadId: 500, slug: "missing" },
+        deps,
+      ),
+    ).rejects.toThrow(AnalysisNotFoundError);
+  });
+
+  it("throws UnauthorizedError for a non-admin", async () => {
+    const deps = makeDeps();
+    const memberId = asMembershipId("m-member");
+    deps.membershipRepo.rows.push({
+      id: memberId,
+      teamId,
+      memberId: asMemberId("u-member"),
+      role: "member",
+      joinedAt: 0,
+    });
+    deps.hackathonAnalysisRepo.rows.push(analysis({ id: "a-1", slug: "meridian" }));
+
+    await expect(
+      linkAnalysisToTopic(
+        { teamId, actorMembershipId: memberId, chatId: CHAT_ID, threadId: 500, slug: "meridian" },
+        deps,
+      ),
+    ).rejects.toThrow(UnauthorizedError);
+  });
+
+  it("throws NotFoundError when the actor is not a registered member", async () => {
+    const deps = makeDeps();
+    deps.hackathonAnalysisRepo.rows.push(analysis({ id: "a-1", slug: "meridian" }));
+
+    await expect(
+      linkAnalysisToTopic(
+        {
+          teamId,
+          actorMembershipId: asMembershipId("ghost"),
+          chatId: CHAT_ID,
+          threadId: 500,
+          slug: "meridian",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(NotFoundError);
+  });
+});
