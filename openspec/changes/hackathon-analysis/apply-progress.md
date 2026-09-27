@@ -765,3 +765,15 @@ Both statements execute in the same D1 batch (D1 batches are transactional), so 
 - All SQL parameterized (`?` binds), including the new `INSERT ... SELECT ... WHERE EXISTS` guard.
 - Touched only the files listed above — RISK-001/002/003, READ-001, RELI-002, RESI-002 deferred, untouched.
 - Two commits, Conventional Commits, no Co-Authored-By/AI attribution, not pushed.
+
+## PR5 extra fix (authorized by the maintainer after scoped validation escalated)
+
+The scoped validator escalated **FIXV-001** (CRITICAL, deterministic).
+
+`runHackathonJob` ignored the `false` returned by `persistAnalysis`. When an attempt outlived its 240 s claim and another delivery had already failed the job, the late attempt posted an analysis that was never saved. Its `markSucceeded` had no status guard, so it also overwrote `failed` with `succeeded`. The fake always returned `true`, which is why the tests never exercised that branch.
+
+- **Fix**:
+  - When `persistAnalysis` returns `false`, `runClaimedJob` logs `{ event: "hackathon-job", outcome: "refused", reason: "claim-lost" }` and acks. It posts nothing, marks nothing and releases nothing, because another delivery owns the job.
+  - `markSucceeded` now updates only `WHERE status = 'persisted'`.
+  - `fakeAnalysisJobRepo` accepts `persistResult: false`.
+- **RED**: 2 failing tests (the lost claim in the use case, and the `markSucceeded` guard against real D1). **GREEN**: 501/501 pass, and the typecheck is clean.
