@@ -321,13 +321,16 @@ export type FetchStep = { text: string } | { throws: unknown };
 
 export function fakePageFetcher(
   script: FetchStep[],
-): PageFetcher & { calls: string[] } {
+): PageFetcher & { calls: string[]; signals: AbortSignal[] } {
   const calls: string[] = [];
+  const signals: AbortSignal[] = [];
   let i = 0;
   return {
     calls,
-    fetch: async (url: string) => {
+    signals,
+    fetch: async (url: string, signal: AbortSignal) => {
       calls.push(url);
+      signals.push(signal);
       const step = script[Math.min(i, script.length - 1)];
       i += 1;
       if (!step) throw new Error("fakePageFetcher: empty script");
@@ -341,13 +344,15 @@ export type ExtractStep = { raw: unknown } | { throws: unknown };
 
 export function fakeLlmExtractor(
   script: ExtractStep[],
-): LlmExtractor & { calls: Array<{ pageText: string; modelId: string }> } {
-  const calls: Array<{ pageText: string; modelId: string }> = [];
+): LlmExtractor & {
+  calls: Array<{ pageText: string; modelId: string; signal: AbortSignal }>;
+} {
+  const calls: Array<{ pageText: string; modelId: string; signal: AbortSignal }> = [];
   let i = 0;
   return {
     calls,
-    extract: async (pageText: string, modelId: string) => {
-      calls.push({ pageText, modelId });
+    extract: async (pageText: string, modelId: string, signal: AbortSignal) => {
+      calls.push({ pageText, modelId, signal });
       const step = script[Math.min(i, script.length - 1)];
       i += 1;
       if (!step) throw new Error("fakeLlmExtractor: empty script");

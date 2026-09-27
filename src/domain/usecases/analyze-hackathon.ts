@@ -39,6 +39,20 @@ const MIN_USABLE_TEXT_ON_QUOTA_DEGRADE = 200;
 // generator is wired in (deferred — see apply-progress deviations).
 const MAX_NUMERIC_SLUG_ATTEMPT = 99;
 
+// design.md "Time budget": per-step caps inside the attempt deadline, and
+// the fallback LLM call runs only when at least this much time remains.
+const STATIC_FETCH_TIMEOUT_MS = 10_000;
+const RENDERED_FETCH_TIMEOUT_MS = 45_000;
+const LLM_ATTEMPT_TIMEOUT_MS = 45_000;
+const MIN_REMAINING_FOR_FALLBACK_MS = 50_000;
+
+// A step never runs past the attempt deadline, even when its own cap is
+// longer than the time left.
+function stepSignal(stepMs: number, deadlineAt: number, clock: Clock): AbortSignal {
+  const remaining = Math.max(0, deadlineAt - clock.now());
+  return AbortSignal.timeout(Math.min(stepMs, remaining));
+}
+
 export interface AnalyzeHackathonInput {
   teamId: TeamId;
   // The already SSRF-guarded URL string (design.md: the guard runs at the
@@ -48,6 +62,11 @@ export interface AnalyzeHackathonInput {
   normalizedUrl: string;
   primaryModel: string;
   fallbackModel: string;
+  // Absolute epoch-ms attempt deadline (design.md "Time budget: a 180 s
+  // attempt deadline"). An absolute instant, rather than a duration, fits
+  // the existing `Clock.now()` port directly — no extra port method is
+  // needed to compute "time remaining" (RESI-001).
+  deadlineAt: number;
 }
 
 export interface AnalyzeHackathonDeps {
@@ -68,9 +87,9 @@ export async function analyzeHackathon(
   input: AnalyzeHackathonInput,
   deps: AnalyzeHackathonDeps,
 ): Promise<HackathonAnalysis> {
-  const pageText = await resolvePageText(input.sourceUrl, deps);
+  const pageText = await resolvePageText(input.sourceUrl, input.deadlineAt, deps);
 
-  const fields = await extractFields(pageText, input, deps.llmExtractor);
+  const fields = await extractFields(pageText, input, deps);
 
   const existing = await deps.hackathonAnalysisRepo.findByNormalizedUrl(
     input.teamId,
@@ -119,15 +138,22 @@ export async function analyzeHackathon(
 // for a failed fetch.
 async function resolvePageText(
   sourceUrl: string,
-  deps: Pick<AnalyzeHackathonDeps, "staticFetcher" | "renderedFetcher">,
+  deadlineAt: number,
+  deps: Pick<AnalyzeHackathonDeps, "staticFetcher" | "renderedFetcher" | "clock">,
 ): Promise<string> {
-  const staticText = await deps.staticFetcher.fetch(sourceUrl);
+  const staticText = await deps.staticFetcher.fetch(
+    sourceUrl,
+    stepSignal(STATIC_FETCH_TIMEOUT_MS, deadlineAt, deps.clock),
+  );
   if (staticText.length >= THIN_STATIC_TEXT_THRESHOLD) {
     return staticText;
   }
 
   try {
-    return await deps.renderedFetcher.fetch(sourceUrl);
+    return await deps.renderedFetcher.fetch(
+      sourceUrl,
+      stepSignal(RENDERED_FETCH_TIMEOUT_MS, deadlineAt, deps.clock),
+    );
   } catch (err) {
     if (err instanceof BrowserQuotaExceededError) {
       if (staticText.length >= MIN_USABLE_TEXT_ON_QUOTA_DEGRADE) {
@@ -161,16 +187,33 @@ function rejectedCountOf(result: ValidateExtractionResult): number {
 }
 
 // design.md "Validation": at most 2 model calls (primary, then fallback).
+// The fallback only runs with at least 50 s left (design.md "Time budget").
 async function extractFields(
   pageText: string,
-  input: Pick<AnalyzeHackathonInput, "primaryModel" | "fallbackModel">,
-  llmExtractor: LlmExtractor,
+  input: Pick<AnalyzeHackathonInput, "primaryModel" | "fallbackModel" | "deadlineAt">,
+  deps: Pick<AnalyzeHackathonDeps, "llmExtractor" | "clock">,
 ): Promise<ExtractedFields> {
-  const primaryRaw = await llmExtractor.extract(pageText, input.primaryModel);
+  const { llmExtractor, clock } = deps;
+  const primaryRaw = await llmExtractor.extract(
+    pageText,
+    input.primaryModel,
+    stepSignal(LLM_ATTEMPT_TIMEOUT_MS, input.deadlineAt, clock),
+  );
   const primary = validateExtraction(primaryRaw, pageText);
   if (isUsable(primary)) return primary.fields;
 
-  const fallbackRaw = await llmExtractor.extract(pageText, input.fallbackModel);
+  if (input.deadlineAt - clock.now() < MIN_REMAINING_FOR_FALLBACK_MS) {
+    throw new ExtractionFailedError(
+      "Primary model output was unusable and too little time remains for the fallback",
+      "timeout",
+    );
+  }
+
+  const fallbackRaw = await llmExtractor.extract(
+    pageText,
+    input.fallbackModel,
+    stepSignal(LLM_ATTEMPT_TIMEOUT_MS, input.deadlineAt, clock),
+  );
   const fallback = validateExtraction(fallbackRaw, pageText);
 
   // "Use the fallback result when it is better": prefer whichever attempt

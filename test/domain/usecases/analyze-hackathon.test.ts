@@ -66,13 +66,17 @@ function makeDeps(overrides: {
   };
 }
 
-function makeInput() {
+// fakeClock() starts here; a 180 s attempt budget is the design default.
+const CLOCK_START = 1_700_000_000_000;
+
+function makeInput(deadlineAt = CLOCK_START + 180_000) {
   return {
     teamId: TEAM_ID,
     sourceUrl: SOURCE_URL,
     normalizedUrl: NORMALIZED_URL,
     primaryModel: "@cf/primary",
     fallbackModel: "@cf/fallback",
+    deadlineAt,
   };
 }
 
@@ -221,6 +225,49 @@ describe("analyzeHackathon: primary-then-fallback LLM call", () => {
 
     expect(tracked.calls).toHaveLength(1);
     expect(tracked.calls[0]?.modelId).toBe("@cf/primary");
+  });
+
+  describe("analyzeHackathon: attempt deadline (RESI-001)", () => {
+    it("skips the fallback and fails with a timeout when less than 50 s remain", async () => {
+      const deps = makeDeps();
+      const tracked = fakeLlmExtractor([
+        { raw: rawWithRejectedCount(6) },
+        { raw: validRaw("xxxxx") },
+      ]);
+      deps.llmExtractor = tracked;
+
+      const thrown: unknown = await analyzeHackathon(
+        makeInput(CLOCK_START + 49_999),
+        deps,
+      ).catch((e: unknown) => e);
+
+      expect(tracked.calls).toHaveLength(1);
+      expect(thrown).toBeInstanceOf(ExtractionFailedError);
+      expect((thrown as ExtractionFailedError).kind).toBe("timeout");
+    });
+
+    it("runs the fallback when exactly 50 s remain", async () => {
+      const deps = makeDeps();
+      const tracked = fakeLlmExtractor([
+        { raw: rawWithRejectedCount(6) },
+        { raw: validRaw("xxxxx") },
+      ]);
+      deps.llmExtractor = tracked;
+
+      await analyzeHackathon(makeInput(CLOCK_START + 50_000), deps);
+
+      expect(tracked.calls).toHaveLength(2);
+    });
+
+    it("passes an abort signal to every fetch and model call", async () => {
+      const deps = makeDeps({ staticText: "short" });
+
+      await analyzeHackathon(makeInput(), deps);
+
+      expect(deps.staticFetcher.signals[0]).toBeInstanceOf(AbortSignal);
+      expect(deps.renderedFetcher.signals[0]).toBeInstanceOf(AbortSignal);
+      expect(deps.llmExtractor.calls[0]?.signal).toBeInstanceOf(AbortSignal);
+    });
   });
 });
 

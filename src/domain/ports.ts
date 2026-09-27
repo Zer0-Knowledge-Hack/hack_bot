@@ -190,16 +190,21 @@ export interface AlertSender {
 // or UnsafeUrlError on failure; the rendered instance also throws
 // BrowserQuotaExceededError on a 429 (design.md "A 429 raises
 // BrowserQuotaExceededError").
+// `signal` carries the per-step timeout derived from the attempt deadline
+// (design.md "Time budget": static fetch 10 s, rendered fetch 45 s) — the
+// caller (analyzeHackathon) computes it from the injected Clock so the
+// adapter never reads the wall clock itself.
 export interface PageFetcher {
-  fetch(url: string): Promise<string>;
+  fetch(url: string, signal: AbortSignal): Promise<string>;
 }
 
 // Throws ExtractionFailedError or LlmQuotaExceededError. Otherwise returns
 // the model's raw parsed JSON output — `validateExtraction` (the ONLY
 // place a raw model response is trusted, hackathon/extraction.ts) decides
-// whether it is usable.
+// whether it is usable. `signal` carries the per-attempt LLM timeout
+// (design.md "Time budget": 45 s per LLM attempt).
 export interface LlmExtractor {
-  extract(pageText: string, modelId: string): Promise<unknown>;
+  extract(pageText: string, modelId: string, signal: AbortSignal): Promise<unknown>;
 }
 
 export interface HackathonAnalysisRepo {
