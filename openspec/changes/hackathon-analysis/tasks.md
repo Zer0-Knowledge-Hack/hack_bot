@@ -90,8 +90,8 @@ Chain strategy: stacked-to-main
 
 ## Phase 7: Rendered (Browser) Fetcher (PR7)
 
-- [ ] 7.1 RED: `test/adapters/browser/rendered-fetcher.test.ts` — request-interception policy (http(s) only, host re-guard, images/fonts/media/stylesheets aborted, 100-request cap), `page.url()` re-check after `goto` (spec page-fetch: Browser rendering redirect to an unsafe target), `browser.close()` in `finally`, 429 → `BrowserQuotaExceededError`.
-- [ ] 7.2 GREEN: `src/adapters/browser/rendered-fetcher.ts` with injected `launch`.
+- [x] 7.1 RED: `test/adapters/browser/rendered-fetcher.test.ts` — request-interception policy (http(s) only, host re-guard, images/fonts/media/stylesheets aborted, 100-request cap), `page.url()` re-check after `goto` (spec page-fetch: Browser rendering redirect to an unsafe target), `browser.close()` in `finally`, 429 → `BrowserQuotaExceededError`.
+- [x] 7.2 GREEN: `src/adapters/browser/rendered-fetcher.ts` with injected `launch`.
 
 ## Phase 8: Workers AI Extractor + GitHub Metadata (PR8)
 
