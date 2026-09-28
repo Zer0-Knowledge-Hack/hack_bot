@@ -84,9 +84,9 @@ Chain strategy: stacked-to-main
 
 ## Phase 6: Static Fetcher (PR6)
 
-- [ ] 6.1 RED: `test/adapters/http/safe-fetcher.test.ts` — redirect to private host refused (spec page-fetch: Loopback or private host), 2 MB overflow abort (spec: Response exceeds the size cap), 10 s timeout (spec: Fetch exceeds the time cap), non-200/non-html rejected, `redirect: "manual"` with 3-hop cap.
-- [ ] 6.2 GREEN: `src/adapters/http/safe-fetcher.ts`.
-- [ ] 6.3 RED/GREEN: `src/adapters/http/html-to-text.ts` — `HTMLRewriter` noise-strip, title/meta/OG/`ld+json` retained, 22,000-char cap, with test.
+- [x] 6.1 RED: `test/adapters/http/safe-fetcher.test.ts` — redirect to private host refused (spec page-fetch: Loopback or private host), 2 MB overflow abort (spec: Response exceeds the size cap), 10 s timeout (spec: Fetch exceeds the time cap), non-200/non-html rejected, `redirect: "manual"` with 3-hop cap.
+- [x] 6.2 GREEN: `src/adapters/http/safe-fetcher.ts`.
+- [x] 6.3 RED/GREEN: `src/adapters/http/html-to-text.ts` — `HTMLRewriter` noise-strip, title/meta/OG/`ld+json` retained, 22,000-char cap, with test.
 
 ## Phase 7: Rendered (Browser) Fetcher (PR7)
 

@@ -23,8 +23,16 @@ const ALLOWED_PORTS = new Set(["", "80", "443"]);
 
 // Hostnames widely used for internal/private networks that would otherwise
 // slip through the IP-literal check (design.md "single-label and private
-// suffixes").
-const PRIVATE_SUFFIXES = [".local", ".internal", ".lan", ".home", ".corp"];
+// suffixes"). ".localhost" is special-use (RFC 6761): every subdomain
+// resolves to loopback (R1-001).
+const PRIVATE_SUFFIXES = [
+  ".local",
+  ".localhost",
+  ".internal",
+  ".lan",
+  ".home",
+  ".corp",
+];
 
 export function assertSafeUrl(raw: string): SafeUrlResult {
   let url: URL;

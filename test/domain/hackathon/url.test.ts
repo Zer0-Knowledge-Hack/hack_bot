@@ -113,6 +113,21 @@ describe("assertSafeUrl", () => {
       reason: "ip-literal",
     });
   });
+
+  it("refuses subdomains of .localhost, which resolve to loopback (R1-001)", () => {
+    expect(assertSafeUrl("http://foo.localhost/secret")).toEqual({
+      ok: false,
+      reason: "private-suffix",
+    });
+    expect(assertSafeUrl("http://a.b.LOCALHOST./secret")).toEqual({
+      ok: false,
+      reason: "private-suffix",
+    });
+  });
+
+  it("still accepts a public host that merely contains localhost (R1-001)", () => {
+    expect(assertSafeUrl("https://mylocalhost.com/event").ok).toBe(true);
+  });
 });
 
 describe("normalizeUrlKey", () => {
