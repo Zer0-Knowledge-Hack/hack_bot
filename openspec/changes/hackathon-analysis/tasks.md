@@ -95,9 +95,9 @@ Chain strategy: stacked-to-main
 
 ## Phase 8: Workers AI Extractor + GitHub Metadata (PR8)
 
-- [ ] 8.1 RED: `test/adapters/llm/workers-ai-extractor.test.ts` — untrusted framing between `<<<PAGE`/`PAGE>>>` (spec llm-extraction: Page Content Is Framed as Untrusted), primary-then-fallback on invalid/unparseable output, quota-exhaustion mapping (spec: Workers AI Quota Exhaustion Is Reported and Non-Retrying), model ID regex validation.
-- [ ] 8.2 GREEN: `src/adapters/llm/{workers-ai-extractor,prompt}.ts` with injected `run`.
-- [ ] 8.3 RED/GREEN: `src/adapters/github/repo-metadata.ts` — public REST call, 3 s timeout, with test.
+- [x] 8.1 RED: `test/adapters/llm/workers-ai-extractor.test.ts` — untrusted framing between `<<<PAGE`/`PAGE>>>` (spec llm-extraction: Page Content Is Framed as Untrusted), primary-then-fallback on invalid/unparseable output, quota-exhaustion mapping (spec: Workers AI Quota Exhaustion Is Reported and Non-Retrying), model ID regex validation.
+- [x] 8.2 GREEN: `src/adapters/llm/{workers-ai-extractor,prompt}.ts` with injected `run`.
+- [x] 8.3 RED/GREEN: `src/adapters/github/repo-metadata.ts` — public REST call, 3 s timeout, with test.
 
 ## Phase 9: Queue Adapter, Consumer Wiring, Handler Tests (PR9)
 
