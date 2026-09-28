@@ -932,3 +932,14 @@ None.
 ### Status
 
 2/2 Phase 7 tasks complete (42/56 cumulative across Phases 1-7). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 8) once PR7 is reviewed/merged per the stacked-to-main chain strategy.
+
+### PR7 review correction
+
+Full 4R review on 3ba8266..88a12ca. Frozen severe findings, both deterministic (no refuter):
+
+- **RISK-001 (CRITICAL; RESI-002 merged as duplicate):** `page.evaluate()` was awaited without `raceWithSignal`, so a stalled page kept the fetch and the Browser Rendering session open past the step timeout. Fix: evaluate is raced like `goto`; abort maps to `PageFetchFailedError("timeout")`.
+- **RESI-001 (CRITICAL):** an unguarded `await browser.close()` in `finally` let a close rejection replace the classified error. Fix: `browser.close().catch(() => {})`.
+
+Strict TDD: 3 new tests were RED (evaluate stall, close failure after a refusal, close failure after success), then GREEN. The full suite passed 538/538 and the typecheck was clean. Fix commit: ea4dbdb. The scoped fix-delta validator returned **approve**.
+
+Non-blocking info: RISK-002 (CDP interception does not see Service Worker requests; not in the design Threat Matrix), RELI-001..003 (test coverage gaps), FIXV-001 (close failures are swallowed with no logging; no Logger is injected in this adapter).
