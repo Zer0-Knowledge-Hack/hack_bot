@@ -49,10 +49,10 @@ describe("createWorkersAiExtractor", () => {
     const run: WorkersAiRun = async () => ({ response: "{}" });
     const extractor = createWorkersAiExtractor({ run });
 
-    await expect(extractor.extract(PAGE_TEXT, VALID_MODEL, neverAborts())).resolves.not.toThrow;
+    await expect(extractor.extract(PAGE_TEXT, VALID_MODEL, neverAborts())).resolves.toEqual({});
     await expect(
       extractor.extract(PAGE_TEXT, "@hf/thebloke/some-model", neverAborts()),
-    ).resolves.not.toThrow;
+    ).resolves.toEqual({});
   });
 
   it("frames the page text between the untrusted delimiters when calling run", async () => {

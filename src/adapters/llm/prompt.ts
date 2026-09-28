@@ -53,12 +53,30 @@ The page text appears below, enclosed between a fixed start marker and a fixed e
 
 ${SCHEMA_DESCRIPTION}`;
 
-// Strips any literal occurrence of either delimiter from the page text
-// before it is embedded in the prompt, so the model always sees exactly one
-// genuine ${PAGE_START} ... ${PAGE_END} pair, regardless of what the page
-// itself contains.
+const DELIMITER_PATTERN = new RegExp(
+  `${escapeRegExp(PAGE_START)}|${escapeRegExp(PAGE_END)}`,
+  "gi",
+);
+
+// Strips every occurrence of either delimiter, in any letter case, from the
+// page text before it is embedded in the prompt, so the model always sees
+// exactly one genuine ${PAGE_START} ... ${PAGE_END} pair, regardless of what
+// the page itself contains. A single pass is not enough: removing a nested
+// token can reassemble another one ("<<<PA<<<PAGEGE" → "<<<PAGE"), so it
+// repeats until nothing is left to strip (READ-003). Each pass shortens the
+// text, so the loop always terminates.
 function sanitizePageText(pageText: string): string {
-  return pageText.split(PAGE_START).join("").split(PAGE_END).join("");
+  let text = pageText;
+  let previous: string;
+  do {
+    previous = text;
+    text = text.replace(DELIMITER_PATTERN, "");
+  } while (text !== previous);
+  return text;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function buildPrompt(pageText: string): string {
