@@ -157,16 +157,31 @@ export function createRenderedFetcher(options: RenderedFetcherOptions): PageFetc
         // Workers runtime), and this function body is only ever serialized
         // and executed inside the rendered *page's* browser context by the
         // real puppeteer adapter, never by this Worker's own runtime.
-        const innerText = await page.evaluate(
-          () =>
-            (globalThis as unknown as { document?: { body?: { innerText?: string } } }).document?.body
-              ?.innerText ?? "",
-        );
+        // Raced like `goto`: a page script that stalls `evaluate` must not
+        // keep the fetch (and the browser session) open past the caller's
+        // step timeout (RISK-001).
+        let innerText: string;
+        try {
+          innerText = await raceWithSignal(
+            page.evaluate(
+              () =>
+                (globalThis as unknown as { document?: { body?: { innerText?: string } } }).document
+                  ?.body?.innerText ?? "",
+            ),
+            signal,
+          );
+        } catch {
+          if (signal.aborted) {
+            throw new PageFetchFailedError("rendered fetch timed out", "timeout");
+          }
+          throw new PageFetchFailedError("rendered page text extraction failed", "network");
+        }
         return innerText.slice(0, TEXT_MAX);
       } finally {
         // Always released, even on refusal/timeout/quota (design.md "calls
-        // browser.close() in finally").
-        await browser.close();
+        // browser.close() in finally"). A failing close must not replace the
+        // classified error or the rendered text (RESI-001).
+        await browser.close().catch(() => {});
       }
     },
   };

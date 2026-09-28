@@ -42,6 +42,8 @@ interface FakePageOptions {
   status?: number;
   innerText?: string;
   gotoImpl?: () => Promise<{ status(): number } | null>;
+  evaluateImpl?: () => Promise<string>;
+  closeImpl?: () => Promise<void>;
   requests?: Array<{ url: string; resourceType: string }>;
 }
 
@@ -51,6 +53,7 @@ function fakePage(options: FakePageOptions = {}) {
     status = 200,
     innerText = "rendered page text",
     gotoImpl,
+    evaluateImpl,
     requests = [],
   } = options;
 
@@ -81,6 +84,7 @@ function fakePage(options: FakePageOptions = {}) {
     url: () => finalUrl,
     async evaluate<T>(fn: () => T): Promise<T> {
       void fn;
+      if (evaluateImpl) return (await evaluateImpl()) as unknown as T;
       return innerText as unknown as T;
     },
   };
@@ -101,6 +105,7 @@ function fakeBrowser(pageOptions: FakePageOptions = {}) {
     },
     async close() {
       closed = true;
+      if (pageOptions.closeImpl) await pageOptions.closeImpl();
     },
   };
   return { browser, seenRequests, interceptionEnabled, isClosed: () => closed };
@@ -242,5 +247,50 @@ describe("createRenderedFetcher", () => {
     expect(err).toBeInstanceOf(PageFetchFailedError);
     expect((err as PageFetchFailedError).kind).toBe("timeout");
     expect(isClosed()).toBe(true);
+  });
+
+  it("reports a timeout and closes the browser when evaluate never settles (RISK-001)", async () => {
+    const controller = new AbortController();
+    const { browser, isClosed } = fakeBrowser({
+      evaluateImpl: () => new Promise(() => {}), // never resolves
+    });
+    const fetcher = createRenderedFetcher({ launch: async () => browser, binding: {} });
+
+    const pending = fetcher.fetch("https://example.com/event", controller.signal);
+    await new Promise((resolve) => setTimeout(resolve, 0)); // let fetch reach evaluate
+    controller.abort();
+    const err = await pending.catch((e) => e);
+
+    expect(err).toBeInstanceOf(PageFetchFailedError);
+    expect((err as PageFetchFailedError).kind).toBe("timeout");
+    expect(isClosed()).toBe(true);
+  });
+
+  it("keeps the original error when browser.close() also fails (RESI-001)", async () => {
+    const { browser } = fakeBrowser({
+      finalUrl: "http://127.0.0.1/internal",
+      closeImpl: async () => {
+        throw new Error("close failed");
+      },
+    });
+    const fetcher = createRenderedFetcher({ launch: async () => browser, binding: {} });
+
+    await expect(
+      fetcher.fetch("https://example.com/event", new AbortController().signal),
+    ).rejects.toBeInstanceOf(UnsafeUrlError);
+  });
+
+  it("still returns the text when browser.close() fails after a successful render (RESI-001)", async () => {
+    const { browser } = fakeBrowser({
+      innerText: "rendered",
+      closeImpl: async () => {
+        throw new Error("close failed");
+      },
+    });
+    const fetcher = createRenderedFetcher({ launch: async () => browser, binding: {} });
+
+    await expect(
+      fetcher.fetch("https://example.com/event", new AbortController().signal),
+    ).resolves.toBe("rendered");
   });
 });
