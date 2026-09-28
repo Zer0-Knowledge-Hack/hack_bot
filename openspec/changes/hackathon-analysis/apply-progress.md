@@ -857,3 +857,78 @@ A benign runtime artifact, not a test failure: when the byte-cap `TransformStrea
 ### Status
 
 3/3 Phase 6 tasks complete (40/56 cumulative across Phases 1-6). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 7) once PR6 is reviewed/merged per the stacked-to-main chain strategy.
+
+## Phase 7 (PR7: rendered/browser fetcher) — branch `feat/hackathon-rendered-fetcher`
+
+### Scope of this batch
+
+Phase 7 only — the `PageFetcher` Browser Rendering implementation (`src/adapters/browser/rendered-fetcher.ts`). Phases 8-11 are untouched. Branch created off `main` at `3ba8266` (post-PR6 merge, which already contains `src/adapters/http/{safe-fetcher,html-to-text}.ts`).
+
+### Completed Tasks
+
+- [x] 7.1 RED: `test/adapters/browser/rendered-fetcher.test.ts` — request-interception policy (`browserRequestPolicy`: http(s) only, host re-guard via `assertSafeUrl`, images/fonts/media/stylesheets aborted, 100-request cap), `page.url()` re-check after `goto` (spec page-fetch: Browser rendering redirect to an unsafe target), `browser.close()` in `finally` (including on a thrown `goto` and on a 429), 429 → `BrowserQuotaExceededError`, caller `AbortSignal` → timeout.
+- [x] 7.2 GREEN: `src/adapters/browser/rendered-fetcher.ts` — `createRenderedFetcher({ launch, binding, maxRequests? })` with a minimal structural `Browser`/`BrowserPage`/`InterceptedRequest` type (no `@cloudflare/puppeteer` import; tests inject fakes, never a real browser).
+
+Both Phase 7 tasks complete (42/56 cumulative across Phases 1-7). Phases 8-11 remain pending (not assigned to this batch).
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 7.1/7.2 | `test/adapters/browser/rendered-fetcher.test.ts` | Unit (pure `browserRequestPolicy`) + Adapter (`createRenderedFetcher` against injected `launch`/`Browser`/`Page` fakes, no real browser or `AbortSignal` timer beyond the standard Web API) | N/A (new) | Written, confirmed failing (`Cannot find module '.../rendered-fetcher'`) | 17/17 passed on the first implementation attempt | 17 cases: 6 `browserRequestPolicy` unit cases (allow safe, abort non-http(s), abort private/loopback host, abort each of image/font/media/stylesheet via `it.each`, allow xhr/script, 100-request boundary) + 11 `createRenderedFetcher` cases (render+return text, refuse before launching on an unsafe initial URL, interception enabled + policy routes 3 scripted requests, 100-request cap boundary over 105 requests, `page.url()` re-check refuses an unsafe post-goto redirect, `browser.close()` still runs when `goto` throws, 429 maps to `BrowserQuotaExceededError` and still closes, `AbortSignal` fired mid-`goto` maps to a timeout and still closes) | None needed — single orchestration function plus the pure `browserRequestPolicy` and a small `raceWithSignal` helper, no duplication to remove |
+
+#### Test Summary
+- **Total tests written**: 17 (6 `browserRequestPolicy` + 11 `createRenderedFetcher`)
+- **Total tests passing**: 17/17 (535/535 full suite, up from 516 pre-PR6-merge baseline plus 2 tests already added between PR6 and this branch's base)
+- **Layers used**: Unit (6, pure policy function) + Adapter (11, fake `launch`/`Browser`/`Page`)
+- **Approval tests** (refactoring): None — new file
+- **Functions created**: `browserRequestPolicy`, `createRenderedFetcher`, `raceWithSignal` (private)
+
+### Work Unit Evidence
+
+| Work unit | Focused test command | Result | Runtime harness | Rollback boundary |
+|---|---|---|---|---|
+| 7.1/7.2 rendered fetcher | `npx vitest run test/adapters/browser/rendered-fetcher.test.ts` | 17/17 passed | Fake `launch`/`Browser`/`Page`/`InterceptedRequest` (no real Browser Rendering binding, no `@cloudflare/puppeteer` dependency); `AbortSignal`/`Promise` behavior is the genuine Workers runtime (vitest-pool-workers) | revert commit `47b1a32` (`src/adapters/browser/rendered-fetcher.ts`, its test) |
+
+Full-suite and typecheck evidence (after the implementation commit):
+- `npx vitest run` → 57 files, **535/535 tests passed** (0 failed)
+- `npx tsc --noEmit` → clean, no errors
+
+### Files Changed
+
+| File | Action | What was done |
+|------|--------|----------------|
+| `src/adapters/browser/rendered-fetcher.ts` | Created | `createRenderedFetcher` — `PageFetcher` over an injected `launch(binding)`; guards the initial URL, every intercepted sub-request (via the pure `browserRequestPolicy`), and the post-`goto` `page.url()`; maps 429 to `BrowserQuotaExceededError`, a caller-abort to a timeout, any other `goto` failure to a network error; always `browser.close()`s in `finally`; reuses `TEXT_MAX` from `html-to-text.ts` (PR6) to cap the returned `innerText`, not `htmlToText` itself (see Deviations) |
+| `test/adapters/browser/rendered-fetcher.test.ts` | Created | 17 tests across the named task-7.1 scenarios, using fake `launch`/`Browser`/`Page`/`InterceptedRequest` |
+| `openspec/changes/hackathon-analysis/tasks.md` | Modified | Phase 7 tasks 7.1-7.2 marked `[x]` |
+
+### Deviations from Design
+
+- **`@cloudflare/puppeteer` is not installed and not imported.** design.md's File Changes table lists `src/adapters/browser/rendered-fetcher.ts` as "Puppeteer with an injected `launch`" and task 10.4 (Phase 10, not this batch) is where `wrangler.jsonc`/`package.json` gain the `@cloudflare/puppeteer` dependency and `BROWSER` binding. This batch's task 7.2 only asks for "`src/adapters/browser/rendered-fetcher.ts` with injected `launch`" — no import of the real package is required to satisfy that, and this batch's own instructions explicitly call for "a minimal structural type so tests use fakes, no real browser." Declared `Browser`/`BrowserPage`/`InterceptedRequest`/`BrowserLaunch` as local structural interfaces (method names/shapes match `@cloudflare/puppeteer`'s public surface: `launch(binding)`, `browser.newPage()`/`.close()`, `page.setRequestInterception()`/`.on("request", ...)`/`.goto()`/`.url()`/`.evaluate()`, `request.abort()`/`.continue()`/`.url()`/`.resourceType()`). When Phase 10 adds the real dependency, `RenderedFetcherOptions.launch`'s type can be narrowed to the real package's `launch` export; no call-site change is expected since the structural shape was modeled directly on it.
+- **`page.evaluate(() => document.body.innerText)` is written without referencing the DOM lib.** This project's `tsconfig.json` has `"lib": ["ES2022"]` only (no `"dom"`) — it targets the Workers runtime, not a browser. Since `evaluate`'s callback is only ever serialized and executed inside the *rendered page's* browser context by a real puppeteer adapter (never by this Worker's own JS runtime), referencing `document` directly would fail `tsc --noEmit` under this project's lib config. Wrote it as `(globalThis as unknown as { document?: {...} }).document?.body?.innerText ?? ""` instead — same runtime behavior once actually executed by puppeteer, but typechecks without adding `"dom"` to a Workers-only tsconfig (which would risk leaking browser globals into the rest of the codebase's type-checking).
+- **Rendered text is capped at `TEXT_MAX` (22,000 chars, reused from `html-to-text.ts`) but is NOT run through `htmlToText`'s `HTMLRewriter` pass.** design.md's line for this adapter says "reads `innerText` (capped)" — distinct phrasing from the static-path line ("`HTMLRewriter` drops noise elements..."), and `innerText` is already visible-text-only (the browser's own rendering already excludes `<script>`/`<style>`/hidden elements), so there is no HTML markup left to reduce; running an already-plain-text string through an `HTMLRewriter` pass expecting HTML input would be a no-op at best. Reusing the same `TEXT_MAX` constant (rather than a second magic number) keeps both fetchers' output bound to the one length the LLM extractor step assumes, per this batch's own instruction to "reuse html-to-text from PR6 if the design says rendered HTML goes through it" — design.md's wording does not say that for this path, so only the shared cap constant is reused, not the reduction function.
+- **The 429-quota check reads `response.status()` from `page.goto()`'s own return value, not a separately-observed network event.** design.md says "A 429 raises `BrowserQuotaExceededError`" without naming the exact signal. Browser Rendering serves the navigation itself (not a sub-resource) when the daily/launch-rate quota is exhausted, so the top-level `goto` response is the natural (and only structurally available, given the minimal `Browser`/`Page` types in this batch) place to observe it.
+- **The 100-request cap silently aborts requests beyond the limit rather than failing the whole fetch.** Neither design.md nor the page-fetch spec states that exceeding the cap should abort the entire page load; "at most 100 requests" reads as a resource-exhaustion bound on what the page is *allowed* to fetch, analogous to the static fetcher's byte cap on a stream, not a hard fetch-level failure condition. `browserRequestPolicy` returning `"abort"` past the cap is consistent with how it already handles unsafe hosts and blocked resource types — the page keeps loading with those requests denied.
+- No other deviations. The host re-guard on every intercepted request and on `page.url()` after `goto` both reuse `assertSafeUrl` unmodified (no re-implementation), matching PR6's static fetcher's re-guard-on-every-hop pattern; `browser.close()` runs in `finally` on every code path (success, refusal after launch, `goto` throw, 429, timeout); no page content, URL query string or response body is included in any thrown error's message.
+
+### Issues Found
+
+None.
+
+### Remaining Tasks (not in this batch)
+
+- [ ] Phase 8: Workers AI Extractor + GitHub Metadata (PR8)
+- [ ] Phase 9: Queue Adapter, Consumer Wiring, Handler Tests (PR9)
+- [ ] Phase 10: Publisher, Commands, Env, Wrangler (PR10)
+- [ ] Phase 11: Operator Rollout (manual, not performed by apply)
+
+### Workload / PR Boundary
+
+- Mode: chained PR slice (stacked-to-main, per tasks.md's Chain strategy)
+- Current work unit: PR7 (Phase 7 — Rendered/Browser Fetcher)
+- Boundary: starts from `feat/hackathon-rendered-fetcher`, branched off `main` at `3ba8266` (PR6 merged); ends with `createRenderedFetcher` in place, Phase 7 tasks marked `[x]`, full suite and typecheck green.
+- Estimated review budget impact: **exceeds the 400-line guard.** `git diff --stat` (this batch's 2 code/test files) reports 419 insertions (0 deletions) — src: 173, test: 246 — against the forecast's ~250 estimate. This is 19 lines over the 400-line budget; reported as-is per the instruction to flag but not self-split. Given the file count (2) and that both files are one indivisible work unit (the test exists only to drive the implementation), the maintainer should decide whether to accept this PR with `size:exception` or split the `browserRequestPolicy` unit tests (6 cases) into a separate file/PR from the `createRenderedFetcher` adapter tests (11 cases) to land two smaller reviews instead.
+
+### Status
+
+2/2 Phase 7 tasks complete (42/56 cumulative across Phases 1-7). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 8) once PR7 is reviewed/merged per the stacked-to-main chain strategy.
