@@ -1022,3 +1022,18 @@ None.
 ### Status
 
 3/3 Phase 8 tasks complete (32/56 cumulative across Phases 1-8). Ready for `sdd-verify` on this slice, or for the next `sdd-apply` batch (Phase 9) once PR8 is reviewed/merged per the stacked-to-main chain strategy.
+
+### PR8 review correction
+
+Full 4R review on 64a8d77..739e56d. Frozen severe findings, both deterministic (no refuter):
+
+- **READ-003 (CRITICAL, upgraded from SUGGESTION after a probe):** `sanitizePageText` ran one `split/join` pass per delimiter, so a nested token reassembled a delimiter (`<<<PA<<<PAGEGE` → `<<<PAGE`). A probe through the real `buildPrompt` produced 2 start and 2 end markers. Fix: a case-insensitive regex of both escaped delimiters, applied until the text stops changing. This also covers the letter-case part of RISK-001.
+- **RELI-001 (BLOCKER):** the model-id acceptance test used `.resolves.not.toThrow;` (never called) and asserted nothing. Fix: `.resolves.toEqual({})`. A mutation that drops `hf` from `MODEL_ID_PATTERN` now makes it fail.
+
+Strict TDD: the new prompt tests were RED, then GREEN. The full suite passed 569/569 and the typecheck was clean. Fix commit: 7c66bc0. The scoped fix-delta validator returned **approve**.
+
+Non-blocking info:
+- RISK-001 (the remaining part): Unicode homoglyph and zero-width delimiter variants are not normalized. The system instructions mitigate this.
+- READ-002 / RESI-001: the quota keyword heuristic can misreport a transient error as daily quota exhaustion. It must be confirmed against the real `env.AI` errors in Phase 10.
+- READ-001: `raceWithSignal` is duplicated in the LLM and browser adapters.
+- RELI-002: the GitHub timeout test does not assert the 3 s value.
