@@ -12,6 +12,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "1.4.0",
     "grammy": "1.46.0",
     "hono": "4.13.8"
   },

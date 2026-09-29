@@ -13,6 +13,11 @@ export default defineConfig(async () => {
     },
     plugins: [
       cloudflareTest({
+        // The `ai` and `browser` bindings in wrangler.jsonc are remote-only.
+        // Tests never call them (every use is behind an injected adapter and
+        // faked), and starting a remote proxy session would need a Cloudflare
+        // login — impossible in CI's verify job.
+        remoteBindings: false,
         wrangler: { configPath: "./wrangler.jsonc" },
         miniflare: {
           bindings: {

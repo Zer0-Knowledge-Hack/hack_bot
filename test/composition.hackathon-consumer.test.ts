@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { buildHackathonConsumer } from "../src/composition";
 import { ConfigError } from "../src/config-error";
-import type { HackathonConsumerEnv } from "../src/env";
+import type { Env } from "../src/env";
 import { fakeChatPublisher } from "./fakes";
 
 // task 9.5 (design.md "File Changes": `buildHackathonConsumer(env)` uses
@@ -12,17 +12,17 @@ const launchBrowser = async () => {
   throw new Error("not launched in this test");
 };
 
-function consumerEnv(overrides: Partial<HackathonConsumerEnv> = {}): HackathonConsumerEnv {
+function consumerEnv(overrides: Partial<Env> = {}): Env {
   const aiCalls: Array<{ model: string }> = [];
   return {
-    ...(env as unknown as HackathonConsumerEnv),
+    ...(env as unknown as Env),
     AI: {
       run: async (model: string) => {
         aiCalls.push({ model });
         return { response: "{}" };
       },
     },
-    BROWSER: { fake: "browser-binding" },
+    BROWSER: { fake: "browser-binding" } as unknown as BrowserRun,
     HACKATHON_MODEL_PRIMARY: "@cf/vendor/primary",
     HACKATHON_MODEL_FALLBACK: "@cf/vendor/fallback",
     ...overrides,

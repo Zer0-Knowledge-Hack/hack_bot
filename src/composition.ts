@@ -24,7 +24,7 @@ import type { ChatPublisher, FieldCipher } from "./domain/ports";
 import type { RunHackathonJobDeps } from "./domain/usecases/run-hackathon-job";
 import type { RouteGithubEventDeps } from "./domain/usecases/route-github-event";
 import type { UserFromGetMe } from "grammy/types";
-import type { Env, HackathonConsumerEnv } from "./env";
+import type { Env } from "./env";
 
 // Composition root: wires env bindings -> adapters -> use cases for one
 // request (design.md "src/composition.ts"). No module-level mutable
@@ -139,7 +139,7 @@ export interface HackathonConsumerAdapters {
 // ConfigError when the models or the PR10 adapters are missing, so the
 // queue handler retries instead of running half-wired.
 export function buildHackathonConsumer(
-  env: HackathonConsumerEnv,
+  env: Env,
   adapters?: HackathonConsumerAdapters,
 ): RunHackathonJobDeps {
   const primaryModel = env.HACKATHON_MODEL_PRIMARY?.trim();
