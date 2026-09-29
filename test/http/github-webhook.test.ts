@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import app from "../../src/index";
+import { app } from "../../src/index";
 import type { Env } from "../../src/index";
 import { signHex } from "../support/github-hmac";
 

@@ -4,14 +4,17 @@ import { createSafeLogger } from "./adapters/log/safe-logger";
 import { mapGithubEvent } from "./adapters/github/event-mapper";
 import { verifyGithubSignature } from "./adapters/github/signature";
 import { timingSafeCompare } from "./adapters/crypto/timing-safe-compare";
-import { buildBot, buildGithubRouter } from "./composition";
+import { parseAnalysisJobMessage } from "./adapters/queue/analysis-job-message";
+import { buildBot, buildGithubRouter, buildHackathonConsumer } from "./composition";
 import { ConfigError } from "./config-error";
+import type { Logger } from "./domain/ports";
+import { runHackathonJob, type RunHackathonJobDeps } from "./domain/usecases/run-hackathon-job";
 import { routeGithubEvent } from "./domain/usecases/route-github-event";
-import type { Env } from "./env";
+import type { Env, HackathonConsumerEnv } from "./env";
 
 export type { Env } from "./env";
 
-const app = new Hono<{ Bindings: Env }>();
+export const app = new Hono<{ Bindings: Env }>();
 const logger = createSafeLogger();
 
 app.get("/health", (c) => c.json({ status: "ok" }));
@@ -203,4 +206,79 @@ app.post("/github/webhook", async (c) => {
   return c.text("ok", 200);
 });
 
-export default app;
+// Structural subsets of the Workers Queue `MessageBatch` / `Message`: the
+// handler only needs each message's body, delivery counter, ack and retry.
+export interface QueueMessageLike {
+  readonly body: unknown;
+  readonly attempts: number;
+  ack(): void;
+  retry(options?: { delaySeconds?: number }): void;
+}
+
+export interface QueueBatchLike {
+  readonly messages: readonly QueueMessageLike[];
+}
+
+type BuildConsumerDeps = (env: HackathonConsumerEnv) => RunHackathonJobDeps;
+
+// Delay for a message whose handling failed unexpectedly (a use-case throw
+// or a composition failure): a transient infrastructure problem, retried
+// on the same cadence as the use case's own transient retry.
+const UNEXPECTED_RETRY_DELAY_S = 30;
+
+// design.md "Consumer (`queue()` handler)": shape-validates each body,
+// runs `runHackathonJob`, and maps its `JobOutcome` to `ack()`/`retry()`.
+// It never throws: a malformed or unknown-version message is acked and
+// logged (redelivery can never fix it); anything unexpected is logged by
+// error name only and retried, leaving the D1 job row as source of truth.
+export function createQueueHandler(buildDeps: BuildConsumerDeps, handlerLogger: Logger = logger) {
+  return async (batch: QueueBatchLike, env: Env): Promise<void> => {
+    for (const msg of batch.messages) {
+      await handleMessage(msg, env, buildDeps, handlerLogger);
+    }
+  };
+}
+
+async function handleMessage(
+  msg: QueueMessageLike,
+  env: Env,
+  buildDeps: BuildConsumerDeps,
+  log: Logger,
+): Promise<void> {
+  const parsed = parseAnalysisJobMessage(msg.body);
+  if (parsed.kind !== "ok") {
+    log.log({
+      event: "hackathon-consumer",
+      outcome: "error",
+      reason: parsed.kind === "malformed" ? "malformed-message" : "unsupported-version",
+    });
+    msg.ack();
+    return;
+  }
+
+  try {
+    const deps = buildDeps(env as HackathonConsumerEnv);
+    const outcome = await runHackathonJob(parsed.message, msg.attempts, deps);
+    if (outcome.kind === "ack") {
+      msg.ack();
+    } else {
+      msg.retry({ delaySeconds: outcome.delaySeconds });
+    }
+  } catch (err) {
+    // Only the error name is logged; a ConfigError's message is a fixed,
+    // non-sensitive string by contract (src/config-error.ts).
+    log.log({
+      event: "hackathon-consumer",
+      teamId: parsed.message.teamId,
+      outcome: "error",
+      errorCode: err instanceof Error ? err.name : "UnknownError",
+      ...(err instanceof ConfigError ? { reason: err.message } : {}),
+    });
+    msg.retry({ delaySeconds: UNEXPECTED_RETRY_DELAY_S });
+  }
+}
+
+export default {
+  fetch: app.fetch,
+  queue: createQueueHandler((env) => buildHackathonConsumer(env)),
+};
