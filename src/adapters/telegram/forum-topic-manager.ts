@@ -25,11 +25,55 @@ function classifyCreateFailure(err: unknown): TopicCreateFailure {
   return "rejected";
 }
 
+const VARIATION_SELECTOR = /️/gu;
+const normalizeEmoji = (emoji: string): string => emoji.replace(VARIATION_SELECTOR, "");
+
+type IconStickers = Awaited<ReturnType<Api["getForumTopicIconStickers"]>>;
+
+// Per-isolate cache of Telegram's topic icon set. A rejection clears it so a
+// transient failure is retried instead of cached forever.
+let iconStickers: Promise<IconStickers> | null = null;
+
+export function resetTopicIconCache(): void {
+  iconStickers = null;
+}
+
+function loadIconStickers(api: Api): Promise<IconStickers> {
+  if (!iconStickers) {
+    const pending = api.getForumTopicIconStickers(topicSignal());
+    iconStickers = pending;
+    pending.catch(() => {
+      if (iconStickers === pending) iconStickers = null;
+    });
+  }
+  return iconStickers;
+}
+
+// Best-effort: any failure (or no match) means "no icon", never a failed create.
+async function findIconId(api: Api, emoji: string): Promise<string | null> {
+  try {
+    const stickers = await loadIconStickers(api);
+    if (!Array.isArray(stickers)) return null;
+    const wanted = normalizeEmoji(emoji);
+    const hit = stickers.find((s) => s.emoji !== undefined && normalizeEmoji(s.emoji) === wanted);
+    return hit?.custom_emoji_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function createTelegramForumTopicManager(api: Api): ForumTopicManager {
   return {
-    async create(chatId, name) {
+    async create(chatId, name, options) {
+      const iconId = options ? await findIconId(api, options.iconEmoji) : null;
+      const finalName = options && iconId === null ? options.fallbackName : name;
       try {
-        const topic = await api.createForumTopic(chatId, name, undefined, topicSignal());
+        const topic = await api.createForumTopic(
+          chatId,
+          finalName,
+          iconId === null ? undefined : { icon_custom_emoji_id: iconId },
+          topicSignal(),
+        );
         return topic.message_thread_id;
       } catch (err) {
         // Fixed message: Telegram's description is never carried over.

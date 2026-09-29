@@ -1,7 +1,10 @@
 // Pure helpers for the participation topic (hackathon-participation design.md
 // "Topic name" and decision 7 "Deep link").
 
-const TOPIC_PREFIX = "🏆 ";
+// The trophy is the topic ICON (see `TopicCreateOptions`); as a name prefix it
+// is only the visible fallback when the icon cannot be applied.
+export const TOPIC_ICON_EMOJI = "🏆";
+const TOPIC_PREFIX = `${TOPIC_ICON_EMOJI} `;
 // Telegram's forum topic name limit, counted in UTF-16 code units.
 const TOPIC_NAME_MAX = 128;
 const ELLIPSIS = "…";
@@ -19,17 +22,22 @@ export function sanitizeTopicName(name: string | null | undefined, slug: string)
   return cleaned === "" ? slug : cleaned;
 }
 
-export function topicNameFor(name: string | null | undefined, slug: string): string {
+export function topicNameFor(
+  name: string | null | undefined,
+  slug: string,
+  iconApplied: boolean,
+): string {
   const sanitized = sanitizeTopicName(name, slug);
-  const room = TOPIC_NAME_MAX - TOPIC_PREFIX.length;
-  if (sanitized.length <= room) return TOPIC_PREFIX + sanitized;
+  const prefix = iconApplied ? "" : TOPIC_PREFIX;
+  const room = TOPIC_NAME_MAX - prefix.length;
+  if (sanitized.length <= room) return prefix + sanitized;
   // Cut at code-point boundaries, leaving one unit for the ellipsis.
   let cut = "";
   for (const ch of sanitized) {
     if (cut.length + ch.length > room - ELLIPSIS.length) break;
     cut += ch;
   }
-  return TOPIC_PREFIX + cut + ELLIPSIS;
+  return prefix + cut + ELLIPSIS;
 }
 
 // Telegram's "Copy link" format for a topic (a topic id is its creation

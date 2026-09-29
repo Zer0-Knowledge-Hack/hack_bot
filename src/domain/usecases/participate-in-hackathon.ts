@@ -9,7 +9,7 @@ import {
   TopicRightsMissingError,
   UnauthorizedError,
 } from "../errors";
-import { sanitizeTopicName, topicLink, topicNameFor } from "../hackathon/topic";
+import { TOPIC_ICON_EMOJI, sanitizeTopicName, topicLink, topicNameFor } from "../hackathon/topic";
 import type { HackathonAnalysis } from "../entities";
 import type { MembershipId, TeamId } from "../ids";
 import type {
@@ -111,7 +111,11 @@ export async function participateInHackathon(
   const name = analysis.fields.name?.value;
   let threadId: number;
   try {
-    threadId = await deps.forumTopicManager.create(chatId, topicNameFor(name, analysis.slug));
+    threadId = await deps.forumTopicManager.create(
+      chatId,
+      topicNameFor(name, analysis.slug, true),
+      { iconEmoji: TOPIC_ICON_EMOJI, fallbackName: topicNameFor(name, analysis.slug, false) },
+    );
   } catch (err) {
     if (err instanceof ForumTopicCreateError) {
       if (err.failure === "unavailable") {

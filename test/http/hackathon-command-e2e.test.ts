@@ -143,6 +143,7 @@ describe("POST /telegram/webhook — /hackathon <url> through real composition",
 describe("POST /telegram/webhook — /hackathon join through real composition", () => {
   const stubForum = () =>
     stubTelegramApi((method) => {
+      if (method === "getForumTopicIconStickers") return [{ emoji: "🏆", custom_emoji_id: "5309" }];
       if (method === "createForumTopic") return { message_thread_id: 4242, name: "x", icon_color: 0 };
       return undefined;
     });
@@ -202,7 +203,8 @@ describe("POST /telegram/webhook — /hackathon join through real composition", 
     expect(row).toEqual({ thread_id: 4242, general_message_id: 321 });
     expect(calls.filter((c) => c.method === "createForumTopic")).toHaveLength(1);
     expect(calls.find((c) => c.method === "createForumTopic")?.body).toMatchObject({
-      name: "🏆 Meridian Hack",
+      name: "Meridian Hack",
+      icon_custom_emoji_id: "5309",
     });
     const clear = calls.find((c) => c.method === "editMessageReplyMarkup");
     expect(clear?.body).toMatchObject({ chat_id: chatId, message_id: 321 });

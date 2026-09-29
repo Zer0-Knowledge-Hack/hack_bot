@@ -30,6 +30,7 @@ import type {
   ChatPublisher,
   Clock,
   ForumTopicManager,
+  TopicCreateOptions,
   DmSelectionRepo,
   GithubOrgClaimRepo,
   HackathonAnalysisRepo,
@@ -590,15 +591,15 @@ export type TopicCreateStep = { threadId: number } | { fails: TopicCreateFailure
 export function fakeForumTopicManager(
   opts: { create?: TopicCreateStep[] } = {},
 ): ForumTopicManager & {
-  created: Array<{ chatId: number; name: string }>;
+  created: Array<{ chatId: number; name: string; iconEmoji?: string; fallbackName?: string }>;
 } {
-  const created: Array<{ chatId: number; name: string }> = [];
+  const created: Array<{ chatId: number; name: string; iconEmoji?: string; fallbackName?: string }> = [];
   let createIdx = 0;
   let nextThreadId = 1000;
   return {
     created,
-    create: async (chatId: number, name: string) => {
-      created.push({ chatId, name });
+    create: async (chatId: number, name: string, hint?: TopicCreateOptions) => {
+      created.push({ chatId, name, ...hint });
       const script = opts.create;
       const step = script && script.length > 0 ? script[Math.min(createIdx, script.length - 1)] : undefined;
       createIdx += 1;

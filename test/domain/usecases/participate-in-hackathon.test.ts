@@ -144,7 +144,12 @@ describe("participateInHackathon: happy path", () => {
     const result = await participateInHackathon(input(), deps);
 
     expect(deps.forumTopicManager.created).toEqual([
-      { chatId: CHAT_ID, name: "🏆 Meridian Hack 2026" },
+      {
+        chatId: CHAT_ID,
+        name: "Meridian Hack 2026",
+        iconEmoji: "🏆",
+        fallbackName: "🏆 Meridian Hack 2026",
+      },
     ]);
     expect(row(deps).threadId).toBe(77);
     expect(deps.chatPublisher.posted).toHaveLength(1);
@@ -161,7 +166,11 @@ describe("participateInHackathon: happy path", () => {
       create: [{ threadId: 5 }],
     });
     const result = await participateInHackathon(input(), deps);
-    expect(deps.forumTopicManager.created[0]?.name).toBe("🏆 meridian");
+    expect(deps.forumTopicManager.created[0]).toMatchObject({
+      name: "meridian",
+      iconEmoji: "🏆",
+      fallbackName: "🏆 meridian",
+    });
     expect(result.replyText).toBe(`✅ Participamos en meridian → ${LINK(5)}`);
   });
 

@@ -2,13 +2,17 @@ import { Api } from "grammy";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ForumTopicCreateError } from "../../../src/domain/errors";
 import type { TopicCreateFailure } from "../../../src/domain/ports";
-import { createTelegramForumTopicManager } from "../../../src/adapters/telegram/forum-topic-manager";
+import {
+  createTelegramForumTopicManager,
+  resetTopicIconCache,
+} from "../../../src/adapters/telegram/forum-topic-manager";
 import { stubTelegramApi } from "../../support/telegram-stub";
 
 // hackathon-participation design.md "Interfaces / Contracts":
 // `create` classifies a failed createForumTopic into a fixed failure code.
 
 afterEach(() => {
+  resetTopicIconCache();
   vi.unstubAllGlobals();
 });
 
@@ -99,5 +103,108 @@ describe("createTelegramForumTopicManager.create", () => {
 
     expect(signal).toBeInstanceOf(AbortSignal);
     expect(signal?.aborted).toBe(false);
+  });
+});
+
+describe("createTelegramForumTopicManager.create with an icon hint", () => {
+  const OPTS = { iconEmoji: "🏆", fallbackName: "🏆 Meridian" };
+  const stickers = [
+    { emoji: "📰", custom_emoji_id: "111" },
+    { emoji: "🏆", custom_emoji_id: "5309" },
+  ];
+  const topicResult = { message_thread_id: 9, name: "Meridian", icon_color: 1 };
+
+  it("uses the matching sticker as the icon and keeps the plain name", async () => {
+    const calls = stubTelegramApi((method) =>
+      method === "getForumTopicIconStickers" ? stickers : topicResult,
+    );
+
+    const threadId = await makeManager().create(-1001234, "Meridian", OPTS);
+
+    expect(threadId).toBe(9);
+    expect(calls.map((c) => c.method)).toEqual(["getForumTopicIconStickers", "createForumTopic"]);
+    expect(calls[1]?.body).toMatchObject({
+      chat_id: -1001234,
+      name: "Meridian",
+      icon_custom_emoji_id: "5309",
+    });
+  });
+
+  it("matches ignoring the U+FE0F variation selector on either side", async () => {
+    const calls = stubTelegramApi((method) =>
+      method === "getForumTopicIconStickers"
+        ? [{ emoji: "❤️", custom_emoji_id: "77" }]
+        : topicResult,
+    );
+
+    await makeManager().create(-1001234, "Meridian", { iconEmoji: "❤", fallbackName: "❤ M" });
+
+    expect(calls[1]?.body).toMatchObject({ name: "Meridian", icon_custom_emoji_id: "77" });
+  });
+
+  it("creates the topic with the fallback name and no icon when nothing matches", async () => {
+    const calls = stubTelegramApi((method) =>
+      method === "getForumTopicIconStickers"
+        ? [{ emoji: "📰", custom_emoji_id: "111" }]
+        : topicResult,
+    );
+
+    await makeManager().create(-1001234, "Meridian", OPTS);
+
+    const body = calls.find((c) => c.method === "createForumTopic")?.body as Record<string, unknown>;
+    expect(body.name).toBe("🏆 Meridian");
+    expect(body).not.toHaveProperty("icon_custom_emoji_id");
+  });
+
+  it("still creates the topic with the fallback name when the sticker fetch fails", async () => {
+    const calls = stubTelegramApi((method) =>
+      method === "getForumTopicIconStickers" ? fail(500, "Internal Server Error") : topicResult,
+    );
+
+    const threadId = await makeManager().create(-1001234, "Meridian", OPTS);
+
+    expect(threadId).toBe(9);
+    const body = calls.find((c) => c.method === "createForumTopic")?.body as Record<string, unknown>;
+    expect(body.name).toBe("🏆 Meridian");
+    expect(body).not.toHaveProperty("icon_custom_emoji_id");
+  });
+
+  it("fetches the icon list once across two creates", async () => {
+    const calls = stubTelegramApi((method) =>
+      method === "getForumTopicIconStickers" ? stickers : topicResult,
+    );
+    const manager = makeManager();
+
+    await manager.create(-1001234, "A", OPTS);
+    await manager.create(-1001234, "B", OPTS);
+
+    expect(calls.filter((c) => c.method === "getForumTopicIconStickers")).toHaveLength(1);
+    expect(calls.filter((c) => c.method === "createForumTopic")).toHaveLength(2);
+  });
+
+  it("does not cache a failed fetch: the next create refetches", async () => {
+    let fetches = 0;
+    const calls = stubTelegramApi((method) => {
+      if (method !== "getForumTopicIconStickers") return topicResult;
+      fetches += 1;
+      return fetches === 1 ? fail(500, "Internal Server Error") : stickers;
+    });
+    const manager = makeManager();
+
+    await manager.create(-1001234, "A", OPTS);
+    await manager.create(-1001234, "B", OPTS);
+
+    expect(fetches).toBe(2);
+    const creates = calls.filter((c) => c.method === "createForumTopic");
+    expect(creates[0]?.body).not.toHaveProperty("icon_custom_emoji_id");
+    expect(creates[1]?.body).toMatchObject({ name: "B", icon_custom_emoji_id: "5309" });
+  });
+
+  it("does not fetch icons when no hint is given", async () => {
+    const calls = stubTelegramApi(() => topicResult);
+
+    await makeManager().create(-1001234, "Plain");
+
+    expect(calls.map((c) => c.method)).toEqual(["createForumTopic"]);
   });
 });
