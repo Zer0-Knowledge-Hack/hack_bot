@@ -1,4 +1,5 @@
 import type { PageFetchFailureKind } from "./errors";
+import type { GithubEventAction, GithubEventKind } from "./github";
 import type { ExtractedFields } from "./hackathon/extraction";
 
 // Bot-authored Spanish copy for the text the domain composes (neutral "tú"
@@ -58,4 +59,26 @@ export const analysisCopy = {
   replacedLink: (slug: string) => `Se reemplazó el vínculo anterior del tema (era ${slug}).`,
   movedLink: "Se movió el vínculo de este análisis desde otro tema.",
   pinFailed: "No se pudo fijar el mensaje; se publicó sin fijar.",
+};
+
+// One header phrase per kind:action pair; the type makes a missing pair a
+// compile error. The mapper never produces `issues:merged` or
+// `issues:review_requested`, but the domain type allows them, so they carry
+// safe placeholder phrases instead of falling back to raw codes.
+export const GITHUB_ALERT_HEADERS: Readonly<
+  Record<`${GithubEventKind}:${GithubEventAction}`, string>
+> = {
+  "pull_request:opened": "PR abierto",
+  "pull_request:closed": "PR cerrado",
+  "pull_request:merged": "PR fusionado",
+  "pull_request:review_requested": "Revisión solicitada",
+  "issues:opened": "Issue abierto",
+  "issues:closed": "Issue cerrado",
+  "issues:merged": "Issue fusionado",
+  "issues:review_requested": "Revisión solicitada",
+};
+
+export const githubCopy = {
+  reviewerLabel: "Revisor:",
+  byLabel: "Por:",
 };
