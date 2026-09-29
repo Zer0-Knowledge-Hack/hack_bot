@@ -36,7 +36,7 @@ The use case owns five things: the admin gate, the slug lookup, the existing-top
    | `unavailable` (timeout or 5xx: the topic may exist) | **Kept** | `TopicCreationUncertainError` | The TTL blocks an immediate duplicate |
 
 5. **The no-throw zone starts here.** Call `moveTopicLink(T, pinned=null)`, which also replaces a stale id. On failure, return `linkFailed(link)`.
-6. Call `postAnalysisAndLinkTopic({threadId: T, analysis: {...analysis, threadId: T}})`. The threadId override avoids a spurious unpin and a "moved" note. If the post fails, return `postFailed(link)`. A pin failure adds the existing `pinFailed` note.
+6. Wait `TOPIC_POST_DELAY_MS` (1500 ms) through the injected `sleep`, then call `postAnalysisAndLinkTopic({threadId: T, analysis: {...analysis, threadId: T}, pinDelayMs: PIN_DELAY_MS})`, which waits `PIN_DELAY_MS` (1000 ms) between the post and the pin. Production showed a pin issued right after the post into a just-created topic return `ok` yet never pin. The delays apply to the fresh-topic path only (the live-topic check and other callers pass no delay); `sleep` is a `Sleep` dependency wired to `setTimeout` in the composition root, so the domain owns no timer. The 2.5 s total is idle wall-clock time, not CPU. The threadId override avoids a spurious unpin and a "moved" note. If the post fails, return `postFailed(link)`. A pin failure adds the existing `pinFailed` note.
 7. Clear the buttons, best-effort, for the deduped set of {callback message id, `generalMessageId`}. Return `created(name, link, notes)`.
 
 ## Data Flow
@@ -55,7 +55,7 @@ consumer: postToGeneral(text, participateSlug) ─ setGeneralMessageId (best-eff
 ```ts
 type TopicCreateFailure = "no-rights" | "not-forum" | "rate-limited" | "rejected" | "unavailable";
 interface ForumTopicManager {
-  create(chatId: number, name: string): Promise<number>;      // throws ForumTopicCreateError(failure)
+  create(chatId: number, name: string, options?: { iconEmoji: string; fallbackName: string }): Promise<number>;      // throws ForumTopicCreateError(failure)
 }
 interface ChatPublisher { post(chatId, threadId, text, options?: { participateSlug?: string }): Promise<number>;
   pin; unpin; clearButtons(chatId: number, messageId: number): Promise<void>; }
@@ -72,7 +72,7 @@ setGeneralMessageId(team, id, messageId: number): Promise<void>;
 - other 4xx ⇒ `rejected`;
 - `HttpError`, 5xx or a timeout ⇒ `unavailable`.
 
-Topic name: strip `\p{Cc}\p{Cf}` (bidi spoofing too), collapse whitespace and trim; fall back to the slug; the result is `🏆 ` + the name, cut at code-point boundaries to at most 128 UTF-16 units, with `…` when cut. The General confirmation shows the sanitized name without the emoji.
+Topic name: strip `\p{Cc}\p{Cf}` (bidi spoofing too), collapse whitespace and trim; fall back to the slug; the result is the plain name, cut at code-point boundaries to at most 128 UTF-16 units, with `…` when cut. The 🏆 is the topic **icon**, not part of the name: the use case passes `create(chatId, name, { iconEmoji: "🏆", fallbackName })`, where `fallbackName` is the same name prefixed with `🏆 ` (cut to 128 units including the prefix). The adapter calls `getForumTopicIconStickers()`, picks the sticker whose `emoji` equals the hint (U+FE0F stripped on both sides) and calls `createForumTopic` with `icon_custom_emoji_id`; bots may use these ids without Premium. The icon list is cached per isolate as a promise that is cleared on rejection. When there is no match, or the list call fails, the topic is created without an icon and named `fallbackName`; an icon failure never fails the creation. The domain never learns which variant won, so the port stays free of Telegram types. The General confirmation shows the plain sanitized name.
 
 ## Copy Table (spec strings are authoritative)
 

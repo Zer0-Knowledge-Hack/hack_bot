@@ -136,6 +136,9 @@ export interface Clock {
   now(): number;
 }
 
+// Delay seam: the domain owns no timers, the composition root injects one.
+export type Sleep = (ms: number) => Promise<void>;
+
 export interface IdGen {
   newId(): string;
 }
@@ -348,8 +351,16 @@ export type TopicCreateFailure =
 
 // ISP port: only the use case that creates topics sees topic rights.
 // `create` throws ForumTopicCreateError(failure).
+// Icon hint for a new topic. The adapter looks `iconEmoji` up in Telegram's
+// topic icon set; when it cannot apply the icon it names the topic
+// `fallbackName` instead of `name` (the domain never learns which one won).
+export interface TopicCreateOptions {
+  iconEmoji: string;
+  fallbackName: string;
+}
+
 export interface ForumTopicManager {
-  create(chatId: number, name: string): Promise<number>;
+  create(chatId: number, name: string, options?: TopicCreateOptions): Promise<number>;
 }
 
 // Semantic post options (hackathon-participation design.md decision 1): the

@@ -11,7 +11,7 @@ After a General-chat analysis, the team decides whether to join. Today an admin 
   - an inline "✅ Participamos" button on the General analysis post (`callback_data` `hp:<slug>`, at most 64 bytes);
   - `/hackathon join <slug>` as the fallback for old analyses that have no button.
 - Admins only. A non-admin tap gets a callback alert ("Only an admin can confirm participation"). The team is resolved from the chat id.
-- Topic name `🏆 <name>`:
+- Topic name `<name>` with 🏆 as the topic icon (a `🏆 ` name prefix only when the icon cannot be applied):
   - built from `fields.name.value`, falling back to the slug;
   - the name is untrusted page text, so strip control characters and collapse whitespace;
   - the result stays within 1–128 characters.

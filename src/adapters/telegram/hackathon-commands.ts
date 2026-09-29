@@ -14,6 +14,7 @@ import type {
   Logger,
   MemberRepo,
   MembershipRepo,
+  Sleep,
   TeamRepo,
 } from "../../domain/ports";
 import { linkAnalysisToTopic } from "../../domain/usecases/link-analysis-to-topic";
@@ -45,6 +46,7 @@ export interface HackathonCommandDeps {
   analysisJobRepo: AnalysisJobRepo;
   chatPublisher: ChatPublisher;
   forumTopicManager: ForumTopicManager;
+  sleep: Sleep;
   clock: Clock;
   idGen: IdGen;
   logger: Logger;

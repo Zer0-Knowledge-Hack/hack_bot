@@ -19,6 +19,7 @@ import {
   fakeIdGen,
   fakeMemberRepo,
   fakeForumTopicManager,
+  fakeSleep,
   fakeMembershipRepo,
   fakeProfileRepo,
   fakeRepoTopicLinkRepo,
@@ -115,6 +116,7 @@ function makeBot(
     analysisJobRepo,
     chatPublisher,
     forumTopicManager,
+    sleep: fakeSleep(),
     clock: fakeClock(),
     idGen: fakeIdGen(),
     logger: createSafeLogger(),
@@ -1477,7 +1479,9 @@ describe("registerCommands — /hackathon join <slug> (hackathon-participation s
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "join meridian" }));
 
-    expect(deps.forumTopicManager.created).toEqual([{ chatId: 10, name: "🏆 Hack meridian" }]);
+    expect(deps.forumTopicManager.created).toEqual([
+      { chatId: 10, name: "Hack meridian", iconEmoji: "🏆", fallbackName: "🏆 Hack meridian" },
+    ]);
     const threadId = deps.hackathonAnalysisRepo.rows[0]?.threadId;
     expect(threadId).toBe(1000);
     expect(deps.chatPublisher.posted).toMatchObject([
@@ -1661,7 +1665,9 @@ describe("registerCommands — hp:<slug> callback (hackathon-participation spec:
 
     await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian", { messageId: 4242 }));
 
-    expect(deps.forumTopicManager.created).toEqual([{ chatId: 10, name: "🏆 Hack meridian" }]);
+    expect(deps.forumTopicManager.created).toEqual([
+      { chatId: 10, name: "Hack meridian", iconEmoji: "🏆", fallbackName: "🏆 Hack meridian" },
+    ]);
     expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBe(1000);
     expect(deps.chatPublisher.posted.at(-1)).toMatchObject({
       chatId: 10,
@@ -1689,9 +1695,9 @@ describe("registerCommands — hp:<slug> callback (hackathon-participation spec:
     deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
     let answeredBeforeCreate = false;
     const create = deps.forumTopicManager.create;
-    deps.forumTopicManager.create = async (chatId, name) => {
+    deps.forumTopicManager.create = async (chatId, name, opts) => {
       answeredBeforeCreate = answers.length === 1;
-      return create(chatId, name);
+      return create(chatId, name, opts);
     };
 
     await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian"));

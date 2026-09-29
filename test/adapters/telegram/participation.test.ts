@@ -8,6 +8,7 @@ import {
   fakeChatPublisher,
   fakeClock,
   fakeForumTopicManager,
+  fakeSleep,
   fakeHackathonAnalysisRepo,
   fakeLogger,
   fakeMemberRepo,
@@ -66,6 +67,7 @@ function setup(opts: { role?: "admin" | "member"; create?: TopicCreateStep[]; se
     chatPublisher: fakeChatPublisher(),
     forumTopicManager: fakeForumTopicManager(opts.create ? { create: opts.create } : {}),
     clock: fakeClock(),
+    sleep: fakeSleep(),
     logger: fakeLogger(),
   };
   const replies: string[] = [];
