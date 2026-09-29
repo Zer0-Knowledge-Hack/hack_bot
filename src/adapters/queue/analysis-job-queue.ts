@@ -4,9 +4,10 @@ import type { AnalysisJobQueue } from "../../domain/ports";
 
 // Injected `send`: a minimal structural subset of the real Queue binding's
 // `send(message)` (design.md "Adapters": "Injected ... `send`"). The
-// concrete `env.HACKATHON_QUEUE` binding is wired in PR10.
+// concrete `env.HACKATHON_QUEUE` binding is wired in `buildBot`; its `send`
+// resolves with a response object that is deliberately ignored.
 export interface QueueSender {
-  send(message: AnalysisJobMessage): Promise<void>;
+  send(message: AnalysisJobMessage): Promise<unknown>;
 }
 
 // design.md "Error Taxonomy": any send failure becomes

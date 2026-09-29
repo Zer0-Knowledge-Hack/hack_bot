@@ -32,6 +32,8 @@ import type { CallerLocation } from "./context";
 import { runCommand } from "./command-outcome";
 import { InlineKeyboard } from "grammy";
 import { isPrivateChat, registerTeamPicker } from "./team-picker";
+import { registerHackathonCommands } from "./hackathon-commands";
+import type { HackathonCommandDeps } from "./hackathon-commands";
 
 // grammY is a thin edge adapter only: every handler below extracts caller
 // location, calls exactly one domain use case (or port read for a simple
@@ -51,7 +53,7 @@ import { isPrivateChat, registerTeamPicker } from "./team-picker";
 // detectable at the map literal instead of silently falling through to a
 // generic catch-all reply — that drift already happened twice to
 // /datachannel (see FIX-001).
-export interface CommandDeps {
+export interface CommandDeps extends HackathonCommandDeps {
   teamRepo: TeamRepo;
   memberRepo: MemberRepo;
   membershipRepo: MembershipRepo;
@@ -234,6 +236,7 @@ async function resolveLinkCommandTarget(
 
 export function registerCommands(bot: Bot, deps: CommandDeps): void {
   registerTeamPicker(bot, deps);
+  registerHackathonCommands(bot, deps);
   bot.command("setup", async (ctx) => {
     const loc = callerLocation(ctx);
     if (!loc) return;

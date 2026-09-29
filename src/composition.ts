@@ -6,6 +6,7 @@ import { createD1AnalysisJobRepo } from "./adapters/d1/analysis-job-repo";
 import { createD1AnalysisQuota } from "./adapters/d1/analysis-quota";
 import { createD1HackathonAnalysisRepo } from "./adapters/d1/hackathon-analysis-repo";
 import { createStaticFetcher } from "./adapters/http/safe-fetcher";
+import { createQueueAnalysisJobQueue } from "./adapters/queue/analysis-job-queue";
 import { createWorkersAiExtractor } from "./adapters/llm/workers-ai-extractor";
 import { createD1DmSelectionRepo } from "./adapters/d1/dm-selection-repo";
 import { createD1GithubOrgClaimRepo } from "./adapters/d1/github-org-claim-repo";
@@ -17,6 +18,7 @@ import { createD1TeamRepo } from "./adapters/d1/team-repo";
 import { createSafeLogger } from "./adapters/log/safe-logger";
 import { createTelegramAlertSender } from "./adapters/telegram/alert-sender";
 import { createBot } from "./adapters/telegram/bot";
+import { createTelegramChatPublisher } from "./adapters/telegram/chat-publisher";
 import { createChatAdminChecker } from "./adapters/telegram/chat-admin-checker";
 import { registerCommands } from "./adapters/telegram/commands";
 import { ConfigError } from "./config-error";
@@ -92,6 +94,11 @@ export function buildBot(env: Env) {
 
   const bot = createBot(env.BOT_TOKEN, parseBotInfo(env.BOT_INFO));
   const chatAdminChecker = createChatAdminChecker(bot.api);
+  // Producer side of the hackathon analysis (design.md "Config errors": no
+  // eager validation here — a missing queue surfaces as a
+  // QueueSendFailedError refusal on `/hackathon <url>` only, never as a
+  // broken bot).
+  const analysisJobQueue = createQueueAnalysisJobQueue(env.HACKATHON_QUEUE);
 
   registerCommands(bot, {
     teamRepo,
@@ -102,6 +109,11 @@ export function buildBot(env: Env) {
     chatAdminChecker,
     githubOrgClaimRepo,
     repoTopicLinkRepo,
+    hackathonAnalysisRepo: createD1HackathonAnalysisRepo(env.DB),
+    analysisQuota: createD1AnalysisQuota(env.DB),
+    analysisJobRepo: createD1AnalysisJobRepo(env.DB, clock),
+    analysisJobQueue,
+    chatPublisher: createTelegramChatPublisher(bot.api),
     clock,
     idGen,
     logger,
