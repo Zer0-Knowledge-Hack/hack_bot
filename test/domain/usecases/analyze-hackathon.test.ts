@@ -545,4 +545,29 @@ describe("analyzeHackathon: builds (does not persist) and suggests", () => {
     // Only the pre-seeded row exists — analyzeHackathon does not write.
     expect(deps.hackathonAnalysisRepo.rows).toHaveLength(1);
   });
+
+  // hackathon-participation: the SQL upsert never writes general_message_id, so
+  // the refreshed entity must carry the stored (non-null) id over.
+  it("keeps a non-null generalMessageId from the existing row on refresh", async () => {
+    const deps = makeDeps();
+    deps.hackathonAnalysisRepo.rows.push({
+      id: "existing-1",
+      teamId: TEAM_ID,
+      slug: "meridian",
+      sourceUrl: SOURCE_URL,
+      normalizedUrl: NORMALIZED_URL,
+      fields: {} as never,
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      generalMessageId: 321,
+      createdAt: 10,
+      updatedAt: 10,
+    });
+
+    const result = await analyzeHackathon(makeInput(), deps);
+
+    expect(result.id).toBe("existing-1");
+    expect(result.generalMessageId).toBe(321);
+  });
 });
