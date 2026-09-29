@@ -2,12 +2,20 @@ import { Bot } from "grammy";
 import type { CallbackQuery, Update } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
 import { registerCommands } from "../../../src/adapters/telegram/commands";
+import { registerHackathonCommands } from "../../../src/adapters/telegram/hackathon-commands";
+import type { HackathonAnalysis } from "../../../src/domain/entities";
+import type { TeamId } from "../../../src/domain/ids";
 import { createSafeLogger } from "../../../src/adapters/log/safe-logger";
 import {
+  fakeAnalysisJobQueue,
+  fakeAnalysisJobRepo,
+  fakeAnalysisQuota,
   fakeChatAdminChecker,
+  fakeChatPublisher,
   fakeClock,
   fakeDmSelectionRepo,
   fakeGithubOrgClaimRepo,
+  fakeHackathonAnalysisRepo,
   fakeIdGen,
   fakeMemberRepo,
   fakeMembershipRepo,
@@ -21,7 +29,15 @@ import {
 // transformer instead of hitting the network (mandatory point 7). This
 // exercises the actual production `registerCommands` wiring end-to-end —
 // only the network boundary is stubbed.
-function makeBot(admins: Array<{ chatId: number; userId: number }> = []) {
+interface HackathonFakeOptions {
+  quota?: "ok" | "busy" | "cap-reached";
+  queueThrows?: boolean;
+}
+
+function makeBot(
+  admins: Array<{ chatId: number; userId: number }> = [],
+  hackathon: HackathonFakeOptions = {},
+) {
   const bot = new Bot("000000000:TEST-TOKEN-NOT-REAL", {
     botInfo: {
       id: 1,
@@ -41,9 +57,13 @@ function makeBot(admins: Array<{ chatId: number; userId: number }> = []) {
   });
 
   const replies: Array<{ chatId: number; text: string }> = [];
+  // Every raw sendMessage payload, so plain-text (no parse_mode) can be
+  // asserted on the wire.
+  const payloads: Array<Record<string, unknown>> = [];
   bot.api.config.use((_prev, method, payload) => {
     if (method === "sendMessage") {
       const p = payload as { chat_id: number; text: string };
+      payloads.push(payload as Record<string, unknown>);
       replies.push({ chatId: p.chat_id, text: p.text });
       return Promise.resolve({
         ok: true,
@@ -61,6 +81,11 @@ function makeBot(admins: Array<{ chatId: number; userId: number }> = []) {
   const chatAdminChecker = fakeChatAdminChecker(admins);
   const githubOrgClaimRepo = fakeGithubOrgClaimRepo();
   const repoTopicLinkRepo = fakeRepoTopicLinkRepo();
+  const hackathonAnalysisRepo = fakeHackathonAnalysisRepo();
+  const analysisQuota = fakeAnalysisQuota({ result: hackathon.quota ?? "ok" });
+  const analysisJobQueue = fakeAnalysisJobQueue({ throws: hackathon.queueThrows ?? false });
+  const analysisJobRepo = fakeAnalysisJobRepo();
+  const chatPublisher = fakeChatPublisher();
   const deps = {
     teamRepo,
     memberRepo,
@@ -70,12 +95,21 @@ function makeBot(admins: Array<{ chatId: number; userId: number }> = []) {
     chatAdminChecker,
     githubOrgClaimRepo,
     repoTopicLinkRepo,
+    hackathonAnalysisRepo,
+    analysisQuota,
+    analysisJobQueue,
+    analysisJobRepo,
+    chatPublisher,
     clock: fakeClock(),
     idGen: fakeIdGen(),
     logger: createSafeLogger(),
   };
   registerCommands(bot, deps);
-  return { bot, replies, deps };
+  // /hackathon and /hackathons are not part of `registerCommands` yet: the
+  // live bot cannot supply their queue producer until the HACKATHON_QUEUE
+  // binding exists, so they are registered alongside it here.
+  registerHackathonCommands(bot, deps);
+  return { bot, replies, payloads, deps };
 }
 
 let nextUpdateId = 1;
@@ -858,5 +892,421 @@ describe("registerCommands — /repos (repo-topic-links spec)", () => {
     expect(text.endsWith(`...and ${total - includedLines} more`)).toBe(true);
     expect(includedLines).toBeLessThan(total);
     expect(includedLines).toBeGreaterThan(0);
+  });
+});
+
+// PR10 (hackathon-analysis spec) — /hackathon, /hackathons.
+const TEAM_ADMIN = { chatId: 10, userId: 1 };
+
+// A team in chat 10 with user 1 as its admin and user 3 as a plain member.
+async function hackathonTeam(hackathon: HackathonFakeOptions = {}) {
+  const ctx = makeBot([TEAM_ADMIN], hackathon);
+  await ctx.bot.handleUpdate(commandUpdate("setup", 10, 1));
+  await ctx.bot.handleUpdate(commandUpdate("join", 10, 3));
+  const teamId = ctx.deps.teamRepo.rows[0]!.id;
+  const baseReplies = ctx.replies.length;
+  return { ...ctx, teamId, baseReplies };
+}
+
+function storedAnalysis(
+  teamId: TeamId,
+  slug: string,
+  overrides: Partial<HackathonAnalysis> = {},
+): HackathonAnalysis {
+  return {
+    id: `analysis-${slug}`,
+    teamId,
+    slug,
+    sourceUrl: `https://example.com/${slug}`,
+    normalizedUrl: `https://example.com/${slug}`,
+    fields: {
+      name: { value: `Hack ${slug}`, snippet: "", confidence: 0.9 },
+      format: null,
+      location: null,
+      teamSize: null,
+      submissionDeadline: { value: "2026-11-01", snippet: "", confidence: 0.9 },
+      startDate: null,
+      endDate: null,
+      resultsDate: null,
+      prizes: null,
+      tracks: null,
+      eligibility: null,
+    },
+    suggestedRepos: [],
+    threadId: null,
+    pinnedMessageId: null,
+    createdAt: 0,
+    updatedAt: 0,
+    ...overrides,
+  };
+}
+
+describe("registerCommands — /hackathon <url> (hackathon-analysis spec: Admin-Only Fresh Analysis)", () => {
+  it("an admin in the general chat gets an immediate ack and a queued job", async () => {
+    const { bot, replies, baseReplies, deps, teamId } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "https://example.com/event" }));
+
+    expect(replies).toHaveLength(baseReplies + 1);
+    expect(replies.at(-1)?.text).toMatch(/^Analyzing example\.com/);
+    expect(deps.analysisQuota.reserved).toHaveLength(1);
+    expect(deps.analysisJobQueue.sent).toMatchObject([
+      { v: 1, teamId, chatId: 10, threadId: null, fetchUrl: "https://example.com/event" },
+    ]);
+  });
+
+  it("carries the topic id into the job when run inside a topic", async () => {
+    const { bot, deps } = await hackathonTeam();
+
+    await bot.handleUpdate(
+      commandUpdate("hackathon", 10, 1, { threadId: 77, args: "https://example.com/event" }),
+    );
+
+    expect(deps.analysisJobQueue.sent).toMatchObject([{ chatId: 10, threadId: 77 }]);
+  });
+
+  it("refuses a non-admin member without reserving a slot or enqueuing", async () => {
+    const { bot, replies, deps } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "https://example.com/event" }));
+
+    expect(replies.at(-1)?.text).toMatch(/only a team admin/i);
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+
+  it("refuses a caller who is not a team member", async () => {
+    const { bot, replies, deps } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 999, { args: "https://example.com/event" }));
+
+    expect(replies.at(-1)?.text).toMatch(/not a member/i);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+
+  it.each([
+    ["a loopback IP literal", "http://127.0.0.1/admin", "ip-literal"],
+    ["a non-http scheme", "ftp://example.com/event", "scheme"],
+    ["a private suffix", "https://wiki.internal/event", "private-suffix"],
+  ])("refuses %s at the producer and logs only a fixed reason", async (_label, url, reason) => {
+    const { bot, replies, deps } = await hackathonTeam();
+    const logSpy = vi.spyOn(deps.logger, "log");
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: url }));
+
+    expect(replies.at(-1)?.text).toBe("Only public http(s) pages can be analyzed.");
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "refused", errorCode: "UnsafeUrlError", reason: `unsafe-url:${reason}` }),
+    );
+    expect(JSON.stringify(logSpy.mock.calls)).not.toContain(url);
+  });
+
+  it("refuses a URL longer than the job row allows without reserving a slot", async () => {
+    const { bot, replies, deps } = await hackathonTeam();
+
+    await bot.handleUpdate(
+      commandUpdate("hackathon", 10, 1, { args: `https://example.com/${"a".repeat(2100)}` }),
+    );
+
+    expect(replies.at(-1)?.text).toMatch(/too long/i);
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+  });
+
+  it.each([
+    ["busy", /already running/i],
+    ["cap-reached", /daily limit/i],
+  ] as const)("replies with a clear refusal when the quota says %s and enqueues nothing", async (quota, expected) => {
+    const { bot, replies, deps } = await hackathonTeam({ quota });
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "https://example.com/event" }));
+
+    expect(replies.at(-1)?.text).toMatch(expected);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+
+  it("replies 'could not start' and refunds the slot when enqueuing fails", async () => {
+    const { bot, replies, deps } = await hackathonTeam({ queueThrows: true });
+    const logSpy = vi.spyOn(deps.logger, "log");
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "https://example.com/event" }));
+
+    expect(replies.at(-1)?.text).toMatch(/could not start the analysis/i);
+    expect(deps.analysisQuota.released).toMatchObject([{ refund: true }]);
+    expect(logSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: "QueueSendFailedError", reason: "queue:send-failed" }),
+    );
+  });
+
+  it("logs no line containing the URL or its host", async () => {
+    const { bot, deps } = await hackathonTeam();
+    const logSpy = vi.spyOn(deps.logger, "log");
+
+    await bot.handleUpdate(
+      commandUpdate("hackathon", 10, 1, { args: "https://secret-event.example.org/apply?token=abc" }),
+    );
+
+    expect(logSpy).toHaveBeenCalled();
+    const logged = JSON.stringify(logSpy.mock.calls);
+    expect(logged).not.toContain("secret-event");
+    expect(logged).not.toContain("token=abc");
+  });
+});
+
+describe("registerCommands — /hackathon <slug> (hackathon-analysis spec: Re-Show, One Analysis Per Topic)", () => {
+  it("any member re-shows a stored analysis in the general chat, free of cap and without posting or linking", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "meridian" }));
+
+    expect(replies.at(-1)?.text).toContain("Slug: meridian");
+    expect(replies.at(-1)?.text).toContain("Hack meridian");
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+    expect(deps.chatPublisher.posted).toHaveLength(0);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBeNull();
+  });
+
+  it("replies that no analysis exists for an unknown slug", async () => {
+    const { bot, replies } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "nope" }));
+
+    expect(replies.at(-1)?.text).toBe("No analysis with that slug. See /hackathons.");
+  });
+
+  it("an admin in a topic links and pins the analysis and acknowledges", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { threadId: 77, args: "meridian" }));
+
+    expect(deps.chatPublisher.posted).toMatchObject([{ chatId: 10, threadId: 77 }]);
+    expect(deps.chatPublisher.posted[0]?.text).toContain("Slug: meridian");
+    expect(deps.chatPublisher.pinned).toHaveLength(1);
+    expect(deps.hackathonAnalysisRepo.rows[0]).toMatchObject({ threadId: 77 });
+    // The pinned post IS the analysis; the ack must not send it a second time.
+    expect(replies.at(-1)?.text).toBe("Linked meridian to this topic.");
+  });
+
+  it("states in the ack that the topic's previous link was replaced", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(
+      storedAnalysis(teamId, "alpha", { threadId: 77, pinnedMessageId: 900 }),
+      storedAnalysis(teamId, "beta"),
+    );
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { threadId: 77, args: "beta" }));
+
+    expect(deps.chatPublisher.unpinned).toEqual([900]);
+    expect(replies.at(-1)?.text).toMatch(/replaced the topic's previous link \(was alpha\)/i);
+    expect(deps.hackathonAnalysisRepo.rows.find((r) => r.slug === "alpha")?.threadId).toBeNull();
+  });
+
+  it("states in the ack that pinning failed but the analysis was posted", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+    deps.chatPublisher.pin = async () => {
+      throw new Error("no pin rights");
+    };
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { threadId: 77, args: "meridian" }));
+
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(replies.at(-1)?.text).toMatch(/pinning failed/i);
+  });
+
+  it("a non-admin member in a topic only sees the analysis, without linking or posting", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { threadId: 77, args: "meridian" }));
+
+    expect(replies.at(-1)?.text).toContain("Slug: meridian");
+    expect(deps.chatPublisher.posted).toHaveLength(0);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBeNull();
+  });
+
+  it("an admin in the general chat only sees the analysis (linking needs a topic)", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "meridian" }));
+
+    expect(replies.at(-1)?.text).toContain("Slug: meridian");
+    expect(deps.chatPublisher.posted).toHaveLength(0);
+  });
+
+  it("does not treat a dotted argument as a slug", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "meridian.dev" }));
+
+    // "meridian.dev" is classified as a URL, which is not a public http(s)
+    // URL: nothing is looked up, reserved or enqueued.
+    expect(replies.at(-1)?.text).toBe("Only public http(s) pages can be analyzed.");
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+});
+
+describe("registerCommands — /hackathon with no argument (hackathon-analysis spec: No-Argument Behavior)", () => {
+  it("replies with the linked analysis inside a linked topic", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian", { threadId: 77 }));
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "other", { threadId: 78 }));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { threadId: 77 }));
+
+    expect(replies.at(-1)?.text).toContain("Slug: meridian");
+    expect(replies.at(-1)?.text).not.toContain("other");
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+  });
+
+  it("replies with usage inside a topic that has nothing linked", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "other", { threadId: 78 }));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { threadId: 77 }));
+
+    expect(replies.at(-1)?.text).toMatch(/^Usage: \/hackathon/);
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+
+  it("replies with usage in the general chat", async () => {
+    const { bot, replies, deps } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3));
+
+    expect(replies.at(-1)?.text).toMatch(/^Usage: \/hackathon/);
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+  });
+
+  it("replies with usage for an argument with several words", async () => {
+    const { bot, replies, deps } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "two words" }));
+
+    expect(replies.at(-1)?.text).toMatch(/^Usage: \/hackathon/);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+});
+
+describe("registerCommands — /hackathon outside the group and on infrastructure failure", () => {
+  it("tells a private-chat caller to use the team's group", async () => {
+    const { bot, replies, deps } = makeBot([TEAM_ADMIN]);
+    await bot.handleUpdate(commandUpdate("hackathon", 30, 30, { chatType: "private", args: "meridian" }));
+
+    expect(replies[0]?.text).toMatch(/inside your team's group/i);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+
+  it("rethrows an unexpected repository failure instead of replying 200 (RES-001)", async () => {
+    const { bot, deps } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.findBySlug = async () => {
+      throw new Error("D1 exploded");
+    };
+
+    await expect(
+      bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "meridian" })),
+    ).rejects.toThrow();
+  });
+});
+
+describe("registerCommands — /hackathons (hackathon-analysis spec: Listing Is Read-Only and Truncated)", () => {
+  it("lists slug, name, deadline and linked status for the team's analyses", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(
+      storedAnalysis(teamId, "meridian", { threadId: 77 }),
+      storedAnalysis(teamId, "orbit"),
+    );
+
+    await bot.handleUpdate(commandUpdate("hackathons", 10, 3));
+
+    expect(replies.at(-1)?.text).toBe(
+      ["meridian — Hack meridian — 2026-11-01 — linked", "orbit — Hack orbit — 2026-11-01 — not linked"].join("\n"),
+    );
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+  });
+
+  it("replies with the empty message when nothing was analyzed", async () => {
+    const { bot, replies } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathons", 10, 3));
+
+    expect(replies.at(-1)?.text).toBe("No hackathons analyzed yet.");
+  });
+
+  it("truncates within 4096 characters and ends with an '...and N more' note", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    const total = 200;
+    for (let i = 0; i < total; i++) {
+      deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, `event-${i}`));
+    }
+
+    await bot.handleUpdate(commandUpdate("hackathons", 10, 3));
+
+    const text = replies.at(-1)!.text;
+    expect(text.length).toBeLessThanOrEqual(4096);
+    const listed = text.split("\n").filter((line) => line.startsWith("event-")).length;
+    expect(listed).toBeGreaterThan(0);
+    expect(listed).toBeLessThan(total);
+    expect(text.endsWith(`...and ${total - listed} more`)).toBe(true);
+  });
+
+  it("only lists the caller's own team", async () => {
+    const { bot, replies, deps } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis("team-other" as TeamId, "foreign"));
+
+    await bot.handleUpdate(commandUpdate("hackathons", 10, 3));
+
+    expect(replies.at(-1)?.text).toBe("No hackathons analyzed yet.");
+  });
+
+  it("refuses a non-member", async () => {
+    const { bot, replies } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathons", 10, 999));
+
+    expect(replies.at(-1)?.text).toMatch(/not a member/i);
+  });
+
+  it("tells a private-chat caller to use the team's group", async () => {
+    const { bot, replies } = makeBot([TEAM_ADMIN]);
+
+    await bot.handleUpdate(commandUpdate("hackathons", 30, 30, { chatType: "private" }));
+
+    expect(replies[0]?.text).toMatch(/inside your team's group/i);
+  });
+});
+
+// spec hackathon-analysis "Plain Text Replies": every reply is plain text
+// (no parse_mode) and within Telegram's 4096-character limit.
+describe("registerCommands — /hackathon and /hackathons replies are plain text within 4096 characters", () => {
+  it("never sets parse_mode and never exceeds the limit, even for an oversized analysis", async () => {
+    const { bot, payloads, deps, teamId, baseReplies } = await hackathonTeam();
+    const oversized = storedAnalysis(teamId, "big");
+    oversized.fields = {
+      ...oversized.fields,
+      name: { value: "x".repeat(6000), snippet: "", confidence: 0.9 },
+    };
+    deps.hackathonAnalysisRepo.rows.push(oversized, storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "big" }));
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "meridian" }));
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "https://example.com/event" }));
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3));
+    await bot.handleUpdate(commandUpdate("hackathons", 10, 3));
+
+    const hackathonPayloads = payloads.slice(baseReplies);
+    expect(hackathonPayloads).toHaveLength(5);
+    for (const payload of hackathonPayloads) {
+      expect(payload).not.toHaveProperty("parse_mode");
+      expect((payload.text as string).length).toBeLessThanOrEqual(4096);
+    }
   });
 });
