@@ -1,0 +1,13 @@
+{
+  // Production-faithful harness for the hackathon analysis path. Dev-only:
+  // never deployed. No DB, queue or secrets; only the two remote bindings.
+  "name": "hack-bot-harness",
+  "main": "harness.ts",
+  // Same compatibility date and flags as the root wrangler.jsonc, so the
+  // real src modules behave as they do in production.
+  "compatibility_date": "2026-08-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "ai": { "binding": "AI" },
+  "browser": { "binding": "BROWSER" }
+}

@@ -29,7 +29,7 @@ import type {
 // design.md "Fallback policy": below this many chars of static text, the
 // rendered (browser) fetch is tried (spec page-fetch: "Browser Rendering
 // Fallback on Thin Static Text").
-const THIN_STATIC_TEXT_THRESHOLD = 800;
+export const THIN_STATIC_TEXT_THRESHOLD = 800;
 
 // spec page-fetch "Browser Rendering Quota Exhaustion Degrades or Fails
 // Based on Static Text Length": the floor above which a 429 degrades to
@@ -210,7 +210,7 @@ async function resolvePageText(
 // as null.
 const MAJORITY_REJECTED_THRESHOLD = Math.floor(FIELD_COUNT / 2);
 
-function isUsable(
+export function isUsable(
   result: ValidateExtractionResult,
 ): result is Extract<ValidateExtractionResult, { ok: true }> {
   return result.ok && result.rejectedCount <= MAJORITY_REJECTED_THRESHOLD;

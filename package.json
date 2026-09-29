@@ -9,7 +9,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "harness": "wrangler dev --remote --config scripts/hackathon-harness/wrangler.jsonc --port 8799"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "1.4.0",
