@@ -14,7 +14,7 @@ The system MUST allow only a team admin to run `/hackathon <url>`, in general ch
 
 - GIVEN the caller is a team admin and today's run count is below the cap
 - WHEN they run `/hackathon <url>` in the group's general chat
-- THEN the system immediately replies "Analyzing <host>…" and returns
+- THEN the system immediately replies "Analizando <host>… el resultado se publicará aquí." and returns
 - AND the queue consumer later fetches the page, extracts fields, and stores the analysis under a new slug
 - AND posts the analysis and its slug as a separate message, unpinned
 
@@ -22,7 +22,7 @@ The system MUST allow only a team admin to run `/hackathon <url>`, in general ch
 
 - GIVEN the caller is not a team admin
 - WHEN they run `/hackathon <url>`
-- THEN the system MUST refuse
+- THEN the system MUST refuse with "Solo un administrador del equipo puede analizar o vincular un hackathon."
 - AND MUST NOT fetch the page, call the LLM, or count against the cap
 
 ### Requirement: Any Member Re-Shows by Slug, Free of Cap
@@ -56,7 +56,7 @@ The system MUST show the linked topic's cached analysis when `/hackathon` is run
 
 - GIVEN the current topic (or general chat) has no linked analysis
 - WHEN a member runs `/hackathon` with no argument
-- THEN the system replies with usage instructions
+- THEN the system replies "Uso: /hackathon <url o slug>"
 - AND does not fetch, extract, or count against the cap
 
 ### Requirement: Argument Classified as Slug or URL
@@ -104,7 +104,7 @@ The system MUST treat a fresh analysis of the same normalized URL, for the same 
 - GIVEN an analysis already exists under a slug
 - WHEN a fresh run for the same URL fails (fetch or extraction failure)
 - THEN the system MUST keep the previously stored analysis unchanged
-- AND the queue consumer MUST post a clear failure message to the originating chat or topic
+- AND the queue consumer MUST post a Spanish failure message to the originating chat or topic, for example "La página tiene muy poco texto legible. Se conservó el análisis anterior."
 
 ### Requirement: One Analysis Per Topic, Conflicts Move the Link
 
@@ -115,6 +115,7 @@ The system MUST allow at most one linked analysis per topic (nullable `thread_id
 - GIVEN the topic has no linked analysis
 - WHEN an admin runs `/hackathon <slug>` inside that topic
 - THEN the system links and pins the analysis to the topic
+- AND a link-only reply reads "Se vinculó <slug> a este tema."
 
 #### Scenario: Topic already holds a different analysis
 
@@ -122,7 +123,7 @@ The system MUST allow at most one linked analysis per topic (nullable `thread_id
 - WHEN an admin runs `/hackathon beta` inside topic A
 - THEN the system unpins the old pinned message for `alpha`
 - AND links and pins `beta` to topic A
-- AND the reply states the topic's previous link was replaced
+- AND the reply states "Se reemplazó el vínculo anterior del tema (era alpha)."
 
 #### Scenario: Analysis already linked to another topic
 
@@ -130,7 +131,7 @@ The system MUST allow at most one linked analysis per topic (nullable `thread_id
 - WHEN an admin runs `/hackathon alpha` inside topic B
 - THEN the system unpins the old pinned message in topic A
 - AND links and pins `alpha` to topic B
-- AND the reply states the analysis moved from topic A to topic B
+- AND the reply states "Se movió el vínculo de este análisis desde otro tema."
 
 ### Requirement: Pin Failure Falls Back to Unpinned Posting
 
@@ -141,7 +142,7 @@ The system MUST still post the analysis when the bot lacks the "can pin messages
 - GIVEN the bot does not have "can pin messages" in the chat
 - WHEN an admin runs `/hackathon <slug>` inside a topic
 - THEN the system posts the analysis unpinned
-- AND the reply states that pinning failed
+- AND the reply states "No se pudo fijar el mensaje; se publicó sin fijar."
 
 ### Requirement: Daily Cap on Fresh Runs
 
@@ -151,7 +152,7 @@ The system MUST enforce a per-team daily cap of 5 fetch+LLM runs per UTC day, co
 
 - GIVEN the team has already run 5 fresh analyses in the current UTC day
 - WHEN an admin runs `/hackathon <url>` again
-- THEN the system MUST refuse with a clear cap-exceeded message
+- THEN the system MUST refuse with "Límite diario alcanzado (5 análisis nuevos por día UTC). Volver a mostrar un slug no cuenta."
 - AND MUST NOT reserve a slot, fetch the page, or call the LLM
 
 ### Requirement: Fresh Analysis Job Safety Under Concurrency and Delivery Faults
@@ -162,14 +163,14 @@ The system MUST refuse a second fresh analysis request for a team while one is a
 
 - GIVEN a fresh analysis job for the team is already queued or running
 - WHEN the same team runs `/hackathon <url>` again
-- THEN the system MUST refuse with a clear "already running" reply
+- THEN the system MUST refuse with "Ya hay un análisis en curso para este equipo. Espera su resultado."
 - AND MUST NOT consume a cap slot
 
 #### Scenario: Enqueue failure
 
 - GIVEN the cap slot and lease were reserved but enqueuing the job fails
 - WHEN `/hackathon <url>` is run
-- THEN the system MUST reply with a clear "could not start" message
+- THEN the system MUST reply "No se pudo iniciar el análisis; inténtalo de nuevo en un minuto. No se contó en el límite diario."
 - AND MUST refund the reserved slot so it is not counted against the daily cap
 
 #### Scenario: Duplicate delivery
@@ -184,8 +185,14 @@ The system MUST refuse a second fresh analysis request for a team while one is a
 
 - GIVEN a job fails with a transient error on every attempt up to the retry limit
 - WHEN the final attempt also fails
-- THEN the system MUST post a clear failure reply to the originating chat or topic
+- THEN the system MUST post "El análisis falló por un error temporal. Inténtalo de nuevo más tarde." to the originating chat or topic
 - AND MUST keep any previously stored analysis unchanged
+
+#### Scenario: Fetch failure keeps the prior result
+
+- GIVEN a fresh run fails to read the page with fetch kind `timeout`
+- WHEN the consumer posts the failure
+- THEN the reply is "No se pudo leer esa página (tiempo de espera agotado). Se conservó el análisis anterior."
 
 ### Requirement: Listing Is Read-Only and Truncated
 
@@ -195,14 +202,14 @@ The system MUST let any registered member run `/hackathons` to list slug, name, 
 
 - GIVEN the team has several stored analyses
 - WHEN a member runs `/hackathons`
-- THEN the reply lists each analysis's slug, name, key deadline, and linked status
+- THEN the reply lists each analysis's slug, name, key deadline, and linked status with Spanish labels
 - AND the reply is at most 4096 characters
 
 #### Scenario: Listing exceeds the limit
 
 - GIVEN the team has enough stored analyses that the full listing would exceed 4096 characters
 - WHEN a member runs `/hackathons`
-- THEN the system truncates the reply and appends an "...and N more" note
+- THEN the system truncates the reply and appends a "…y N más" line
 - AND the reply remains at most 4096 characters
 
 ### Requirement: Plain Text Replies
