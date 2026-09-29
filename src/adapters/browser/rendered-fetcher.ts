@@ -1,7 +1,7 @@
 import { BrowserQuotaExceededError, PageFetchFailedError, UnsafeUrlError } from "../../domain/errors";
 import { assertSafeUrl } from "../../domain/hackathon/url";
 import type { PageFetcher } from "../../domain/ports";
-import { TEXT_MAX } from "../http/html-to-text";
+import { normalizePageText, TEXT_MAX } from "../http/html-to-text";
 
 // Browser (Cloudflare Browser Rendering / @cloudflare/puppeteer) page fetch
 // for JS-heavy pages the static fetcher's text falls short on (design.md
@@ -176,7 +176,7 @@ export function createRenderedFetcher(options: RenderedFetcherOptions): PageFetc
           }
           throw new PageFetchFailedError("rendered page text extraction failed", "network");
         }
-        return innerText.slice(0, TEXT_MAX);
+        return normalizePageText(innerText).slice(0, TEXT_MAX);
       } finally {
         // Always released, even on refusal/timeout/quota (design.md "calls
         // browser.close() in finally"). A failing close must not replace the

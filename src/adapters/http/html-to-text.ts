@@ -29,6 +29,23 @@ const NOISE_TAGS = [
 const LD_JSON_MAX = 4_000; // design.md: "ld+json (up to 4 KB)"
 export const TEXT_MAX = 22_000; // design.md: "capped at 22,000 chars"
 
+// Normalizes page text before it reaches the LLM. Rendered `innerText`
+// separates table cells with TAB characters; models copy snippets containing
+// raw TABs into JSON string literals, which JSON.parse rejects ("Bad control
+// character in string literal"). So every ASCII control character except
+// "\n" (TAB, CR, NUL, ...) becomes a space, runs of spaces collapse within a
+// line, lines are trimmed, and 3+ consecutive newlines collapse to a single
+// blank line. Paragraph breaks ("\n\n") are kept.
+export function normalizePageText(text: string): string {
+  return text
+    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, " ")
+    .split("\n")
+    .map((line) => line.replace(/ {2,}/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function htmlToText(response: Response): Promise<string> {
   let title = "";
   let metaDescription = "";
@@ -110,5 +127,5 @@ export async function htmlToText(response: Response): Promise<string> {
   const visibleText = body.join("").replace(/\s+/g, " ").trim();
   if (visibleText) parts.push(visibleText);
 
-  return parts.join("\n\n").slice(0, TEXT_MAX);
+  return normalizePageText(parts.join("\n\n")).slice(0, TEXT_MAX);
 }

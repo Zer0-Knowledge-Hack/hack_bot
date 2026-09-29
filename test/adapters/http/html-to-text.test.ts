@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { htmlToText, TEXT_MAX } from "../../../src/adapters/http/html-to-text";
+import { htmlToText, normalizePageText, TEXT_MAX } from "../../../src/adapters/http/html-to-text";
 
 // task 6.3 (design.md "HTMLRewriter drops noise elements and keeps the
 // title, the meta and OG description and ld+json (up to 4 KB). The text is
@@ -94,5 +94,30 @@ describe("htmlToText", () => {
     const text = await htmlToText(htmlResponse(html));
 
     expect(text.length).toBeLessThanOrEqual(TEXT_MAX);
+  });
+
+  it("removes tabs and control characters from the static output", async () => {
+    const ld = '{"@type":"Event",\t"name":"Hack\u0007Night"}';
+    const html = `<html><body><script type="application/ld+json">${ld}</script><p>Body copy.</p></body></html>`;
+
+    const text = await htmlToText(htmlResponse(html));
+
+    expect(text).not.toMatch(/[\t\u0000-\u0008\u000B-\u001F\u007F]/);
+    expect(text).toContain("Body copy.");
+  });
+});
+
+describe("normalizePageText", () => {
+  it("replaces tabs from table-like innerText with single spaces and keeps newlines", () => {
+    const raw = "Prizes\n\n1st place\t$5,000\t\tCash\n2nd place\t$2,000";
+    expect(normalizePageText(raw)).toBe("Prizes\n\n1st place $5,000 Cash\n2nd place $2,000");
+  });
+
+  it("replaces other ASCII control characters and CR, collapses space runs, trims lines", () => {
+    expect(normalizePageText("a\u0000b\u001Fc\r\n  d   e \u007F f  ")).toBe("a b c\nd e f");
+  });
+
+  it("keeps paragraph breaks but collapses runs of 3+ blank lines to one blank line", () => {
+    expect(normalizePageText("one\n\n\n\n\ntwo\n\nthree")).toBe("one\n\ntwo\n\nthree");
   });
 });

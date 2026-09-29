@@ -6,6 +6,7 @@ import {
   type BrowserPage,
   type InterceptedRequest,
 } from "../../../src/adapters/browser/rendered-fetcher";
+import { TEXT_MAX } from "../../../src/adapters/http/html-to-text";
 import { BrowserQuotaExceededError, PageFetchFailedError, UnsafeUrlError } from "../../../src/domain/errors";
 
 // task 7.1 (page-fetch spec: "Same Guard Applies to the Browser Fallback",
@@ -147,6 +148,25 @@ describe("createRenderedFetcher", () => {
 
     expect(text).toBe("hello from the browser");
     expect(isClosed()).toBe(true);
+  });
+
+  it("returns inner text from a table with tabs without any tab characters", async () => {
+    const { browser } = fakeBrowser({ innerText: "Prize\tAmount\n1st\t$5,000\n2nd\t\t$2,000" });
+    const fetcher = createRenderedFetcher({ launch: async () => browser, binding: {} });
+
+    const text = await fetcher.fetch("https://example.com/event", new AbortController().signal);
+
+    expect(text).toBe("Prize Amount\n1st $5,000\n2nd $2,000");
+  });
+
+  it("still caps normalized rendered text at TEXT_MAX", async () => {
+    const { browser } = fakeBrowser({ innerText: "word\t".repeat(10_000) });
+    const fetcher = createRenderedFetcher({ launch: async () => browser, binding: {} });
+
+    const text = await fetcher.fetch("https://example.com/event", new AbortController().signal);
+
+    expect(text.length).toBeLessThanOrEqual(TEXT_MAX);
+    expect(text).not.toContain("\t");
   });
 
   it("refuses the initial URL before launching the browser (spec: Same Guard Applies to the Browser Fallback)", async () => {
