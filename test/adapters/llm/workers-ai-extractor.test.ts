@@ -284,7 +284,7 @@ describe("createWorkersAiExtractor", () => {
     ])("returns null (never throws) for %s so validateExtraction rejects it", async (_n, raw) => {
       const out = await extractWith(raw);
       expect(out).toBeNull();
-      expect(validateExtraction(out).ok).toBe(false);
+      expect(validateExtraction(out, PAGE_TEXT).ok).toBe(false);
     });
 
     it("never uses reasoning_content as the answer", async () => {
