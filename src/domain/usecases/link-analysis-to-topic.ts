@@ -23,6 +23,11 @@ export interface LinkAnalysisToTopicDeps {
 
 export interface LinkAnalysisToTopicResult {
   replyText: string;
+  // The link's outcome lines alone (replaced/moved link, pin failure). The
+  // analysis itself was already posted (and pinned) through the publisher, so
+  // a synchronous caller acknowledges with these instead of re-sending
+  // `replyText`, which would duplicate the analysis in the topic.
+  notes: string[];
 }
 
 // spec hackathon-analysis "One Analysis Per Topic, Conflicts Move the
@@ -142,7 +147,7 @@ export async function postAnalysisAndLinkTopic(
   // READ-001: the notes must never push the reply over REPLY_MAX — reserve
   // room for them and truncate the analysis body, never the notes.
   const replyText = notes.length > 0 ? withNotes(text, notes) : text;
-  return { replyText };
+  return { replyText, notes };
 }
 
 // READ-001: joins the analysis body with its notes, truncating only the
