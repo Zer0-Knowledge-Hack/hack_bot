@@ -23,6 +23,27 @@ export function callerLocation(ctx: Context): CallerLocation | null {
   };
 }
 
+// A callback-query variant of `callerLocation`: the chat and topic are those of
+// the message that carried the tapped button (`ctx.msg`), and the user is the
+// one who tapped. `callerLocation` is unchanged so commands never widen to
+// edited or channel messages.
+export interface CallbackLocation extends CallerLocation {
+  // The message carrying the button, or null when Telegram did not send it.
+  messageId: number | null;
+}
+
+export function callbackCallerLocation(ctx: Context): CallbackLocation | null {
+  const chatId = ctx.chat?.id;
+  const userId = ctx.from?.id;
+  if (chatId === undefined || userId === undefined) return null;
+  return {
+    chatId,
+    userId,
+    threadId: ctx.msg?.message_thread_id ?? null,
+    messageId: ctx.callbackQuery?.message?.message_id ?? null,
+  };
+}
+
 // Resolves a Telegram (chatId, userId) pair to this team's existing
 // membership, used by group commands that need the caller's own
 // membership (e.g. /datachannel's admin check) before delegating to a use
