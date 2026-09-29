@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import worker, { createQueueHandler } from "../src/index";
 import type { Env } from "../src/index";
 import { ConfigError } from "../src/config-error";
@@ -323,6 +323,32 @@ describe("default export", () => {
   it("exposes both fetch and queue handlers", () => {
     expect(typeof worker.fetch).toBe("function");
     expect(typeof worker.queue).toBe("function");
+  });
+
+  // PR10: the production handler is fully wired (real Telegram publisher and
+  // puppeteer launch built from the env), so a configured env no longer fails
+  // closed with a ConfigError. The job row is unknown, so the real D1 claim
+  // says "missing" and the message is acked (a completed no-op).
+  it("runs a valid message through the fully wired production handler without a ConfigError", async () => {
+    const logs: string[] = [];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation((line) => {
+      logs.push(String(line));
+    });
+    const msg = fakeMessage(validBody({ jobId: "job-unknown-to-d1" }));
+
+    await worker.queue(
+      { messages: [msg] } as never,
+      {
+        ...env,
+        HACKATHON_MODEL_PRIMARY: "@cf/vendor/primary",
+        HACKATHON_MODEL_FALLBACK: "@cf/vendor/fallback",
+      } as unknown as Env,
+    );
+    consoleSpy.mockRestore();
+
+    expect(msg.retries).toEqual([]);
+    expect(msg.acked).toBe(1);
+    expect(logs.join("\n")).not.toContain("ConfigError");
   });
 
   it("acks a malformed message through the real default queue handler", async () => {

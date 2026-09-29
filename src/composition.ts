@@ -1,6 +1,7 @@
 import { Api } from "grammy";
 import { createAesGcmCipher } from "./adapters/crypto/aes-gcm-cipher";
 import { parseKeyRing } from "./adapters/crypto/key-ring";
+import { launchPuppeteerBrowser } from "./adapters/browser/puppeteer-launch";
 import { createRenderedFetcher, type BrowserLaunch } from "./adapters/browser/rendered-fetcher";
 import { createD1AnalysisJobRepo } from "./adapters/d1/analysis-job-repo";
 import { createD1AnalysisQuota } from "./adapters/d1/analysis-quota";
@@ -136,10 +137,8 @@ export function buildGithubRouter(env: Env): RouteGithubEventDeps {
   };
 }
 
-// Ports whose concrete adapters land in PR10 (task 10.1 Telegram
-// `ChatPublisher`, and the `@cloudflare/puppeteer` `launch` from task
-// 10.4). They are injected so this composition stays complete and typed
-// today without pulling PR10 scope in.
+// Test seams: the production defaults are the real Telegram publisher and
+// the @cloudflare/puppeteer launch; a test may replace either.
 export interface HackathonConsumerAdapters {
   chatPublisher: ChatPublisher;
   launchBrowser: BrowserLaunch;
@@ -147,20 +146,17 @@ export interface HackathonConsumerAdapters {
 
 // design.md "File Changes": no `Bot` and no `PII_KEYRING` on the consumer
 // path — a broken keyring must not stop analyses, and this path never
-// touches PII fields (mirrors `buildGithubRouter`). Fails closed with a
-// ConfigError when the models or the PR10 adapters are missing, so the
-// queue handler retries instead of running half-wired.
+// touches PII fields (mirrors `buildGithubRouter`: `new Api(BOT_TOKEN)`).
+// Fails closed with a ConfigError when the models are unset, so the queue
+// handler retries instead of running half-configured.
 export function buildHackathonConsumer(
   env: Env,
-  adapters?: HackathonConsumerAdapters,
+  adapters: Partial<HackathonConsumerAdapters> = {},
 ): RunHackathonJobDeps {
   const primaryModel = env.HACKATHON_MODEL_PRIMARY?.trim();
   const fallbackModel = env.HACKATHON_MODEL_FALLBACK?.trim();
   if (!primaryModel || !fallbackModel) {
     throw new ConfigError("HACKATHON_MODEL_PRIMARY and HACKATHON_MODEL_FALLBACK must be set");
-  }
-  if (!adapters) {
-    throw new ConfigError("Hackathon chat publisher and browser launcher are not wired");
   }
 
   return {
@@ -170,13 +166,13 @@ export function buildHackathonConsumer(
     repoTopicLinkRepo: createD1RepoTopicLinkRepo(env.DB),
     staticFetcher: createStaticFetcher({ fetch: (input, init) => fetch(input, init) }),
     renderedFetcher: createRenderedFetcher({
-      launch: adapters.launchBrowser,
+      launch: adapters.launchBrowser ?? launchPuppeteerBrowser,
       binding: env.BROWSER,
     }),
     llmExtractor: createWorkersAiExtractor({
       run: (model, inputs, options) => env.AI.run(model, inputs, options),
     }),
-    chatPublisher: adapters.chatPublisher,
+    chatPublisher: adapters.chatPublisher ?? createTelegramChatPublisher(new Api(env.BOT_TOKEN)),
     clock,
     idGen,
     logger: createSafeLogger(),
