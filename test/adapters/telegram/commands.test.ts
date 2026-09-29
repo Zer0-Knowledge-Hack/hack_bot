@@ -943,7 +943,7 @@ describe("registerCommands — /hackathon <url> (hackathon-analysis spec: Admin-
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "https://example.com/event" }));
 
     expect(replies).toHaveLength(baseReplies + 1);
-    expect(replies.at(-1)?.text).toMatch(/^Analyzing example\.com/);
+    expect(replies.at(-1)?.text).toBe("Analizando example.com… el resultado se publicará aquí.");
     expect(deps.analysisQuota.reserved).toHaveLength(1);
     expect(deps.analysisJobQueue.sent).toMatchObject([
       { v: 1, teamId, chatId: 10, threadId: null, fetchUrl: "https://example.com/event" },
@@ -965,7 +965,9 @@ describe("registerCommands — /hackathon <url> (hackathon-analysis spec: Admin-
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "https://example.com/event" }));
 
-    expect(replies.at(-1)?.text).toMatch(/only a team admin/i);
+    expect(replies.at(-1)?.text).toBe(
+      "Solo un administrador del equipo puede analizar o vincular un hackathon.",
+    );
     expect(deps.analysisQuota.reserved).toHaveLength(0);
     expect(deps.analysisJobQueue.sent).toHaveLength(0);
   });
@@ -975,7 +977,7 @@ describe("registerCommands — /hackathon <url> (hackathon-analysis spec: Admin-
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 999, { args: "https://example.com/event" }));
 
-    expect(replies.at(-1)?.text).toMatch(/not a member/i);
+    expect(replies.at(-1)?.text).toBe("No eres miembro de este equipo.");
     expect(deps.analysisJobQueue.sent).toHaveLength(0);
   });
 
@@ -989,7 +991,7 @@ describe("registerCommands — /hackathon <url> (hackathon-analysis spec: Admin-
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: url }));
 
-    expect(replies.at(-1)?.text).toBe("Only public http(s) pages can be analyzed.");
+    expect(replies.at(-1)?.text).toBe("Solo se pueden analizar páginas públicas http(s).");
     expect(deps.analysisQuota.reserved).toHaveLength(0);
     expect(deps.analysisJobQueue.sent).toHaveLength(0);
     expect(logSpy).toHaveBeenCalledWith(
@@ -1005,29 +1007,34 @@ describe("registerCommands — /hackathon <url> (hackathon-analysis spec: Admin-
       commandUpdate("hackathon", 10, 1, { args: `https://example.com/${"a".repeat(2100)}` }),
     );
 
-    expect(replies.at(-1)?.text).toMatch(/too long/i);
+    expect(replies.at(-1)?.text).toBe("Esa URL es demasiado larga (máximo 2048 caracteres).");
     expect(deps.analysisQuota.reserved).toHaveLength(0);
   });
 
   it.each([
-    ["busy", /already running/i],
-    ["cap-reached", /daily limit/i],
+    ["busy", "Ya hay un análisis en curso para este equipo. Espera su resultado."],
+    [
+      "cap-reached",
+      "Límite diario alcanzado (5 análisis nuevos por día UTC). Volver a mostrar un slug no cuenta.",
+    ],
   ] as const)("replies with a clear refusal when the quota says %s and enqueues nothing", async (quota, expected) => {
     const { bot, replies, deps } = await hackathonTeam({ quota });
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "https://example.com/event" }));
 
-    expect(replies.at(-1)?.text).toMatch(expected);
+    expect(replies.at(-1)?.text).toBe(expected);
     expect(deps.analysisJobQueue.sent).toHaveLength(0);
   });
 
-  it("replies 'could not start' and refunds the slot when enqueuing fails", async () => {
+  it("replies 'no se pudo iniciar' and refunds the slot when enqueuing fails", async () => {
     const { bot, replies, deps } = await hackathonTeam({ queueThrows: true });
     const logSpy = vi.spyOn(deps.logger, "log");
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "https://example.com/event" }));
 
-    expect(replies.at(-1)?.text).toMatch(/could not start the analysis/i);
+    expect(replies.at(-1)?.text).toBe(
+      "No se pudo iniciar el análisis; inténtalo de nuevo en un minuto. No se contó en el límite diario.",
+    );
     expect(deps.analysisQuota.released).toMatchObject([{ refund: true }]);
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ errorCode: "QueueSendFailedError", reason: "queue:send-failed" }),
@@ -1069,7 +1076,7 @@ describe("registerCommands — /hackathon <slug> (hackathon-analysis spec: Re-Sh
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "nope" }));
 
-    expect(replies.at(-1)?.text).toBe("No analysis with that slug. See /hackathons.");
+    expect(replies.at(-1)?.text).toBe("No hay ningún análisis con ese slug. Consulta /hackathons.");
   });
 
   it("an admin in a topic links and pins the analysis and acknowledges", async () => {
@@ -1083,7 +1090,7 @@ describe("registerCommands — /hackathon <slug> (hackathon-analysis spec: Re-Sh
     expect(deps.chatPublisher.pinned).toHaveLength(1);
     expect(deps.hackathonAnalysisRepo.rows[0]).toMatchObject({ threadId: 77 });
     // The pinned post IS the analysis; the ack must not send it a second time.
-    expect(replies.at(-1)?.text).toBe("Linked meridian to this topic.");
+    expect(replies.at(-1)?.text).toBe("Se vinculó meridian a este tema.");
   });
 
   it("states in the ack that the topic's previous link was replaced", async () => {
@@ -1096,7 +1103,7 @@ describe("registerCommands — /hackathon <slug> (hackathon-analysis spec: Re-Sh
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { threadId: 77, args: "beta" }));
 
     expect(deps.chatPublisher.unpinned).toEqual([900]);
-    expect(replies.at(-1)?.text).toMatch(/replaced the topic's previous link \(was alpha\)/i);
+    expect(replies.at(-1)?.text).toBe("Se reemplazó el vínculo anterior del tema (era alpha).");
     expect(deps.hackathonAnalysisRepo.rows.find((r) => r.slug === "alpha")?.threadId).toBeNull();
   });
 
@@ -1110,7 +1117,7 @@ describe("registerCommands — /hackathon <slug> (hackathon-analysis spec: Re-Sh
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { threadId: 77, args: "meridian" }));
 
     expect(deps.chatPublisher.posted).toHaveLength(1);
-    expect(replies.at(-1)?.text).toMatch(/pinning failed/i);
+    expect(replies.at(-1)?.text).toBe("No se pudo fijar el mensaje; se publicó sin fijar.");
   });
 
   it("a non-admin member in a topic only sees the analysis, without linking or posting", async () => {
@@ -1142,7 +1149,7 @@ describe("registerCommands — /hackathon <slug> (hackathon-analysis spec: Re-Sh
 
     // "meridian.dev" is classified as a URL, which is not a public http(s)
     // URL: nothing is looked up, reserved or enqueued.
-    expect(replies.at(-1)?.text).toBe("Only public http(s) pages can be analyzed.");
+    expect(replies.at(-1)?.text).toBe("Solo se pueden analizar páginas públicas http(s).");
     expect(deps.analysisQuota.reserved).toHaveLength(0);
     expect(deps.analysisJobQueue.sent).toHaveLength(0);
   });
@@ -1167,7 +1174,7 @@ describe("registerCommands — /hackathon with no argument (hackathon-analysis s
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { threadId: 77 }));
 
-    expect(replies.at(-1)?.text).toMatch(/^Usage: \/hackathon/);
+    expect(replies.at(-1)?.text).toBe("Uso: /hackathon <url o slug>");
     expect(deps.analysisQuota.reserved).toHaveLength(0);
     expect(deps.analysisJobQueue.sent).toHaveLength(0);
   });
@@ -1177,7 +1184,7 @@ describe("registerCommands — /hackathon with no argument (hackathon-analysis s
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 3));
 
-    expect(replies.at(-1)?.text).toMatch(/^Usage: \/hackathon/);
+    expect(replies.at(-1)?.text).toBe("Uso: /hackathon <url o slug>");
     expect(deps.analysisQuota.reserved).toHaveLength(0);
   });
 
@@ -1186,7 +1193,7 @@ describe("registerCommands — /hackathon with no argument (hackathon-analysis s
 
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "two words" }));
 
-    expect(replies.at(-1)?.text).toMatch(/^Usage: \/hackathon/);
+    expect(replies.at(-1)?.text).toBe("Uso: /hackathon <url o slug>");
     expect(deps.analysisJobQueue.sent).toHaveLength(0);
   });
 });
@@ -1196,7 +1203,7 @@ describe("registerCommands — /hackathon outside the group and on infrastructur
     const { bot, replies, deps } = makeBot([TEAM_ADMIN]);
     await bot.handleUpdate(commandUpdate("hackathon", 30, 30, { chatType: "private", args: "meridian" }));
 
-    expect(replies[0]?.text).toMatch(/inside your team's group/i);
+    expect(replies[0]?.text).toBe("Ejecuta este comando dentro del chat grupal de tu equipo.");
     expect(deps.analysisJobQueue.sent).toHaveLength(0);
   });
 
@@ -1223,7 +1230,10 @@ describe("registerCommands — /hackathons (hackathon-analysis spec: Listing Is 
     await bot.handleUpdate(commandUpdate("hackathons", 10, 3));
 
     expect(replies.at(-1)?.text).toBe(
-      ["meridian — Hack meridian — 2026-11-01 — linked", "orbit — Hack orbit — 2026-11-01 — not linked"].join("\n"),
+      [
+        "meridian — Hack meridian — 2026-11-01 — vinculado",
+        "orbit — Hack orbit — 2026-11-01 — no vinculado",
+      ].join("\n"),
     );
     expect(deps.analysisQuota.reserved).toHaveLength(0);
   });
@@ -1233,10 +1243,10 @@ describe("registerCommands — /hackathons (hackathon-analysis spec: Listing Is 
 
     await bot.handleUpdate(commandUpdate("hackathons", 10, 3));
 
-    expect(replies.at(-1)?.text).toBe("No hackathons analyzed yet.");
+    expect(replies.at(-1)?.text).toBe("Todavía no se ha analizado ningún hackathon.");
   });
 
-  it("truncates within 4096 characters and ends with an '...and N more' note", async () => {
+  it("truncates within 4096 characters and ends with a '…y N más' note", async () => {
     const { bot, replies, deps, teamId } = await hackathonTeam();
     const total = 200;
     for (let i = 0; i < total; i++) {
@@ -1250,7 +1260,7 @@ describe("registerCommands — /hackathons (hackathon-analysis spec: Listing Is 
     const listed = text.split("\n").filter((line) => line.startsWith("event-")).length;
     expect(listed).toBeGreaterThan(0);
     expect(listed).toBeLessThan(total);
-    expect(text.endsWith(`...and ${total - listed} more`)).toBe(true);
+    expect(text.endsWith(`…y ${total - listed} más`)).toBe(true);
   });
 
   it("only lists the caller's own team", async () => {
@@ -1259,7 +1269,7 @@ describe("registerCommands — /hackathons (hackathon-analysis spec: Listing Is 
 
     await bot.handleUpdate(commandUpdate("hackathons", 10, 3));
 
-    expect(replies.at(-1)?.text).toBe("No hackathons analyzed yet.");
+    expect(replies.at(-1)?.text).toBe("Todavía no se ha analizado ningún hackathon.");
   });
 
   it("refuses a non-member", async () => {
@@ -1267,7 +1277,7 @@ describe("registerCommands — /hackathons (hackathon-analysis spec: Listing Is 
 
     await bot.handleUpdate(commandUpdate("hackathons", 10, 999));
 
-    expect(replies.at(-1)?.text).toMatch(/not a member/i);
+    expect(replies.at(-1)?.text).toBe("No eres miembro de este equipo.");
   });
 
   it("tells a private-chat caller to use the team's group", async () => {
@@ -1275,7 +1285,7 @@ describe("registerCommands — /hackathons (hackathon-analysis spec: Listing Is 
 
     await bot.handleUpdate(commandUpdate("hackathons", 30, 30, { chatType: "private" }));
 
-    expect(replies[0]?.text).toMatch(/inside your team's group/i);
+    expect(replies[0]?.text).toBe("Ejecuta este comando dentro del chat grupal de tu equipo.");
   });
 });
 
