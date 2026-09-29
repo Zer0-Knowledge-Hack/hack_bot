@@ -270,7 +270,7 @@ export interface HackathonAnalysisRepo {
   // hackathon-participation (design.md decision 3): compare-and-set claim on
   // topic creation. Wins only when the row still holds `expectedThreadId`
   // (null, or the stale id observed by the probe) and no live claim exists
-  // (`topic_claim_until < now`); a win stamps `now + ttlMs`. Returns false
+  // (`topic_claim_until <= now`); a win stamps `now + ttlMs`. Returns false
   // when the claim is lost.
   claimTopicCreation(
     teamId: TeamId,
@@ -337,9 +337,6 @@ export interface RepoMetadataSource {
   fetchDescription(repo: RepoFullName): Promise<string | null>;
 }
 
-// design.md "Interfaces / Contracts". `post` returns the new message id
-// (needed to `pin`/`unpin` it later) and throws PublishFailedError on
-// failure, mirroring AlertSender.
 // hackathon-participation (design.md "Interfaces / Contracts"). `probe` never
 // throws; `unknown` (any ambiguous result) must be treated as live so a
 // topic is never recreated on ambiguity.
@@ -366,6 +363,9 @@ export interface PostOptions {
   participateSlug?: string;
 }
 
+// design.md "Interfaces / Contracts". `post` returns the new message id
+// (needed to `pin`/`unpin` it later) and throws PublishFailedError on
+// failure, mirroring AlertSender.
 export interface ChatPublisher {
   post(
     chatId: number,
