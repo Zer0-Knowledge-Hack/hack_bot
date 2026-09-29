@@ -10,7 +10,6 @@ import {
 } from "../../../src/domain/errors";
 import type { HackathonAnalysis } from "../../../src/domain/entities";
 import { asMemberId, asMembershipId, asTeamId } from "../../../src/domain/ids";
-import type { TopicProbe } from "../../../src/domain/ports";
 import { participateInHackathon } from "../../../src/domain/usecases/participate-in-hackathon";
 import {
   fakeChatPublisher,
@@ -61,7 +60,6 @@ function analysis(overrides: Partial<HackathonAnalysis> = {}): HackathonAnalysis
 function setup(
   opts: {
     row?: Partial<HackathonAnalysis>;
-    probe?: TopicProbe[];
     create?: TopicCreateStep[];
     role?: "admin" | "member";
   } = {},
@@ -82,7 +80,6 @@ function setup(
     hackathonAnalysisRepo,
     chatPublisher: fakeChatPublisher(),
     forumTopicManager: fakeForumTopicManager({
-      ...(opts.probe ? { probe: opts.probe } : {}),
       ...(opts.create ? { create: opts.create } : {}),
     }),
     clock: fakeClock(),
@@ -98,6 +95,15 @@ const input = (over: Partial<{ callbackMessageId: number | null; slug: string; c
   callbackMessageId: null,
   ...over,
 });
+
+// The user deleted the topic: Telegram rejects (4xx) a post into that thread.
+function rejectPostsTo(deps: ReturnType<typeof setup>, deletedThreadId: number) {
+  const realPost = deps.chatPublisher.post;
+  deps.chatPublisher.post = async (chatId, threadId, text, options) => {
+    if (threadId === deletedThreadId) throw new PublishFailedError("sendMessage failed", "rejected");
+    return realPost(chatId, threadId, text, options);
+  };
+}
 
 const row = (deps: ReturnType<typeof setup>) => deps.hackathonAnalysisRepo.rows[0]!;
 
@@ -168,7 +174,7 @@ describe("participateInHackathon: happy path", () => {
 
 describe("participateInHackathon: redelivery and live topics", () => {
   it("never creates a second topic on redelivery: already(link), exactly one create", async () => {
-    const deps = setup({ create: [{ threadId: 77 }], probe: ["live"] });
+    const deps = setup({ create: [{ threadId: 77 }] });
 
     const first = await participateInHackathon(input(), deps);
     const second = await participateInHackathon(input(), deps);
@@ -181,35 +187,59 @@ describe("participateInHackathon: redelivery and live topics", () => {
     expect(deps.forumTopicManager.created).toHaveLength(1);
   });
 
-  it("returns already for a live topic without claiming or creating", async () => {
-    const deps = setup({ row: { threadId: 40 }, probe: ["live"] });
-    const result = await participateInHackathon(input(), deps);
+  it("verifies a live topic by posting the analysis into it: already(link), re-pinned, no create", async () => {
+    const deps = setup({ row: { threadId: 40, pinnedMessageId: 8, generalMessageId: 900 } });
+    const result = await participateInHackathon(input({ callbackMessageId: 901 }), deps);
     expect(result).toEqual({ kind: "already", replyText: `Este hackathon ya tiene tema: ${LINK(40)}` });
-    expect(deps.forumTopicManager.probed).toEqual([{ chatId: CHAT_ID, threadId: 40 }]);
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.chatPublisher.posted[0]?.threadId).toBe(40);
+    expect(deps.chatPublisher.pinned).toEqual([1]);
+    expect(row(deps).threadId).toBe(40);
+    expect(row(deps).pinnedMessageId).toBe(1);
     expect(deps.forumTopicManager.created).toHaveLength(0);
     expect(deps.hackathonAnalysisRepo.claims.size).toBe(0);
-  });
-
-  it("treats an ambiguous probe as live: no recreate, buttons cleared best-effort", async () => {
-    const deps = setup({ row: { threadId: 40, generalMessageId: 900 }, probe: ["unknown"] });
-    const result = await participateInHackathon(input({ callbackMessageId: 901 }), deps);
-    expect(result.kind).toBe("already");
-    expect(deps.forumTopicManager.created).toHaveLength(0);
-    expect(row(deps).threadId).toBe(40);
     expect(deps.chatPublisher.cleared).toEqual([
       { chatId: CHAT_ID, messageId: 901 },
       { chatId: CHAT_ID, messageId: 900 },
     ]);
   });
+
+  it.each(["telegram-unavailable", "rate-limited"] as const)(
+    "keeps the link and does not recreate when the verifying post fails as %s",
+    async (failureClass) => {
+      const deps = setup({ row: { threadId: 40, generalMessageId: 900 } });
+      deps.chatPublisher.post = async () => {
+        throw new PublishFailedError("sendMessage failed", failureClass);
+      };
+      const result = await participateInHackathon(input(), deps);
+      expect(result).toEqual({ kind: "already", replyText: `Este hackathon ya tiene tema: ${LINK(40)}` });
+      expect(deps.forumTopicManager.created).toHaveLength(0);
+      expect(deps.hackathonAnalysisRepo.claims.size).toBe(0);
+      expect(row(deps).threadId).toBe(40);
+      expect(deps.chatPublisher.cleared).toEqual([{ chatId: CHAT_ID, messageId: 900 }]);
+    },
+  );
+
+  it("never creates a second topic after a recreation: the redelivery posts into the new thread", async () => {
+    const deps = setup({ row: { threadId: 40 }, create: [{ threadId: 41 }, { threadId: 42 }] });
+    rejectPostsTo(deps, 40);
+
+    const first = await participateInHackathon(input(), deps);
+    const second = await participateInHackathon(input(), deps);
+
+    expect(first.kind).toBe("created");
+    expect(second).toEqual({ kind: "already", replyText: `Este hackathon ya tiene tema: ${LINK(41)}` });
+    expect(deps.forumTopicManager.created).toHaveLength(1);
+  });
 });
 
 describe("participateInHackathon: deleted topic", () => {
-  it("detects the deleted topic, recreates it, replaces the stale id, no moved note", async () => {
+  it("detects the deleted topic from a rejected post, recreates it, replaces the stale id, no moved note", async () => {
     const deps = setup({
       row: { threadId: 40, pinnedMessageId: 8 },
-      probe: ["deleted"],
       create: [{ threadId: 41 }],
     });
+    rejectPostsTo(deps, 40);
 
     const result = await participateInHackathon(input(), deps);
 
@@ -218,10 +248,12 @@ describe("participateInHackathon: deleted topic", () => {
     expect(result.kind).toBe("created");
     expect(result.replyText).toBe(`✅ Participamos en Meridian Hack 2026 → ${LINK(41)}`);
     expect(deps.chatPublisher.unpinned).toEqual([]);
+    expect(deps.chatPublisher.posted.map((p) => p.threadId)).toEqual([41]);
   });
 
   it("claims with the stale id: a concurrent relink to a new id makes the claim lose", async () => {
-    const deps = setup({ row: { threadId: 40 }, probe: ["deleted"], create: [{ threadId: 41 }] });
+    const deps = setup({ row: { threadId: 40 }, create: [{ threadId: 41 }] });
+    rejectPostsTo(deps, 40);
     const realFind = deps.hackathonAnalysisRepo.findBySlug;
     let reads = 0;
     // First read still shows the stale id; then another tap relinks it to 50.

@@ -337,10 +337,7 @@ export interface RepoMetadataSource {
   fetchDescription(repo: RepoFullName): Promise<string | null>;
 }
 
-// hackathon-participation (design.md "Interfaces / Contracts"). `probe` never
-// throws; `unknown` (any ambiguous result) must be treated as live so a
-// topic is never recreated on ambiguity.
-export type TopicProbe = "live" | "deleted" | "unknown";
+// hackathon-participation (design.md "Interfaces / Contracts").
 export type TopicCreateFailure =
   | "no-rights"
   | "not-forum"
@@ -352,7 +349,6 @@ export type TopicCreateFailure =
 // `create` throws ForumTopicCreateError(failure).
 export interface ForumTopicManager {
   create(chatId: number, name: string): Promise<number>;
-  probe(chatId: number, threadId: number): Promise<TopicProbe>;
 }
 
 // Semantic post options (hackathon-participation design.md decision 1): the

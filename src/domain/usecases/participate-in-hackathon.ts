@@ -3,6 +3,7 @@ import {
   AnalysisNotFoundError,
   ChatNotForumError,
   ForumTopicCreateError,
+  PublishFailedError,
   TopicCreationFailedError,
   TopicCreationUncertainError,
   TopicRightsMissingError,
@@ -70,12 +71,13 @@ export async function participateInHackathon(
     throw new AnalysisNotFoundError("No analysis with that slug");
   }
 
-  // 2. Probe an existing topic. Live and unknown (ambiguous) both mean "keep
-  // it": never recreate on ambiguity.
+  // 2. Verify an existing topic by doing the real action: post the analysis
+  // into it. Telegram accepts a chat action for a deleted thread, so only a
+  // rejected post proves the topic is gone. Success and any ambiguous failure
+  // both mean "keep it": never recreate on ambiguity.
   let expected: number | null = null;
   if (analysis.threadId !== null) {
-    const probe = await deps.forumTopicManager.probe(chatId, analysis.threadId);
-    if (probe !== "deleted") {
+    if (!(await topicIsGone(input, analysis, analysis.threadId, deps))) {
       await clearButtons(input, analysis, deps);
       return {
         kind: "already",
@@ -149,6 +151,28 @@ export async function participateInHackathon(
   await clearButtons(input, analysis, deps);
   const confirmed = participationCopy.confirmed(sanitizeTopicName(name, analysis.slug), link);
   return { kind: "created", replyText: [confirmed, ...notes].join("\n") };
+}
+
+// Posts (and pins) the analysis in the linked topic. Only a 4xx rejection
+// (`rejected`, e.g. "message thread not found") is a positive deleted signal;
+// unavailable, rate-limited and any other failure leave the topic as unknown.
+async function topicIsGone(
+  input: ParticipateInHackathonInput,
+  analysis: HackathonAnalysis,
+  threadId: number,
+  deps: ParticipateInHackathonDeps,
+): Promise<boolean> {
+  try {
+    await postAnalysisAndLinkTopic(
+      { teamId: input.teamId, chatId: input.chatId, threadId, analysis },
+      deps,
+    );
+    return false;
+  } catch (err) {
+    if (err instanceof PublishFailedError && err.failureClass === "rejected") return true;
+    logFailure(deps, input.teamId, "topic-check-failed", err);
+    return false;
+  }
 }
 
 function refusalFor(failure: ForumTopicCreateError["failure"]): Error {

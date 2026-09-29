@@ -144,7 +144,6 @@ describe("POST /telegram/webhook — /hackathon join through real composition", 
   const stubForum = () =>
     stubTelegramApi((method) => {
       if (method === "createForumTopic") return { message_thread_id: 4242, name: "x", icon_color: 0 };
-      if (method === "sendChatAction") return true;
       return undefined;
     });
 
@@ -262,7 +261,6 @@ describe("POST /telegram/webhook — hp: callback through real composition", () 
   const stubForum = () =>
     stubTelegramApi((method) => {
       if (method === "createForumTopic") return { message_thread_id: 4242, name: "x", icon_color: 0 };
-      if (method === "sendChatAction") return true;
       return undefined;
     });
 
