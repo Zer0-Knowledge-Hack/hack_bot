@@ -45,25 +45,25 @@ Each PR is independently deployable and keeps `npm test` green. PR1a adds unused
 
 ## Phase 2: Use Case and Join Command (PR1b)
 
-- [ ] 2.1 RED: `test/domain/hackathon/topic.test.ts` — `topicNameFor` (control/bidi chars stripped, whitespace collapsed, empty → slug, `🏆 ` prefix, ≤128 UTF-16 units, no split surrogate, `…` when cut); `topicLink` (`-100` stripped, non-`-100` → null).
-- [ ] 2.2 GREEN: create `src/domain/hackathon/topic.ts`.
-- [ ] 2.3 RED: `test/domain/hackathon/argument.test.ts` — `parseJoinArgument`: `join meridian` → join+slug; bare `join`, `join Not_Slug`, `join a b` → `join-usage`; other arguments → null (existing rules unchanged).
-- [ ] 2.4 GREEN: `src/domain/hackathon/argument.ts` (`parseJoinArgument`, checked before the whitespace rule).
-- [ ] 2.5 RED: create `test/domain/usecases/participate-in-hackathon.test.ts` — non-admin/non-member → `UnauthorizedError`, unknown slug → `AnalysisNotFoundError`, nothing changes; happy path fresh topic created, linked, pinned, General text `confirmed(name, link)`.
-- [ ] 2.5a RED: same file — **redelivery never creates a second topic**: second call after success returns `already(link)`, exactly one `create`.
-- [ ] 2.5b RED: same file — live topic (`live`) → `already`, no create; **ambiguous probe error treated as live (no recreate)**: `unknown` → `already`, no create, buttons cleared best-effort.
-- [ ] 2.5c RED: same file — **deleted topic detected and recreated**: `deleted` → claim with `expected = stale id`, new topic created, stale id replaced, no spurious unpin/"moved" note.
-- [ ] 2.5d RED: same file — **concurrent taps**: claim loss then re-read linked → `already`; not linked → `busy` (neutral no-op, nothing posted); exactly one `create` across two calls.
-- [ ] 2.5e RED: same file — **missing Manage Topics / not a forum (nothing persisted)**: `no-rights` → `TopicRightsMissingError`, `not-forum` → `ChatNotForumError`; claim released, no link stored. `rate-limited`/`rejected` → `TopicCreationFailedError`, claim released. `unavailable` → `TopicCreationUncertainError`, claim kept.
-- [ ] 2.5f RED: same file — **pin failure**: analysis posted unpinned, link persists, `pinFailed` note in result.
-- [ ] 2.5g RED: same file — **post failure after topic creation (never rethrows)**: link persists, result `postFailed(slug, link)`; `moveTopicLink` failure → `linkFailed(slug, link)`; `clearButtons` failure ignored; clears the deduped set {callback message id, `generalMessageId`}.
-- [ ] 2.5h RED: same file — **old analyses without a message id**: `generalMessageId: null` → join works, nothing to clear, no `clearButtons` call for it.
-- [ ] 2.6 GREEN: `src/domain/errors.ts` (`TopicRightsMissingError`, `ChatNotForumError`, `TopicCreationFailedError`, `TopicCreationUncertainError`), `src/domain/copy.ts` (`alreadyHasTopic`, `confirmed`, `postFailed`, `linkFailed`), create `src/domain/usecases/participate-in-hackathon.ts` with the design step order (no-throw zone from `moveTopicLink`).
-- [ ] 2.7 RED: `test/adapters/telegram/participation.test.ts` — `runParticipation` maps each domain error by name to its Spanish reply (`adminOnly`, `noAnalysis(slug)`, `noRights`, `notForum`, `createFailed` "Telegram rechazó la creación del tema. Inténtalo de nuevo en un minuto.", `createUncertain` "No se pudo confirmar si se creó el tema. Revisa la lista de temas antes de volver a intentarlo."); a failing safe General post is caught and logged, never rethrown (no 500).
-- [ ] 2.8 RED: `test/adapters/telegram/commands.test.ts` (hackathon cases) and `test/http/hackathon-command-e2e.test.ts` — `/hackathon join <slug>` runs participation with no fetch/cap; `join` usage line "Uso: /hackathon join <slug>"; non-admin reply; unknown-slug reply; `join <slug>` on an old analysis works; `linkFailed` reply text.
-- [ ] 2.9 GREEN: create `src/adapters/telegram/participation.ts` (`runParticipation`, safe General post); `src/adapters/telegram/copy.ts` (all adapter strings from the design copy table); `src/adapters/telegram/hackathon-commands.ts` (join branch); `src/composition.ts` (wire use case, `ForumTopicManager`).
-- [ ] 2.10 Extend `test/copy/catalog-language.test.ts` to the new catalog entries (non-empty, Spanish, no English denylist match, neutral "tú"); make it pass.
-- [ ] 2.11 Run `npm test` and `npm run typecheck`; join works, button not yet rendered.
+- [x] 2.1 RED: `test/domain/hackathon/topic.test.ts` — `topicNameFor` (control/bidi chars stripped, whitespace collapsed, empty → slug, `🏆 ` prefix, ≤128 UTF-16 units, no split surrogate, `…` when cut); `topicLink` (`-100` stripped, non-`-100` → null).
+- [x] 2.2 GREEN: create `src/domain/hackathon/topic.ts`.
+- [x] 2.3 RED: `test/domain/hackathon/argument.test.ts` — `parseJoinArgument`: `join meridian` → join+slug; bare `join`, `join Not_Slug`, `join a b` → `join-usage`; other arguments → null (existing rules unchanged).
+- [x] 2.4 GREEN: `src/domain/hackathon/argument.ts` (`parseJoinArgument`, checked before the whitespace rule).
+- [x] 2.5 RED: create `test/domain/usecases/participate-in-hackathon.test.ts` — non-admin/non-member → `UnauthorizedError`, unknown slug → `AnalysisNotFoundError`, nothing changes; happy path fresh topic created, linked, pinned, General text `confirmed(name, link)`.
+- [x] 2.5a RED: same file — **redelivery never creates a second topic**: second call after success returns `already(link)`, exactly one `create`.
+- [x] 2.5b RED: same file — live topic (`live`) → `already`, no create; **ambiguous probe error treated as live (no recreate)**: `unknown` → `already`, no create, buttons cleared best-effort.
+- [x] 2.5c RED: same file — **deleted topic detected and recreated**: `deleted` → claim with `expected = stale id`, new topic created, stale id replaced, no spurious unpin/"moved" note.
+- [x] 2.5d RED: same file — **concurrent taps**: claim loss then re-read linked → `already`; not linked → `busy` (neutral no-op, nothing posted); exactly one `create` across two calls.
+- [x] 2.5e RED: same file — **missing Manage Topics / not a forum (nothing persisted)**: `no-rights` → `TopicRightsMissingError`, `not-forum` → `ChatNotForumError`; claim released, no link stored. `rate-limited`/`rejected` → `TopicCreationFailedError`, claim released. `unavailable` → `TopicCreationUncertainError`, claim kept.
+- [x] 2.5f RED: same file — **pin failure**: analysis posted unpinned, link persists, `pinFailed` note in result.
+- [x] 2.5g RED: same file — **post failure after topic creation (never rethrows)**: link persists, result `postFailed(slug, link)`; `moveTopicLink` failure → `linkFailed(slug, link)`; `clearButtons` failure ignored; clears the deduped set {callback message id, `generalMessageId`}.
+- [x] 2.5h RED: same file — **old analyses without a message id**: `generalMessageId: null` → join works, nothing to clear, no `clearButtons` call for it.
+- [x] 2.6 GREEN: `src/domain/errors.ts` (`TopicRightsMissingError`, `ChatNotForumError`, `TopicCreationFailedError`, `TopicCreationUncertainError`), `src/domain/copy.ts` (`alreadyHasTopic`, `confirmed`, `postFailed`, `linkFailed`), create `src/domain/usecases/participate-in-hackathon.ts` with the design step order (no-throw zone from `moveTopicLink`).
+- [x] 2.7 RED: `test/adapters/telegram/participation.test.ts` — `runParticipation` maps each domain error by name to its Spanish reply (`adminOnly`, `noAnalysis(slug)`, `noRights`, `notForum`, `createFailed` "Telegram rechazó la creación del tema. Inténtalo de nuevo en un minuto.", `createUncertain` "No se pudo confirmar si se creó el tema. Revisa la lista de temas antes de volver a intentarlo."); a failing safe General post is caught and logged, never rethrown (no 500).
+- [x] 2.8 RED: `test/adapters/telegram/commands.test.ts` (hackathon cases) and `test/http/hackathon-command-e2e.test.ts` — `/hackathon join <slug>` runs participation with no fetch/cap; `join` usage line "Uso: /hackathon join <slug>"; non-admin reply; unknown-slug reply; `join <slug>` on an old analysis works; `linkFailed` reply text.
+- [x] 2.9 GREEN: create `src/adapters/telegram/participation.ts` (`runParticipation`, safe General post); `src/adapters/telegram/copy.ts` (all adapter strings from the design copy table); `src/adapters/telegram/hackathon-commands.ts` (join branch); `src/composition.ts` (wire use case, `ForumTopicManager`).
+- [x] 2.10 Extend `test/copy/catalog-language.test.ts` to the new catalog entries (non-empty, Spanish, no English denylist match, neutral "tú"); make it pass.
+- [x] 2.11 Run `npm test` and `npm run typecheck`; join works, button not yet rendered.
 
 ## Phase 3: Button, Callback, Consumer (PR2)
 
