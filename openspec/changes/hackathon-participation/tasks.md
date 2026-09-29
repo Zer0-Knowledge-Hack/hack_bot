@@ -67,16 +67,16 @@ Each PR is independently deployable and keeps `npm test` green. PR1a adds unused
 
 ## Phase 3: Button, Callback, Consumer (PR2)
 
-- [ ] 3.1 RED: `test/domain/usecases/run-hackathon-job.test.ts` — General post is sent with `participateSlug` and `setGeneralMessageId` stores the returned id at both General sites; a topic post has no button; a `setGeneralMessageId` failure is logged, the job still acks, and there is no retry/repost.
-- [ ] 3.2 GREEN: `src/domain/usecases/run-hackathon-job.ts` — `postToGeneral(text, participateSlug)` helper used by both General sites; best-effort id store.
-- [ ] 3.3 RED: `test/adapters/telegram/commands.test.ts` — `callbackCallerLocation(ctx)` reads `ctx.chat.id`, `ctx.from.id`, `ctx.msg?.message_thread_id`, `ctx.callbackQuery.message?.message_id`; `callerLocation` behavior for commands unchanged.
-- [ ] 3.4 GREEN: `src/adapters/telegram/context.ts` (`callbackCallerLocation`).
-- [ ] 3.5 RED: `test/adapters/telegram/participation.test.ts` — **non-admin alert**: `hp:<slug>` from a non-admin (and non-member) → `answerCallbackQuery` with `show_alert` "Solo un administrador del equipo puede confirmar la participación.", nothing created, button stays; private/missing chat ignored; team taken from chat id, never the payload; malformed data (`hp:Bad_Slug`, over-long) ignored; admin tap creates the topic.
-- [ ] 3.6 RED: same file — **button removed after confirmation**: admin tap → `clearButtons` for the callback message id and the stored `generalMessageId` (deduped); button-clear failure ignored; callback answered early, best-effort.
-- [ ] 3.7 GREEN: `src/adapters/telegram/participation.ts` (`bot.callbackQuery(/^hp:(slug)$/)` handler, registered from `registerHackathonCommands`); `src/adapters/telegram/hackathon-commands.ts`.
-- [ ] 3.8 RED: `test/http/webhook-e2e.test.ts` and `test/http/hackathon-command-e2e.test.ts` — validated webhook `hp:` callback from a group is routed to the participation handler; callback with any other prefix is ignored without error; `/hackathon join` clears the stored message's button (old analysis with null id: join works, nothing removed).
-- [ ] 3.9 GREEN: `src/composition.ts` wiring (consumer uses `postToGeneral`, handler gets `ForumTopicManager`); `test/fakes/index.ts` and `test/support/telegram-stub.ts` callback fixtures/`answerCallbackQuery`/`editMessageReplyMarkup` recording.
-- [ ] 3.10 Run `npm test` and `npm run typecheck`.
+- [x] 3.1 RED: `test/domain/usecases/run-hackathon-job.test.ts` — General post is sent with `participateSlug` and `setGeneralMessageId` stores the returned id at both General sites; a topic post has no button; a `setGeneralMessageId` failure is logged, the job still acks, and there is no retry/repost.
+- [x] 3.2 GREEN: `src/domain/usecases/run-hackathon-job.ts` — `postToGeneral(text, participateSlug)` helper used by both General sites; best-effort id store.
+- [x] 3.3 RED: `test/adapters/telegram/commands.test.ts` — `callbackCallerLocation(ctx)` reads `ctx.chat.id`, `ctx.from.id`, `ctx.msg?.message_thread_id`, `ctx.callbackQuery.message?.message_id`; `callerLocation` behavior for commands unchanged.
+- [x] 3.4 GREEN: `src/adapters/telegram/context.ts` (`callbackCallerLocation`).
+- [x] 3.5 RED: `test/adapters/telegram/participation.test.ts` — **non-admin alert**: `hp:<slug>` from a non-admin (and non-member) → `answerCallbackQuery` with `show_alert` "Solo un administrador del equipo puede confirmar la participación.", nothing created, button stays; private/missing chat ignored; team taken from chat id, never the payload; malformed data (`hp:Bad_Slug`, over-long) ignored; admin tap creates the topic.
+- [x] 3.6 RED: same file — **button removed after confirmation**: admin tap → `clearButtons` for the callback message id and the stored `generalMessageId` (deduped); button-clear failure ignored; callback answered early, best-effort.
+- [x] 3.7 GREEN: `src/adapters/telegram/participation.ts` (`bot.callbackQuery(/^hp:(slug)$/)` handler, registered from `registerHackathonCommands`); `src/adapters/telegram/hackathon-commands.ts`.
+- [x] 3.8 RED: `test/http/webhook-e2e.test.ts` and `test/http/hackathon-command-e2e.test.ts` — validated webhook `hp:` callback from a group is routed to the participation handler; callback with any other prefix is ignored without error; `/hackathon join` clears the stored message's button (old analysis with null id: join works, nothing removed).
+- [x] 3.9 GREEN: `src/composition.ts` wiring (consumer uses `postToGeneral`, handler gets `ForumTopicManager`); `test/fakes/index.ts` and `test/support/telegram-stub.ts` callback fixtures/`answerCallbackQuery`/`editMessageReplyMarkup` recording.
+- [x] 3.10 Run `npm test` and `npm run typecheck`.
 
 ## Phase 4: Operator Step and Final Verification (after PR2)
 

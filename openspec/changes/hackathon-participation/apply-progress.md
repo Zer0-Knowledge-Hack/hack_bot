@@ -1,6 +1,6 @@
 # Apply Progress: hackathon-participation
 
-Completed so far: Phase 1 (1.1-1.12) and Phase 2 (2.1-2.11). Phase 3 (PR2) and Phase 4 pending.
+Completed so far: Phase 1 (1.1-1.12), Phase 2 (2.1-2.11) and Phase 3 (3.1-3.10). Phase 4 (operator steps and final verification) pending.
 
 ## Batch 1 — Phase 1 Infrastructure (PR1a) — branch `feat/participation-infra`
 
@@ -89,3 +89,48 @@ Mode: Strict TDD. Base: main bfec91d (PR1a merged). Completed: Step 0 (PR1a revi
 - An unknown error from `create` (not a `ForumTopicCreateError`) keeps the claim and rethrows: the topic may exist.
 - `ForumTopicManager` is wired in `composition.ts` (needed by join); the button, `hp:` handler and consumer wiring stay in Phase 3.
 - Phase 3 must keep the `runParticipation` `reply` param for the callback alert.
+
+## Batch 3 — Phase 3 Button, Callback, Consumer (PR2) — branch `feat/participation-button`
+
+Mode: Strict TDD. Base: main 934fd01 (PR1a and PR1b merged). Completed: Step 0 (PR1b review warning R3-001) + 3.1–3.10 (all of Phase 3).
+
+### Step 0 (PR1b advisory warning)
+
+| Finding | Resolution |
+|---|---|
+| R3-001 no test for a non-`ForumTopicCreateError` thrown by `create` | Test added in `participate-in-hackathon.test.ts`: the claim is kept (expiry in the future), the same error object is rethrown, nothing is linked or posted. It passed on first run because the branch already existed (regression guard, not a true RED) |
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1/3.2 | `test/domain/usecases/run-hackathon-job.test.ts` | Unit (fakes) | 29/29 | 3 failed (no options, no stored id, no store-failure log) | 33/33 | fresh General, topic (no button, null id), store failure (ack, one post, log), persisted repost | Both General sites share `postToGeneral` |
+| 3.3/3.4 | `test/adapters/telegram/commands.test.ts` | Unit | 120/120 | 3 failed (not a function) | pass | full ctx, absent thread/message id, missing chat/user | None needed |
+| 3.5/3.6/3.7 | `test/adapters/telegram/commands.test.ts` (real grammY Bot + fakes) | Integration | 120/120 | 8 failed (no handler) | 131/131 | non-admin, non-member, admin, deduped/different buttons, early answer order, answer failure, redelivery, unknown slug, team from chat, 6 malformed payloads, private chat, `sel:` still works | None needed |
+| 3.8 | `test/http/hackathon-command-e2e.test.ts` | Integration (real route, composition, D1) | 8/8 | 3 failed with the handler unregistered (verified by disabling it) | 11/11 | admin tap, non-admin alert, redelivery, malformed + foreign prefix ignored | None needed |
+| 3.9 | composition | — | — | — | — | ➖ Nothing to wire: the consumer already had `chatPublisher` and `hackathonAnalysisRepo`; the callback rides `registerHackathonCommands` | ➖ |
+| 3.10 | full suite | — | — | — | 1027/1027 (76 files), typecheck clean | — | — |
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and result | `npx vitest run test/domain/usecases/run-hackathon-job.test.ts test/adapters/telegram test/http`: all green; full suite 76 files, 1027/1027, `npm run typecheck` clean |
+| Runtime harness | N/A: no fetch/LLM path; e2e drives the real Hono route, composition, D1 and adapters with stubbed Telegram HTTP |
+| Rollback boundary | `postToGeneral` in `run-hackathon-job.ts`, `callbackCallerLocation` in `context.ts`, `registerParticipationCallback` and its one-line registration in `hackathon-commands.ts` |
+
+### Commits
+- `94d4ba1` test(participation): cover unknown create error keeping the claim and rethrowing
+- `812929c` feat(hackathon): post the General analysis with the participation button and store its message id
+- `fe92e95` feat(telegram): confirm participation from the hp callback button
+- test(http) commit: hp callback e2e through the webhook route
+- docs commit: tasks and apply-progress (this file)
+
+### Deviations / notes
+- Handler tests live in `commands.test.ts` (which already has the real-Bot harness with alert recording), not `participation.test.ts` as tasks 3.5/3.6 name it. The `callbackCallerLocation` tests are there too, as in 3.3.
+- `callbackCallerLocation` returns `CallbackLocation = CallerLocation & { messageId }`, so the button message id travels with the location.
+- Order in the handler: the role is resolved first (fast, no use case). A non-member or non-admin gets the single alert (one `answerCallbackQuery` per query allows only one). An admin is answered silently and early, then `runParticipation` runs. Its `reply` (pre-creation refusals such as missing rights) is therefore a best-effort `ctx.reply`, not an alert, because the query is already answered.
+- Slug length is capped at 40 in the handler (slug.ts limit) on top of the design regex.
+- The `setGeneralMessageId` failure is logged as `hackathon-job` / `general-message-id-store-failed`. Consequence: the stored message's button is not cleared on join (the tapped message's own button still is).
+- The persisted repost site also stores the message id, so a repost after a crash replaces the stored id with the newest message.
+- The only new e2e coverage is the `hp:` callback; other prefixes were already ignored (only `sel:` and `hp:` handlers exist), so no routing code changed in `index.ts`.
