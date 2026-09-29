@@ -340,6 +340,24 @@ export interface RepoMetadataSource {
 // design.md "Interfaces / Contracts". `post` returns the new message id
 // (needed to `pin`/`unpin` it later) and throws PublishFailedError on
 // failure, mirroring AlertSender.
+// hackathon-participation (design.md "Interfaces / Contracts"). `probe` never
+// throws; `unknown` (any ambiguous result) must be treated as live so a
+// topic is never recreated on ambiguity.
+export type TopicProbe = "live" | "deleted" | "unknown";
+export type TopicCreateFailure =
+  | "no-rights"
+  | "not-forum"
+  | "rate-limited"
+  | "rejected"
+  | "unavailable";
+
+// ISP port: only the use case that creates topics sees topic rights.
+// `create` throws ForumTopicCreateError(failure).
+export interface ForumTopicManager {
+  create(chatId: number, name: string): Promise<number>;
+  probe(chatId: number, threadId: number): Promise<TopicProbe>;
+}
+
 export interface ChatPublisher {
   post(chatId: number, threadId: number | null, text: string): Promise<number>;
   pin(chatId: number, messageId: number): Promise<void>;

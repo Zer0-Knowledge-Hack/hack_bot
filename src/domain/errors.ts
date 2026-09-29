@@ -5,6 +5,7 @@
 // forking two classes with the same name (design.md "Config errors").
 export { ConfigError } from "../config-error";
 import type { FieldRejection } from "./hackathon/extraction";
+import type { TopicCreateFailure } from "./ports";
 
 export class DomainError extends Error {
   constructor(message: string) {
@@ -209,5 +210,18 @@ export class PublishFailedError extends DomainError {
   constructor(message: string, failureClass: AlertSendFailureClass) {
     super(message);
     this.failureClass = failureClass;
+  }
+}
+
+// `ForumTopicManager.create` failed (hackathon-participation design.md
+// "Interfaces / Contracts"). `failure` is a fixed classification; Telegram's
+// description is never carried over. The use case maps it to a user-facing
+// domain error and decides whether to keep or release the claim.
+export class ForumTopicCreateError extends DomainError {
+  readonly failure: TopicCreateFailure;
+
+  constructor(message: string, failure: TopicCreateFailure) {
+    super(message);
+    this.failure = failure;
   }
 }
