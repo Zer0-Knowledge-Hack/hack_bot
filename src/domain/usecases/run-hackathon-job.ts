@@ -21,7 +21,9 @@ const STALE_JOB_MS = 60 * 60 * 1000;
 // design.md "Retries": max_retries: 2 -> 3 total delivery attempts.
 const MAX_ATTEMPTS = 3;
 const HELD_RETRY_DELAY_S = 60;
-const TRANSIENT_RETRY_DELAY_S = 30;
+// Exported as the single source of truth for the transient retry cadence:
+// the queue entry point (`src/index.ts`) reuses it for unexpected failures.
+export const TRANSIENT_RETRY_DELAY_S = 30;
 
 export interface RunHackathonJobDeps extends AnalyzeHackathonDeps {
   analysisJobRepo: AnalysisJobRepo;
