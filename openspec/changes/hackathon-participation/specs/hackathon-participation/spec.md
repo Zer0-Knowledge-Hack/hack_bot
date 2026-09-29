@@ -53,19 +53,33 @@ The system MUST allow only a team admin to confirm participation and MUST change
 
 ### Requirement: Topic Creation and Naming
 
-The system MUST create the topic named `🏆 <name>`, where `<name>` is the extracted `fields.name.value`, or the slug when there is no name. The name is untrusted: control characters MUST be removed, whitespace collapsed, and the full topic name MUST be 1–128 characters. The name is otherwise verbatim.
+The system MUST create the topic named `<name>` (no emoji) and set 🏆 as the topic icon through `icon_custom_emoji_id`, taken from Telegram's topic icon set. Only when the icon cannot be applied (no matching icon, or the icon list is unavailable) MUST the name carry the visible fallback prefix `🏆 <name>`. Here `<name>` is the extracted `fields.name.value`, or the slug when there is no name. The name is untrusted: control characters MUST be removed, whitespace collapsed, and the full topic name MUST be 1–128 characters. The name is otherwise verbatim.
 
 #### Scenario: Name from the page
 
 - GIVEN `fields.name.value` is "Meridian  Hack\n2026"
 - WHEN participation is confirmed
-- THEN the topic is named "🏆 Meridian Hack 2026"
+- THEN the topic is named "Meridian Hack 2026"
+- AND the topic icon is 🏆
+
+#### Scenario: Icon unavailable
+
+- GIVEN Telegram has no matching topic icon, or the icon list cannot be fetched
+- WHEN participation is confirmed
+- THEN the topic is still created, named "🏆 Meridian Hack 2026" with no icon
+
+#### Scenario: Fresh topic is paced
+
+- GIVEN the topic was just created
+- WHEN the analysis is posted and pinned
+- THEN the system waits about 1.5 s before the post and about 1 s between the post and the pin
+- AND a live-topic check never waits
 
 #### Scenario: Missing or empty name
 
 - GIVEN `fields.name.value` is absent or empty after sanitizing
 - WHEN participation is confirmed
-- THEN the topic is named "🏆 <slug>"
+- THEN the topic is named "<slug>"
 
 #### Scenario: Overlong name
 
