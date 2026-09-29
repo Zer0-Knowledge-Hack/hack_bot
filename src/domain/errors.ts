@@ -129,6 +129,7 @@ export type LlmParseFailureCode =
   | "no-content" // null, missing or empty content
   | "unterminated" // has a "{" but no matching closing "}" (truncated)
   | "prose-around" // a parsable JSON object exists, wrapped in other text
+  | "control-chars" // parsed only after escaping raw TAB/CR/LF inside string literals
   | "not-json" // no JSON object in the text
   | "non-object"; // valid JSON, but not an object (array, number, ...)
 
@@ -136,14 +137,20 @@ export const LLM_PARSE_FAILURE_CODES: readonly LlmParseFailureCode[] = [
   "no-content",
   "unterminated",
   "prose-around",
+  "control-chars",
   "not-json",
   "non-object",
 ];
 
 export interface ExtractionAttemptDiagnostics {
   model: string;
-  // false when the response failed schema validation as a whole.
+  // true ONLY when the model's text was parsed as JSON (possibly after
+  // tolerant recovery). It says nothing about whether the shape validated.
   parsed: boolean;
+  // "invalid" when JSON parsed but the top level failed validation as a
+  // whole (not a plain object). Absent otherwise; per-field shape problems
+  // show up in `rejected` with reason "wrong-shape" instead.
+  shape?: "invalid";
   rejectedCount: number;
   rejected: FieldRejection[];
   // Parse metadata (numbers and fixed codes only — never model content).

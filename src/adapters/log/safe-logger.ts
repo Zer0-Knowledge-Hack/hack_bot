@@ -50,6 +50,8 @@ export function createSafeLogger(): Logger {
               attempts: entry.attempts.map((a) => ({
                 model: a.model,
                 parsed: a.parsed,
+                // Fixed literal only; anything else is dropped.
+                ...(a.shape === "invalid" ? { shape: "invalid" as const } : {}),
                 rejectedCount: a.rejectedCount,
                 rejected: a.rejected.map((r) => ({ field: r.field, reason: r.reason })),
                 ...safeParseMeta(a),

@@ -124,7 +124,11 @@ function isQuotaExhausted(err: unknown): boolean {
 // first balanced JSON object in the text is parsed instead (string- and
 // escape-aware). If that yields an object it is returned with meta
 // { parseFailure: "prose-around", recovered: true } — the failure case is still
-// reported so the diagnostics show the model wraps its JSON in prose. The
+// reported so the diagnostics show the model wraps its JSON in prose. When
+// the text (or the balanced object) only fails because string literals hold
+// raw TAB/CR/LF characters, they are escaped and the parse retried once; that
+// is reported as { parseFailure: "control-chars", recovered: true } (inside
+// prose it stays "prose-around"). The
 // recovered value is as untrusted as any other and still goes through
 // validateExtraction unchanged.
 const CODE_FENCE_PATTERN = /^\s*```[A-Za-z]*\s*\n([\s\S]*?)\n?\s*```\s*$/;
@@ -182,6 +186,40 @@ function tryParse(text: string): { ok: true; value: unknown } | { ok: false } {
   }
 }
 
+// Escapes raw TAB, CR and LF characters that appear INSIDE JSON string
+// literals (models copy TAB-separated table text verbatim into a snippet,
+// which JSON.parse rejects as a "Bad control character"). A string-aware
+// scan: whitespace outside string literals is structural and stays
+// untouched, and an existing backslash escape is copied through so it is
+// never double-escaped.
+const CONTROL_ESCAPES: Record<string, string> = { "\t": "\\t", "\r": "\\r", "\n": "\\n" };
+
+function escapeControlCharsInStrings(text: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
+    }
+    if (escaped) {
+      escaped = false;
+      out += ch;
+    } else if (ch === "\\") {
+      escaped = true;
+      out += ch;
+    } else if (ch === '"') {
+      inString = false;
+      out += ch;
+    } else {
+      out += CONTROL_ESCAPES[ch] ?? ch;
+    }
+  }
+  return out;
+}
+
 function parseJsonText(text: string): ParsedText {
   if (text.trim() === "") return { value: null, parseFailure: "no-content" };
   const fenced = CODE_FENCE_PATTERN.exec(text);
@@ -194,10 +232,19 @@ function parseJsonText(text: string): ParsedText {
       : { value: direct.value, parseFailure: "non-object" };
   }
 
+  // One repair retry: raw control characters inside string literals.
+  const repaired = tryParse(escapeControlCharsInStrings(body));
+  if (repaired.ok) {
+    return isPlainObject(repaired.value)
+      ? { value: repaired.value, parseFailure: "control-chars", recovered: true }
+      : { value: repaired.value, parseFailure: "non-object" };
+  }
+
   const scan = scanBalancedObject(body);
   if (scan.kind === "unterminated") return { value: null, parseFailure: "unterminated" };
   if (scan.kind === "found") {
-    const inner = tryParse(scan.text);
+    let inner = tryParse(scan.text);
+    if (!inner.ok) inner = tryParse(escapeControlCharsInStrings(scan.text));
     if (inner.ok && isPlainObject(inner.value)) {
       return { value: inner.value, parseFailure: "prose-around", recovered: true };
     }

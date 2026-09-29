@@ -165,4 +165,67 @@ it("logs the safe parse metadata and drops anything else a model could smuggle i
     expect(line).not.toContain("IGNORE");
     spy.mockRestore();
   });
+
+  it("passes the control-chars parse-failure code through as a fixed value", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    createSafeLogger().log({
+      event: "hackathon-job",
+      outcome: "error",
+      attempts: [
+        {
+          model: "@cf/primary",
+          parsed: true,
+          rejectedCount: 0,
+          rejected: [],
+          parseFailure: "control-chars",
+          recovered: true,
+        },
+      ],
+    });
+    const logged = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(logged.attempts[0]).toMatchObject({ parseFailure: "control-chars", recovered: true });
+    spy.mockRestore();
+  });
+
+  it("logs shape: \"invalid\" as a fixed value and drops any other shape value", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const logger = createSafeLogger();
+    const base = { model: "@cf/primary", parsed: true, rejectedCount: 0, rejected: [] };
+
+    logger.log({
+      event: "hackathon-job",
+      outcome: "error",
+      attempts: [
+        { ...base, shape: "invalid" },
+        { ...base, shape: "SECRET page text" as unknown as "invalid" },
+      ],
+    });
+
+    const line = spy.mock.calls[0]?.[0] as string;
+    const attempts = JSON.parse(line).attempts;
+    expect(attempts[0]).toEqual({ ...base, shape: "invalid" });
+    expect(attempts[1]).toEqual(base);
+    expect(line).not.toContain("SECRET");
+    spy.mockRestore();
+  });
+
+  it("logs a wrong-shape rejection as field name and code only, never the value", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    createSafeLogger().log({
+      event: "hackathon-job",
+      outcome: "error",
+      attempts: [
+        {
+          model: "@cf/primary",
+          parsed: true,
+          rejectedCount: 1,
+          rejected: [{ field: "prizes", reason: "wrong-shape", value: "SECRET value" } as never],
+        },
+      ],
+    });
+    const line = spy.mock.calls[0]?.[0] as string;
+    expect(JSON.parse(line).attempts[0].rejected).toEqual([{ field: "prizes", reason: "wrong-shape" }]);
+    expect(line).not.toContain("SECRET");
+    spy.mockRestore();
+  });
 });
