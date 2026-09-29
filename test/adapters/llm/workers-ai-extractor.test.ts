@@ -245,4 +245,65 @@ describe("createWorkersAiExtractor", () => {
     expect(sentInputs?.temperature).toBe(0);
     expect(sentInputs?.max_tokens).toBe(1200);
   });
+
+  // OpenAI-style output declared by GLM-5.3-Flash and DeepSeek V4 Flash
+  // (`wrangler ai models schema`): choices[].message.content is string | null.
+  describe("OpenAI-style choices output", () => {
+    const FIELDS = { name: "Hack", startDate: "2026-03-01" };
+    const envelope = (message: Record<string, unknown>) => ({
+      id: "chatcmpl-1",
+      object: "chat.completion",
+      created: 1,
+      model: "m",
+      choices: [{ index: 0, message: { role: "assistant", ...message }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      system_fingerprint: null,
+    });
+    const extractWith = (raw: unknown) =>
+      createWorkersAiExtractor({ run: async () => raw }).extract(PAGE_TEXT, VALID_MODEL, neverAborts());
+
+    it("parses a JSON string in choices[0].message.content", async () => {
+      await expect(extractWith(envelope({ content: JSON.stringify(FIELDS) }))).resolves.toEqual(FIELDS);
+    });
+
+    it.each(["```json\n%s\n```", "```\n%s\n```", "  ```JSON\n%s\n```  "])(
+      "parses content wrapped in a markdown code fence (%j)",
+      async (tpl) => {
+        const content = tpl.replace("%s", JSON.stringify(FIELDS));
+        await expect(extractWith(envelope({ content }))).resolves.toEqual(FIELDS);
+      },
+    );
+
+    it.each([
+      ["null content", envelope({ content: null })],
+      ["missing content", envelope({})],
+      ["unparseable content", envelope({ content: "not json at all" })],
+      ["array content", envelope({ content: [{ type: "text", text: "{}" }] })],
+      ["empty choices", { choices: [] }],
+      ["non-object message", { choices: [{ message: "x" }] }],
+    ])("returns null (never throws) for %s so validateExtraction rejects it", async (_n, raw) => {
+      const out = await extractWith(raw);
+      expect(out).toBeNull();
+      expect(validateExtraction(out).ok).toBe(false);
+    });
+
+    it("never uses reasoning_content as the answer", async () => {
+      const out = await extractWith(
+        envelope({ content: null, reasoning_content: JSON.stringify(FIELDS) }),
+      );
+      expect(out).toBeNull();
+    });
+
+    it("prefers content over reasoning_content when both exist", async () => {
+      const out = await extractWith(
+        envelope({ content: JSON.stringify(FIELDS), reasoning_content: '{"name":"wrong"}' }),
+      );
+      expect(out).toEqual(FIELDS);
+    });
+
+    it("still accepts a { response } object and a plain JSON string", async () => {
+      await expect(extractWith({ response: JSON.stringify(FIELDS) })).resolves.toEqual(FIELDS);
+      await expect(extractWith(JSON.stringify(FIELDS))).resolves.toEqual(FIELDS);
+    });
+  });
 });
