@@ -71,6 +71,88 @@ describe("createTelegramChatPublisher.post", () => {
   });
 });
 
+describe("createTelegramChatPublisher.post options (participation button)", () => {
+  it("keeps the no-option payload free of any reply_markup", async () => {
+    const calls = stubTelegramApi();
+
+    await makePublisher().post(555, null, "hello");
+
+    expect(calls.find((c) => c.method === "sendMessage")?.body).not.toHaveProperty("reply_markup");
+  });
+
+  it("does not add a keyboard when the options carry no participateSlug", async () => {
+    const calls = stubTelegramApi();
+
+    await makePublisher().post(555, null, "hello", {});
+
+    expect(calls.find((c) => c.method === "sendMessage")?.body).not.toHaveProperty("reply_markup");
+  });
+
+  it("adds one button labelled \"✅ Participamos\" carrying hp:<slug> when participateSlug is set", async () => {
+    const calls = stubTelegramApi();
+
+    await makePublisher().post(555, null, "hello", { participateSlug: "meridian-hacks" });
+
+    const body = calls.find((c) => c.method === "sendMessage")?.body as {
+      reply_markup: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+    };
+    expect(body).toMatchObject({ chat_id: 555, text: "hello" });
+    expect(body.reply_markup.inline_keyboard).toEqual([
+      [{ text: "✅ Participamos", callback_data: "hp:meridian-hacks" }],
+    ]);
+  });
+
+  it("keeps callback_data within Telegram's 64-byte limit for the longest slug", async () => {
+    const calls = stubTelegramApi();
+    const slug = "a".repeat(40);
+
+    await makePublisher().post(555, 42, "hello", { participateSlug: slug });
+
+    const body = calls.find((c) => c.method === "sendMessage")?.body as {
+      message_thread_id: number;
+      reply_markup: { inline_keyboard: Array<Array<{ callback_data: string }>> };
+    };
+    const data = body.reply_markup.inline_keyboard[0]?.[0]?.callback_data ?? "";
+    expect(data).toBe(`hp:${slug}`);
+    expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+    expect(body.message_thread_id).toBe(42);
+  });
+});
+
+describe("createTelegramChatPublisher.clearButtons", () => {
+  it("edits the message's reply markup without sending a reply_markup (removes the keyboard)", async () => {
+    const calls = stubTelegramApi();
+
+    await makePublisher().clearButtons(555, 901);
+
+    const call = calls.find((c) => c.method === "editMessageReplyMarkup");
+    expect(call?.body).toMatchObject({ chat_id: 555, message_id: 901 });
+    expect(call?.body).not.toHaveProperty("reply_markup");
+  });
+
+  it("becomes PublishFailedError on a Telegram rejection without leaking its description", async () => {
+    stubTelegramApi(() => ({
+      ok: false,
+      error_code: 400,
+      description: "Bad Request: message to edit not found",
+    }));
+
+    const err = await makePublisher().clearButtons(555, 901).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(PublishFailedError);
+    expect((err as PublishFailedError).failureClass).toBe("rejected");
+    expect((err as PublishFailedError).message).not.toContain("message to edit not found");
+  });
+
+  it("classifies a 5xx as telegram-unavailable", async () => {
+    stubTelegramApi(() => ({ ok: false, error_code: 502, description: "Bad Gateway" }));
+
+    const err = await makePublisher().clearButtons(555, 901).catch((e: unknown) => e);
+
+    expect((err as PublishFailedError).failureClass).toBe("telegram-unavailable");
+  });
+});
+
 describe("createTelegramChatPublisher.pin / unpin", () => {
   it("pins the message without notifying the chat", async () => {
     const calls = stubTelegramApi();

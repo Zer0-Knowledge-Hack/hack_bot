@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { createD1AnalysisJobRepo } from "../../../src/adapters/d1/analysis-job-repo";
 import { createD1HackathonAnalysisRepo } from "../../../src/adapters/d1/hackathon-analysis-repo";
 import type { ExtractedFields } from "../../../src/domain/hackathon/extraction";
 import type { HackathonAnalysis } from "../../../src/domain/entities";
@@ -42,6 +43,7 @@ function analysis(
     suggestedRepos: [],
     threadId: null,
     pinnedMessageId: null,
+    generalMessageId: null,
     createdAt: 0,
     updatedAt: 0,
     ...rest,
@@ -290,6 +292,157 @@ describe("createD1HackathonAnalysisRepo", () => {
       expect(owner?.pinnedMessageId).toBe(1);
       expect(other?.threadId).toBe(6000);
       expect(other?.pinnedMessageId).toBe(2);
+    });
+  });
+
+  describe("claimTopicCreation / releaseTopicClaim (participation claim, CAS)", () => {
+    const TTL = 60_000;
+
+    async function seedAnalysis(
+      teamId: string,
+      chatId: number,
+      threadId: number | null = null,
+    ) {
+      await seedTeam(teamId, chatId);
+      const repo = createD1HackathonAnalysisRepo(env.DB);
+      await repo.save(analysis({ id: `a-${teamId}`, teamId, slug: "claim", threadId }));
+      return repo;
+    }
+
+    it("wins when the analysis has no topic (expected null) and stamps the claim", async () => {
+      const repo = await seedAnalysis("team-claim-null", 920);
+
+      const won = await repo.claimTopicCreation(asTeamId("team-claim-null"), "a-team-claim-null", null, 1_000, TTL);
+
+      const row = await env.DB.prepare("SELECT topic_claim_until FROM hackathon_analyses WHERE id = ?")
+        .bind("a-team-claim-null")
+        .first<{ topic_claim_until: number }>();
+      expect(won).toBe(true);
+      expect(row?.topic_claim_until).toBe(1_000 + TTL);
+    });
+
+    it("wins on the observed stale thread id (expected = stale)", async () => {
+      const repo = await seedAnalysis("team-claim-stale", 921, 77);
+
+      const won = await repo.claimTopicCreation(asTeamId("team-claim-stale"), "a-team-claim-stale", 77, 1_000, TTL);
+
+      expect(won).toBe(true);
+    });
+
+    it("loses when the observed thread id no longer matches (another tap already linked a topic)", async () => {
+      const repo = await seedAnalysis("team-claim-moved", 922, 88);
+
+      expect(await repo.claimTopicCreation(asTeamId("team-claim-moved"), "a-team-claim-moved", null, 1_000, TTL)).toBe(false);
+      expect(await repo.claimTopicCreation(asTeamId("team-claim-moved"), "a-team-claim-moved", 77, 1_000, TTL)).toBe(false);
+    });
+
+    it("loses while another claim is live, and wins once the TTL has expired", async () => {
+      const repo = await seedAnalysis("team-claim-ttl", 923);
+      const team = asTeamId("team-claim-ttl");
+      expect(await repo.claimTopicCreation(team, "a-team-claim-ttl", null, 1_000, TTL)).toBe(true);
+
+      expect(await repo.claimTopicCreation(team, "a-team-claim-ttl", null, 1_000 + TTL - 1, TTL)).toBe(false);
+      expect(await repo.claimTopicCreation(team, "a-team-claim-ttl", null, 1_000 + TTL, TTL)).toBe(true);
+    });
+
+    it("lets exactly one of two racing claims win", async () => {
+      const repo = await seedAnalysis("team-claim-race", 924);
+      const team = asTeamId("team-claim-race");
+
+      const results = await Promise.all([
+        repo.claimTopicCreation(team, "a-team-claim-race", null, 5_000, TTL),
+        repo.claimTopicCreation(team, "a-team-claim-race", null, 5_000, TTL),
+      ]);
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+    });
+
+    it("is tenant-scoped: another team's claim call never wins on the row", async () => {
+      const repo = await seedAnalysis("team-claim-owner", 925);
+      await seedTeam("team-claim-intruder", 926);
+
+      expect(await repo.claimTopicCreation(asTeamId("team-claim-intruder"), "a-team-claim-intruder", null, 1_000, TTL)).toBe(false);
+      expect(await repo.claimTopicCreation(asTeamId("team-claim-owner"), "a-team-claim-owner", null, 1_000, TTL)).toBe(true);
+    });
+
+    it("releaseTopicClaim reopens the claim immediately", async () => {
+      const repo = await seedAnalysis("team-claim-release", 927);
+      const team = asTeamId("team-claim-release");
+      expect(await repo.claimTopicCreation(team, "a-team-claim-release", null, 1_000, TTL)).toBe(true);
+      expect(await repo.claimTopicCreation(team, "a-team-claim-release", null, 1_001, TTL)).toBe(false);
+
+      await repo.releaseTopicClaim(team, "a-team-claim-release");
+
+      expect(await repo.claimTopicCreation(team, "a-team-claim-release", null, 1_002, TTL)).toBe(true);
+    });
+  });
+
+  describe("general message id and column preservation", () => {
+    it("rows without an id read generalMessageId: null", async () => {
+      await seedTeam("team-gm-null", 930);
+      const repo = createD1HackathonAnalysisRepo(env.DB);
+      await repo.save(analysis({ id: "a-gm-null", teamId: "team-gm-null", slug: "gm-null" }));
+
+      const found = await repo.findById(asTeamId("team-gm-null"), "a-gm-null");
+
+      expect(found?.generalMessageId).toBeNull();
+    });
+
+    it("setGeneralMessageId stores the id, and a later call overwrites it", async () => {
+      await seedTeam("team-gm-set", 931);
+      const repo = createD1HackathonAnalysisRepo(env.DB);
+      await repo.save(analysis({ id: "a-gm-set", teamId: "team-gm-set", slug: "gm-set" }));
+
+      await repo.setGeneralMessageId(asTeamId("team-gm-set"), "a-gm-set", 4242);
+      expect((await repo.findById(asTeamId("team-gm-set"), "a-gm-set"))?.generalMessageId).toBe(4242);
+
+      await repo.setGeneralMessageId(asTeamId("team-gm-set"), "a-gm-set", 5151);
+      expect((await repo.findBySlug(asTeamId("team-gm-set"), "gm-set"))?.generalMessageId).toBe(5151);
+    });
+
+    it("save never clobbers general_message_id or topic_claim_until", async () => {
+      await seedTeam("team-gm-save", 932);
+      const repo = createD1HackathonAnalysisRepo(env.DB);
+      const original = analysis({ id: "a-gm-save", teamId: "team-gm-save", slug: "gm-save" });
+      await repo.save(original);
+      await repo.setGeneralMessageId(asTeamId("team-gm-save"), "a-gm-save", 99);
+      await repo.claimTopicCreation(asTeamId("team-gm-save"), "a-gm-save", null, 1_000, 60_000);
+
+      await repo.save({ ...original, updatedAt: 777, generalMessageId: null });
+
+      const row = await env.DB.prepare(
+        "SELECT general_message_id, topic_claim_until FROM hackathon_analyses WHERE id = ?",
+      )
+        .bind("a-gm-save")
+        .first<{ general_message_id: number | null; topic_claim_until: number }>();
+      expect(row).toEqual({ general_message_id: 99, topic_claim_until: 61_000 });
+    });
+
+    it("persistAnalysis (job repo upsert) never clobbers general_message_id or topic_claim_until", async () => {
+      await seedTeam("team-gm-persist", 933);
+      const repo = createD1HackathonAnalysisRepo(env.DB);
+      const original = analysis({ id: "a-gm-persist", teamId: "team-gm-persist", slug: "gm-persist" });
+      await repo.save(original);
+      await repo.setGeneralMessageId(asTeamId("team-gm-persist"), "a-gm-persist", 123);
+      await repo.claimTopicCreation(asTeamId("team-gm-persist"), "a-gm-persist", null, 2_000, 60_000);
+      await env.DB.prepare(
+        `INSERT INTO hackathon_analysis_jobs
+          (id, team_id, chat_id, utc_day, fetch_url, status, created_at, updated_at)
+         VALUES ('job-gm', 'team-gm-persist', 1, '2026-01-01', 'https://x', 'running', 0, 0)`,
+      ).run();
+
+      const ok = await createD1AnalysisJobRepo(env.DB, { now: () => 0 }).persistAnalysis("job-gm", {
+        ...original,
+        updatedAt: 888,
+      });
+
+      const row = await env.DB.prepare(
+        "SELECT general_message_id, topic_claim_until, updated_at FROM hackathon_analyses WHERE id = ?",
+      )
+        .bind("a-gm-persist")
+        .first<{ general_message_id: number | null; topic_claim_until: number; updated_at: number }>();
+      expect(ok).toBe(true);
+      expect(row).toEqual({ general_message_id: 123, topic_claim_until: 62_000, updated_at: 888 });
     });
   });
 

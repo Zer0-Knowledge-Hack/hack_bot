@@ -60,6 +60,7 @@ describe("showAnalysis", () => {
       suggestedRepos: [],
       threadId: null,
       pinnedMessageId: null,
+      generalMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });

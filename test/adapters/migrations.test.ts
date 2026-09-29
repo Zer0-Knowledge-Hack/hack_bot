@@ -423,3 +423,55 @@ describe("migrations/0003_hackathon_analysis.sql", () => {
     ).rejects.toThrow(/FOREIGN KEY constraint failed/i);
   });
 });
+
+// migrations/0004_hackathon_participation.sql (design.md "Migration /
+// Rollout"): two additive columns on hackathon_analyses.
+describe("migrations/0004_hackathon_participation.sql", () => {
+  interface ColumnInfo {
+    name: string;
+    type: string;
+    notnull: number;
+    dflt_value: string | null;
+  }
+
+  async function column(name: string): Promise<ColumnInfo | undefined> {
+    const info = await env.DB.prepare("PRAGMA table_info(hackathon_analyses)").all<ColumnInfo>();
+    return info.results.find((c) => c.name === name);
+  }
+
+  it("adds general_message_id as a nullable INTEGER", async () => {
+    const col = await column("general_message_id");
+    expect(col?.type).toBe("INTEGER");
+    expect(col?.notnull).toBe(0);
+  });
+
+  it("adds topic_claim_until as INTEGER NOT NULL DEFAULT 0", async () => {
+    const col = await column("topic_claim_until");
+    expect(col?.type).toBe("INTEGER");
+    expect(col?.notnull).toBe(1);
+    expect(col?.dflt_value).toBe("0");
+  });
+
+  it("gives a row inserted without the new columns the defaults (null id, claim 0)", async () => {
+    await env.DB.prepare(
+      "INSERT INTO teams (id, telegram_chat_id, created_at) VALUES (?, ?, ?)",
+    )
+      .bind("team-hp-defaults", 720, 0)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO hackathon_analyses
+        (id, team_id, slug, source_url, normalized_url, fields, suggested_repos, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind("a-hp-def", "team-hp-defaults", "def", "https://d", "https://d", "{}", "[]", 0, 0)
+      .run();
+
+    const row = await env.DB.prepare(
+      "SELECT general_message_id, topic_claim_until FROM hackathon_analyses WHERE id = ?",
+    )
+      .bind("a-hp-def")
+      .first<{ general_message_id: number | null; topic_claim_until: number }>();
+
+    expect(row).toEqual({ general_message_id: null, topic_claim_until: 0 });
+  });
+});

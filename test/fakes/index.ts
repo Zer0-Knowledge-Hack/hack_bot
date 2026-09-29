@@ -1,5 +1,6 @@
 import {
   AlertSendFailedError,
+  ForumTopicCreateError,
   PublishFailedError,
   QueueSendFailedError,
   TenantMismatchError,
@@ -28,6 +29,7 @@ import type {
   ChatAdminChecker,
   ChatPublisher,
   Clock,
+  ForumTopicManager,
   DmSelectionRepo,
   GithubOrgClaimRepo,
   HackathonAnalysisRepo,
@@ -39,10 +41,13 @@ import type {
   MemberRepo,
   MembershipRepo,
   PageFetcher,
+  PostOptions,
   ProfileRepo,
   RepoMetadataSource,
   RepoTopicLinkRepo,
   TeamRepo,
+  TopicCreateFailure,
+  TopicProbe,
 } from "../../src/domain/ports";
 import type { MemberId, MembershipId, TeamId } from "../../src/domain/ids";
 
@@ -367,10 +372,36 @@ export function fakeLlmExtractor(
 
 export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
   rows: HackathonAnalysis[];
+  // Live topic-claim expiry per analysis id (mirrors topic_claim_until).
+  claims: Map<string, number>;
 } {
   const rows: HackathonAnalysis[] = [];
+  const claims = new Map<string, number>();
   return {
     rows,
+    claims,
+    // Mirrors the D1 CAS (single conditional UPDATE): wins only when the
+    // observed thread id still matches and no live claim exists.
+    claimTopicCreation: async (
+      teamId: TeamId,
+      analysisId: string,
+      expectedThreadId: number | null,
+      now: number,
+      ttlMs: number,
+    ) => {
+      const row = rows.find((r) => r.teamId === teamId && r.id === analysisId);
+      if (!row || row.threadId !== expectedThreadId) return false;
+      if ((claims.get(analysisId) ?? 0) > now) return false;
+      claims.set(analysisId, now + ttlMs);
+      return true;
+    },
+    releaseTopicClaim: async (_teamId: TeamId, analysisId: string) => {
+      claims.set(analysisId, 0);
+    },
+    setGeneralMessageId: async (teamId: TeamId, analysisId: string, messageId: number) => {
+      const row = rows.find((r) => r.teamId === teamId && r.id === analysisId);
+      if (row) row.generalMessageId = messageId;
+    },
     findBySlug: async (teamId: TeamId, slug: string) =>
       rows.find((r) => r.teamId === teamId && r.slug === slug) ?? null,
     findById: async (teamId: TeamId, id: string) =>
@@ -496,32 +527,91 @@ export function fakeRepoMetadataSource(
 }
 
 export function fakeChatPublisher(
-  opts: { throws?: boolean; failureClass?: AlertSendFailureClass } = {},
+  opts: {
+    throws?: boolean;
+    failureClass?: AlertSendFailureClass;
+    // clearButtons fails (participation: a button-clear failure is ignored).
+    clearThrows?: boolean;
+  } = {},
 ): ChatPublisher & {
   posted: Array<{ chatId: number; threadId: number | null; text: string }>;
+  // Parallel to `posted` (same index): the options each post received, so
+  // the existing `posted` entry shape stays unchanged for older tests.
+  postOptions: Array<PostOptions | undefined>;
   pinned: number[];
   unpinned: number[];
+  cleared: Array<{ chatId: number; messageId: number }>;
 } {
   const posted: Array<{ chatId: number; threadId: number | null; text: string }> = [];
+  const postOptions: Array<PostOptions | undefined> = [];
   const pinned: number[] = [];
   const unpinned: number[] = [];
+  const cleared: Array<{ chatId: number; messageId: number }> = [];
   let nextMessageId = 1;
   return {
     posted,
+    postOptions,
     pinned,
     unpinned,
-    post: async (chatId: number, threadId: number | null, text: string) => {
+    cleared,
+    post: async (chatId: number, threadId: number | null, text: string, options?: PostOptions) => {
       if (opts.throws) {
         throw new PublishFailedError("sendMessage failed", opts.failureClass ?? "rejected");
       }
       posted.push({ chatId, threadId, text });
+      postOptions.push(options);
       return nextMessageId++;
+    },
+    clearButtons: async (chatId: number, messageId: number) => {
+      if (opts.clearThrows) {
+        throw new PublishFailedError("editMessageReplyMarkup failed", opts.failureClass ?? "rejected");
+      }
+      cleared.push({ chatId, messageId });
     },
     pin: async (_chatId: number, messageId: number) => {
       pinned.push(messageId);
     },
     unpin: async (_chatId: number, messageId: number) => {
       unpinned.push(messageId);
+    },
+  };
+}
+
+// Scripted ForumTopicManager: each call consumes the next outcome (repeating
+// the last once exhausted); a default `create` yields sequential thread ids.
+// `calls` logs every create/probe so tests can assert "exactly one create".
+export type TopicCreateStep = { threadId: number } | { fails: TopicCreateFailure };
+
+export function fakeForumTopicManager(
+  opts: { create?: TopicCreateStep[]; probe?: TopicProbe[] } = {},
+): ForumTopicManager & {
+  created: Array<{ chatId: number; name: string }>;
+  probed: Array<{ chatId: number; threadId: number }>;
+} {
+  const created: Array<{ chatId: number; name: string }> = [];
+  const probed: Array<{ chatId: number; threadId: number }> = [];
+  let createIdx = 0;
+  let probeIdx = 0;
+  let nextThreadId = 1000;
+  return {
+    created,
+    probed,
+    create: async (chatId: number, name: string) => {
+      created.push({ chatId, name });
+      const script = opts.create;
+      const step = script && script.length > 0 ? script[Math.min(createIdx, script.length - 1)] : undefined;
+      createIdx += 1;
+      if (step && "fails" in step) {
+        throw new ForumTopicCreateError("createForumTopic failed", step.fails);
+      }
+      return step ? step.threadId : nextThreadId++;
+    },
+    probe: async (chatId: number, threadId: number) => {
+      probed.push({ chatId, threadId });
+      const script = opts.probe;
+      const step = script && script.length > 0 ? script[Math.min(probeIdx, script.length - 1)] : undefined;
+      probeIdx += 1;
+      return step ?? "live";
     },
   };
 }

@@ -13,6 +13,9 @@ export const commonCopy = {
   linkedHere: (name: string) => `Se vinculó ${name} a este tema.`,
 };
 
+// Label of the participation button attached to the General analysis post.
+export const participateButton = "✅ Participamos";
+
 export const hackathonCopy = {
   usage: "Uso: /hackathon <url o slug>",
   groupOnly: "Ejecuta este comando dentro del chat grupal de tu equipo.",

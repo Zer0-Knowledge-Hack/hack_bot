@@ -267,6 +267,20 @@ export interface HackathonAnalysisRepo {
     threadId: number,
     pinnedMessageId: number | null,
   ): Promise<void>;
+  // hackathon-participation (design.md decision 3): compare-and-set claim on
+  // topic creation. Wins only when the row still holds `expectedThreadId`
+  // (null, or the stale id observed by the probe) and no live claim exists
+  // (`topic_claim_until < now`); a win stamps `now + ttlMs`. Returns false
+  // when the claim is lost.
+  claimTopicCreation(
+    teamId: TeamId,
+    analysisId: string,
+    expectedThreadId: number | null,
+    now: number,
+    ttlMs: number,
+  ): Promise<boolean>;
+  releaseTopicClaim(teamId: TeamId, analysisId: string): Promise<void>;
+  setGeneralMessageId(teamId: TeamId, analysisId: string, messageId: number): Promise<void>;
 }
 
 // design.md "reserve": one atomic batch reserves the cap slot and the
@@ -326,8 +340,41 @@ export interface RepoMetadataSource {
 // design.md "Interfaces / Contracts". `post` returns the new message id
 // (needed to `pin`/`unpin` it later) and throws PublishFailedError on
 // failure, mirroring AlertSender.
+// hackathon-participation (design.md "Interfaces / Contracts"). `probe` never
+// throws; `unknown` (any ambiguous result) must be treated as live so a
+// topic is never recreated on ambiguity.
+export type TopicProbe = "live" | "deleted" | "unknown";
+export type TopicCreateFailure =
+  | "no-rights"
+  | "not-forum"
+  | "rate-limited"
+  | "rejected"
+  | "unavailable";
+
+// ISP port: only the use case that creates topics sees topic rights.
+// `create` throws ForumTopicCreateError(failure).
+export interface ForumTopicManager {
+  create(chatId: number, name: string): Promise<number>;
+  probe(chatId: number, threadId: number): Promise<TopicProbe>;
+}
+
+// Semantic post options (hackathon-participation design.md decision 1): the
+// domain never builds a keyboard. `participateSlug` asks the adapter to
+// attach the participation button for that analysis; the label and the
+// callback encoding stay in the adapter.
+export interface PostOptions {
+  participateSlug?: string;
+}
+
 export interface ChatPublisher {
-  post(chatId: number, threadId: number | null, text: string): Promise<number>;
+  post(
+    chatId: number,
+    threadId: number | null,
+    text: string,
+    options?: PostOptions,
+  ): Promise<number>;
   pin(chatId: number, messageId: number): Promise<void>;
   unpin(chatId: number, messageId: number): Promise<void>;
+  // Removes the inline keyboard from a message (throws PublishFailedError).
+  clearButtons(chatId: number, messageId: number): Promise<void>;
 }
