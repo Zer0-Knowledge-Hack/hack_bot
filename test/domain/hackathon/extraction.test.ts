@@ -104,7 +104,7 @@ describe("validateExtraction", () => {
 
   it("nulls a field whose snippet exceeds 200 characters (spec llm-extraction: Bounded Source Snippet)", () => {
     const boundaryText = "Meridian 2026 hosts teams from every continent for a full week. ".repeat(4);
-    const over = boundaryText.slice(0, 201);
+    const over = boundaryText.slice(1, 202);
     const withinPage = `Prizes include the following details: ${boundaryText}`;
     const result = validateExtraction(
       {
@@ -332,5 +332,84 @@ describe("validateExtraction", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.ok && result.fields.name).toBeNull();
+  });
+
+  describe("whitespace-insensitive verbatim check", () => {
+    const NULLS = {
+      name: null,
+      format: null,
+      location: null,
+      teamSize: null,
+      submissionDeadline: null,
+      startDate: null,
+      endDate: null,
+      resultsDate: null,
+      prizes: null,
+      tracks: null,
+      eligibility: null,
+    };
+    const blockPage = "Meridian 2026\n\nLocation\n\nOnline\n\n20,000 USD Prize Pool";
+
+    function locationResult(snippet: string, page: string) {
+      return validateExtraction(
+        { ...NULLS, location: { value: "Online", snippet, confidence: 0.9 } },
+        page,
+      );
+    }
+
+    it("accepts a flattened snippet of a block-separated page", () => {
+      const result = locationResult("Location Online", blockPage);
+      expect(result.ok && result.rejectedCount).toBe(0);
+      expect(result.ok && result.fields.location?.value).toBe("Online");
+    });
+
+    it("accepts a snippet spanning element boundaries", () => {
+      const result = locationResult("Online 20,000 USD Prize Pool", blockPage);
+      expect(result.ok && result.rejectedCount).toBe(0);
+    });
+
+    it("accepts NBSP and CRLF variants on either side", () => {
+      const a = locationResult("Location Online now", "Location\r\n\r\nOnline now");
+      expect(a.ok && a.rejectedCount).toBe(0);
+      const b = locationResult("Location \tOnline\r\nnow", "Location Online now");
+      expect(b.ok && b.rejectedCount).toBe(0);
+    });
+
+    it("stores the whitespace-normalized snippet", () => {
+      const result = locationResult("Location\n Online", blockPage);
+      expect(result.ok && result.fields.location?.snippet).toBe("Location Online");
+    });
+
+    it("still rejects a snippet that is absent from the page", () => {
+      const result = locationResult("Location Mars", blockPage);
+      expect(result.ok && result.rejectedCount).toBe(1);
+      expect(result.ok && result.fields.location).toBeNull();
+    });
+
+    it("still rejects a snippet that differs by a real character", () => {
+      const a = locationResult("Location Onlyne", "Location\n\nOnline");
+      expect(a.ok && a.rejectedCount).toBe(1);
+      const b = locationResult("Locat1on Online", "Location\n\nOnline");
+      expect(b.ok && b.rejectedCount).toBe(1);
+    });
+
+    it("does not treat merged words as a match (whitespace is collapsed, not removed)", () => {
+      const result = locationResult("LocationOnline", blockPage);
+      expect(result.ok && result.rejectedCount).toBe(1);
+    });
+
+    it("still rejects an empty or whitespace-only snippet even when the page has whitespace", () => {
+      const result = locationResult(" \n  ", blockPage);
+      expect(result.ok && result.rejectedCount).toBe(1);
+    });
+
+    it("applies the 200-char cap to the normalized snippet", () => {
+      const words = "abcdefghi ".repeat(30).trim(); // 299 chars
+      const over = locationResult(words, words.split(" ").join("\n\n"));
+      expect(over.ok && over.rejectedCount).toBe(1);
+      const padded = `word\n\n\n\n\n${" ".repeat(300)}next`;
+      const ok = locationResult(padded, "word next");
+      expect(ok.ok && ok.rejectedCount).toBe(0);
+    });
   });
 });

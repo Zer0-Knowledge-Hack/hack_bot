@@ -83,6 +83,8 @@ export function validateExtraction(
   }
   const record = raw as Record<string, unknown>;
 
+  // Normalized once per call, not per field (see normalizeWhitespace).
+  const normalizedPage = normalizeWhitespace(pageText);
   const fields = {} as ExtractedFields;
   let rejectedCount = 0;
   for (const name of FIELD_NAMES) {
@@ -108,7 +110,7 @@ export function validateExtraction(
     }
     const sanitized = sanitizeField(
       { value: candidate.value, snippet: candidate.snippet, confidence: candidate.confidence },
-      pageText,
+      normalizedPage,
     );
     // The model supplied a non-null field, but content validation nulled
     // it (RELI-001) — distinct from a field the model itself returned as
@@ -131,21 +133,38 @@ function hasValidFieldType(name: keyof ExtractedFields, value: unknown): boolean
   return typeof value === "string";
 }
 
+// Collapses every run of whitespace (\s covers \n, \r, \t and NBSP U+00A0)
+// to one space and trims. html-to-text.ts joins blocks with "\n\n" while
+// models copy snippets with flattened whitespace, so a strict byte-for-byte
+// containment check rejected genuine quotes. Whitespace is collapsed, never
+// removed, so "LocationOnline" still does not match "Location Online".
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 // Demotes a syntactically valid field to null when it fails a content
 // guard: an empty/whitespace-only snippet (RISK-001 — trivially "found" in
 // any page, defeating the anti-hallucination verbatim check), an oversized
 // snippet (spec: "Bounded Source Snippet"), a snippet that is not verbatim
-// in the page text (design.md "fields whose snippet is not found in the
-// page" become null), or an oversized `value` (RISK-001, VALUE_MAX above).
+// (modulo whitespace) in the page text (design.md "fields whose snippet is
+// not found in the page" become null), or an oversized `value` (RISK-001,
+// VALUE_MAX above).
+//
+// `normalizedPage` is the already-normalized page text. SNIPPET_MAX applies
+// to the NORMALIZED snippet: padding whitespace is not content, and the
+// stored snippet is the normalized one, so the persisted bound is exactly
+// what is checked. Storing the normalized form (rather than the model's raw
+// text) also keeps stored snippets single-line and comparable to the page.
 function sanitizeField(
   field: ExtractedField<unknown>,
-  pageText: string,
+  normalizedPage: string,
 ): Field<unknown> {
-  if (field.snippet.trim().length === 0) return null;
-  if (field.snippet.length > SNIPPET_MAX) return null;
-  if (!pageText.includes(field.snippet)) return null;
+  const snippet = normalizeWhitespace(field.snippet);
+  if (snippet.length === 0) return null;
+  if (snippet.length > SNIPPET_MAX) return null;
+  if (!normalizedPage.includes(snippet)) return null;
   if (typeof field.value === "string" && field.value.length > VALUE_MAX) {
     return null;
   }
-  return field;
+  return { ...field, snippet };
 }
