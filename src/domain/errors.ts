@@ -4,6 +4,7 @@
 // checks working across every caller, domain or adapter, instead of
 // forking two classes with the same name (design.md "Config errors").
 export { ConfigError } from "../config-error";
+import type { FieldRejection } from "./hackathon/extraction";
 
 export class DomainError extends Error {
   constructor(message: string) {
@@ -121,12 +122,28 @@ export class BrowserQuotaExceededError extends DomainError {}
 // timeout}`).
 export type ExtractionFailureKind = "invalid-output" | "model-error" | "timeout";
 
+// One model attempt's outcome, for post-mortem logging only. Carries field
+// NAMES and fixed reason codes — never snippet text, values or page content.
+export interface ExtractionAttemptDiagnostics {
+  model: string;
+  // false when the response failed schema validation as a whole.
+  parsed: boolean;
+  rejectedCount: number;
+  rejected: FieldRejection[];
+}
+
 export class ExtractionFailedError extends DomainError {
   readonly kind: ExtractionFailureKind;
+  readonly attempts?: ExtractionAttemptDiagnostics[];
 
-  constructor(message: string, kind: ExtractionFailureKind) {
+  constructor(
+    message: string,
+    kind: ExtractionFailureKind,
+    attempts?: ExtractionAttemptDiagnostics[],
+  ) {
     super(message);
     this.kind = kind;
+    if (attempts !== undefined) this.attempts = attempts;
   }
 }
 

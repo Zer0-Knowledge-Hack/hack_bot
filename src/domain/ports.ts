@@ -14,6 +14,7 @@ import type {
 import type { RepoFullName } from "./github";
 import type { MemberId, MembershipId, TeamId } from "./ids";
 import type { Role } from "./entities";
+import type { ExtractionAttemptDiagnostics } from "./errors";
 
 // Every tenant-scoped method takes TeamId as its first parameter. This is a
 // deliberate design constraint (see design.md "Tenancy") that makes
@@ -151,6 +152,9 @@ export interface LogEvent {
   reason?: string;
   // Non-2xx status of a failed page fetch (a bare number; no URL or body).
   httpStatus?: number;
+  // Per-model-attempt extraction outcome of a failed analysis (field names
+  // and reason codes only; never snippet or value text).
+  attempts?: ExtractionAttemptDiagnostics[];
 }
 
 export interface Logger {

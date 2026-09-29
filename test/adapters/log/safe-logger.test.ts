@@ -84,4 +84,29 @@ describe("createSafeLogger", () => {
     expect(Object.keys(logged).sort()).toEqual(["errorCode", "event", "outcome"]);
     spy.mockRestore();
   });
+
+  it("logs httpStatus and per-attempt diagnostics, copying only allowlisted attempt keys", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const logger = createSafeLogger();
+    const attempt = {
+      model: "@cf/primary",
+      parsed: true,
+      rejectedCount: 1,
+      rejected: [{ field: "name", reason: "not-verbatim" as const }],
+    };
+
+    logger.log({
+      event: "hackathon-job",
+      outcome: "error",
+      reason: "llm:invalid-output",
+      httpStatus: 404,
+      attempts: [{ ...attempt, snippet: "leaky snippet" } as typeof attempt],
+    });
+
+    const logged = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(logged.httpStatus).toBe(404);
+    expect(logged.attempts).toEqual([attempt]);
+    expect(spy.mock.calls[0]?.[0]).not.toContain("leaky snippet");
+    spy.mockRestore();
+  });
 });

@@ -3,6 +3,7 @@ import {
   ExtractionFailedError,
   PageFetchFailedError,
   PageTooThinError,
+  type ExtractionAttemptDiagnostics,
 } from "../errors";
 import { deriveBaseSlug, slugForAttempt } from "../hackathon/slug";
 import { suggestRepos } from "../hackathon/suggest";
@@ -214,6 +215,15 @@ function isUsable(
   return result.ok && result.rejectedCount <= MAJORITY_REJECTED_THRESHOLD;
 }
 
+function diagnosticsOf(
+  model: string,
+  result: ValidateExtractionResult,
+): ExtractionAttemptDiagnostics {
+  return result.ok
+    ? { model, parsed: true, rejectedCount: result.rejectedCount, rejected: result.rejections }
+    : { model, parsed: false, rejectedCount: 0, rejected: [] };
+}
+
 function rejectedCountOf(result: ValidateExtractionResult): number {
   return result.ok ? result.rejectedCount : FIELD_COUNT;
 }
@@ -238,6 +248,7 @@ async function extractFields(
     throw new ExtractionFailedError(
       "Primary model output was unusable and too little time remains for the fallback",
       "timeout",
+      [diagnosticsOf(input.primaryModel, primary)],
     );
   }
 
@@ -257,6 +268,10 @@ async function extractFields(
   throw new ExtractionFailedError(
     "Both the primary and fallback model produced too many invalid fields",
     "invalid-output",
+    [
+      diagnosticsOf(input.primaryModel, primary),
+      diagnosticsOf(input.fallbackModel, fallback),
+    ],
   );
 }
 

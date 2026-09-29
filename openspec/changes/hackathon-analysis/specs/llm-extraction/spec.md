@@ -38,12 +38,27 @@ The system MUST represent a field the page does not clearly state as null rather
 
 For every non-null extracted field, the system MUST store a bounded-length source snippet (at most 200 characters) drawn from the page text, so a human can verify the field.
 
+The snippet MUST be verbatim modulo whitespace: it is accepted when, after collapsing every run of whitespace (including line breaks and non-breaking spaces) to a single space and trimming, it occurs in the equally normalized page text. Whitespace is collapsed, never removed, and any other difference (a changed, missing or added character) still rejects the field. The 200-character cap applies to the whitespace-normalized snippet, which is also the form stored. An empty or whitespace-only snippet is always rejected.
+
 #### Scenario: Non-null field carries a snippet
 
 - GIVEN the page text states a submission deadline
 - WHEN extraction completes
 - THEN the deadline field is non-null
 - AND a snippet of at most 200 characters supporting that field is stored alongside it
+
+#### Scenario: Snippet with flattened whitespace is accepted
+
+- GIVEN the page text contains "Location" and "Online" in separate blocks separated by line breaks
+- WHEN the model returns the snippet "Location Online"
+- THEN the field is kept
+- AND the stored snippet is "Location Online"
+
+#### Scenario: Snippet absent from the page is rejected
+
+- GIVEN the returned snippet, after whitespace normalization, does not occur in the normalized page text
+- WHEN the response is validated
+- THEN that field becomes null
 
 #### Scenario: Null field carries no snippet
 

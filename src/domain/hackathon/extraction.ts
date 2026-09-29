@@ -36,8 +36,28 @@ export interface ExtractedFields {
 // returned as `null`. The use case layer uses it to decide whether the
 // fallback model should be tried or preferred (analyze-hackathon.ts
 // "more than half of its fields are invalid").
+// Why content validation nulled a field. Fixed codes only — safe to log
+// (never carries snippet or value text).
+export type RejectionReason =
+  | "empty-snippet"
+  | "snippet-too-long"
+  | "not-verbatim"
+  | "value-too-long";
+
+export interface FieldRejection {
+  field: string;
+  reason: RejectionReason;
+}
+
 export type ValidateExtractionResult =
-  | { ok: true; fields: ExtractedFields; rejectedCount: number }
+  | {
+      ok: true;
+      fields: ExtractedFields;
+      rejectedCount: number;
+      // One entry per rejected field, in schema order (rejections.length ===
+      // rejectedCount). Field NAMES and reason codes only.
+      rejections: FieldRejection[];
+    }
   | { ok: false; reason: "invalid-shape" };
 
 // spec llm-extraction: "Bounded Source Snippet Per Non-Null Field" — at
@@ -83,8 +103,10 @@ export function validateExtraction(
   }
   const record = raw as Record<string, unknown>;
 
+  // Normalized once per call, not per field (see normalizeWhitespace).
+  const normalizedPage = normalizeWhitespace(pageText);
   const fields = {} as ExtractedFields;
-  let rejectedCount = 0;
+  const rejections: FieldRejection[] = [];
   for (const name of FIELD_NAMES) {
     if (!(name in record)) {
       return { ok: false, reason: "invalid-shape" };
@@ -108,16 +130,20 @@ export function validateExtraction(
     }
     const sanitized = sanitizeField(
       { value: candidate.value, snippet: candidate.snippet, confidence: candidate.confidence },
-      pageText,
+      normalizedPage,
     );
     // The model supplied a non-null field, but content validation nulled
     // it (RELI-001) — distinct from a field the model itself returned as
     // null, which is never counted as rejected.
-    if (sanitized === null) rejectedCount += 1;
+    if (typeof sanitized === "string") {
+      rejections.push({ field: name, reason: sanitized });
+      (fields as unknown as Record<string, unknown>)[name] = null;
+      continue;
+    }
     (fields as unknown as Record<string, unknown>)[name] = sanitized;
   }
 
-  return { ok: true, fields, rejectedCount };
+  return { ok: true, fields, rejectedCount: rejections.length, rejections };
 }
 
 // Checks `value` against the declared type of the field (spec
@@ -131,21 +157,38 @@ function hasValidFieldType(name: keyof ExtractedFields, value: unknown): boolean
   return typeof value === "string";
 }
 
+// Collapses every run of whitespace (\s covers \n, \r, \t and NBSP U+00A0)
+// to one space and trims. html-to-text.ts joins blocks with "\n\n" while
+// models copy snippets with flattened whitespace, so a strict byte-for-byte
+// containment check rejected genuine quotes. Whitespace is collapsed, never
+// removed, so "LocationOnline" still does not match "Location Online".
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 // Demotes a syntactically valid field to null when it fails a content
 // guard: an empty/whitespace-only snippet (RISK-001 — trivially "found" in
 // any page, defeating the anti-hallucination verbatim check), an oversized
 // snippet (spec: "Bounded Source Snippet"), a snippet that is not verbatim
-// in the page text (design.md "fields whose snippet is not found in the
-// page" become null), or an oversized `value` (RISK-001, VALUE_MAX above).
+// (modulo whitespace) in the page text (design.md "fields whose snippet is
+// not found in the page" become null), or an oversized `value` (RISK-001,
+// VALUE_MAX above).
+//
+// `normalizedPage` is the already-normalized page text. SNIPPET_MAX applies
+// to the NORMALIZED snippet: padding whitespace is not content, and the
+// stored snippet is the normalized one, so the persisted bound is exactly
+// what is checked. Storing the normalized form (rather than the model's raw
+// text) also keeps stored snippets single-line and comparable to the page.
 function sanitizeField(
   field: ExtractedField<unknown>,
-  pageText: string,
-): Field<unknown> {
-  if (field.snippet.trim().length === 0) return null;
-  if (field.snippet.length > SNIPPET_MAX) return null;
-  if (!pageText.includes(field.snippet)) return null;
+  normalizedPage: string,
+): Field<unknown> | RejectionReason {
+  const snippet = normalizeWhitespace(field.snippet);
+  if (snippet.length === 0) return "empty-snippet";
+  if (snippet.length > SNIPPET_MAX) return "snippet-too-long";
+  if (!normalizedPage.includes(snippet)) return "not-verbatim";
   if (typeof field.value === "string" && field.value.length > VALUE_MAX) {
-    return null;
+    return "value-too-long";
   }
-  return field;
+  return { ...field, snippet };
 }
