@@ -17,7 +17,7 @@ After a General-chat analysis, the team decides whether to join. Today an admin 
   - the result stays within 1–128 characters.
 - Idempotency:
   - if the analysis has a live topic, create nothing and reply with the topic link;
-  - if the link is stale (the topic was deleted), a lightweight probe detects it, the stale link is dropped, and the topic is recreated.
+  - if the link is stale (the topic was deleted), posting the analysis into it detects it (a rejected post), the stale link is dropped, and the topic is recreated.
 - On success:
   - post "✅ Participating in <name> → <link>" in General;
   - remove the button from the original message;

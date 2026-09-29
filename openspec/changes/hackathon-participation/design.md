@@ -6,14 +6,14 @@ Hexagonal, same as change 3. There is one pure use case, `participateInHackathon
 - the `hp:<slug>` callback on the General analysis post;
 - `/hackathon join <slug>`.
 
-The use case owns five things: the admin gate, the slug lookup, the live/deleted probe, a D1 compare-and-set claim, and topic creation. It then links through the existing `moveTopicLink` / `postAnalysisAndLinkTopic` flow and removes the button. Telegram access sits behind a new `ForumTopicManager` port plus two small `ChatPublisher` additions. The domain never imports grammY. The consumer (`runHackathonJob`) attaches the button to its two General post sites and stores the message id. Specs: `specs/hackathon-participation`, plus the deltas for `hackathon-analysis` and `telegram-webhook`.
+The use case owns five things: the admin gate, the slug lookup, the existing-topic check (a real post), a D1 compare-and-set claim, and topic creation. It then links through the existing `moveTopicLink` / `postAnalysisAndLinkTopic` flow and removes the button. Telegram access sits behind a new `ForumTopicManager` port plus two small `ChatPublisher` additions. The domain never imports grammY. The consumer (`runHackathonJob`) attaches the button to its two General post sites and stores the message id. Specs: `specs/hackathon-participation`, plus the deltas for `hackathon-analysis` and `telegram-webhook`.
 
 ## Architecture Decisions
 
 | # | Topic | Choice | Rejected (tradeoff) |
 |---|---|---|---|
-| 1 | Ports | New ISP port `ForumTopicManager { create, probe }`. `ChatPublisher.post` gains an optional `PostOptions { participateSlug?: string }`, which is semantic, not a keyboard. It also gains `clearButtons(chatId, messageId)`. The adapter owns the label, the `hp:` encoding and `editMessageReplyMarkup` (omitting `reply_markup` removes the keyboard). | Extending `ChatPublisher` with topic methods: the consumer would see topic rights it never needs. A domain-built `{label,data}` keyboard would leak the Telegram payload format into the domain. |
-| 2 | Deleted-topic probe | `sendChatAction(chat, "typing", {message_thread_id})`. **ok ⇒ `live`** (a positive signal). A 400 whose description matches `/message thread not found\|TOPIC_ID_INVALID\|TOPIC_DELETED/i` ⇒ `deleted`. **Anything else** (other 400s, 403, 429, 5xx, timeout) ⇒ `unknown`, treated as live: never recreate on ambiguity. It needs no `can_manage_topics`. Its side effect is a "typing…" indicator of at most 5 s. | `editForumTopic` with no changes: needs `can_manage_topics` unless the bot created the topic, and a live topic also fails (`TOPIC_NOT_MODIFIED`), so live vs deleted hinges on two error strings. `closeForumTopic`/`reopenForumTopic`: they change state, post a service message, and need `can_manage_topics`. Telegram does not document its error descriptions (they come from community reports), so validation is an operator smoke step. The port hides the mechanism, so switching it is adapter-only. |
+| 1 | Ports | New ISP port `ForumTopicManager { create }`. `ChatPublisher.post` gains an optional `PostOptions { participateSlug?: string }`, which is semantic, not a keyboard. It also gains `clearButtons(chatId, messageId)`. The adapter owns the label, the `hp:` encoding and `editMessageReplyMarkup` (omitting `reply_markup` removes the keyboard). | Extending `ChatPublisher` with topic methods: the consumer would see topic rights it never needs. A domain-built `{label,data}` keyboard would leak the Telegram payload format into the domain. |
+| 2 | Existing-topic check | Do the real action: `postAnalysisAndLinkTopic` posts (and re-pins) the analysis into the linked thread. **Post succeeds ⇒ the topic is live**: reply `already(link)`; the analysis is re-posted there. A `PublishFailedError` classified `rejected` (a 4xx such as 400 "message thread not found") ⇒ the topic is deleted: `expected = threadId`, then claim → create → link → post/pin → confirm. `telegram-unavailable` and `rate-limited` (5xx, network, 429) ⇒ unknown: never recreate on ambiguity, reply `already(link)`. | `sendChatAction(chat, "typing", {message_thread_id})`: production showed Telegram accepts a chat action for a deleted thread, so it never detected the deletion. `editForumTopic`, `closeForumTopic`/`reopenForumTopic`: they need `can_manage_topics` and change topic state. The `PublishFailedError.failureClass` already carries the classification, so the domain stays free of grammY and Telegram error strings. |
 | 3 | Concurrency and redelivery | **(a) Migration 0004 with a claim.** `topic_claim_until` is set by a conditional `UPDATE … WHERE team_id=? AND id=? AND thread_id IS ?expected AND topic_claim_until <= ?now` (CAS on the observed `thread_id`: null, or the stale id). TTL is 60 s. | (b) Accepting the race. Webhook `max_connections` defaults to 40, so parallel taps are real, and the cost (a duplicate public topic) is visible and manual to undo. |
 | 4 | Button and message id | Migration 0004 adds `general_message_id`. A helper `postToGeneral` in `run-hackathon-job` (used by both General sites) posts with `participateSlug`. It then calls `setGeneralMessageId`, best-effort: catch and log, never retry, because a retry would repost. Each repost overwrites the id; old buttons stay idempotent. `/hackathon join` clears the stored id's button. Old analyses have null, so nothing is cleared. | Not storing the id: `join` could never remove the button. |
 | 5 | Callback handling | `bot.callbackQuery(/^hp:([a-z0-9]+(?:-[a-z0-9]+)*)$/)`. A private chat or a missing chat is ignored. The new `callbackCallerLocation(ctx)` reads `ctx.chat.id`, `ctx.from.id`, `ctx.msg?.message_thread_id` and `ctx.callbackQuery.message?.message_id`. The team comes from `teamRepo.findByChatId` and the role from `ctx.from.id` (`resolveGroupMembership`). Non-members and non-admins get the same alert (`show_alert`). The handler answers the callback early and best-effort. | Changing `callerLocation` to `ctx.msg`: it would widen every command to edited or channel messages. Trusting a team id in the payload is ruled out by the spec. |
@@ -24,7 +24,7 @@ The use case owns five things: the admin gate, the slug lookup, the live/deleted
 ## Use Case Step Order (`participateInHackathon`)
 
 1. Membership role check: not an admin ⇒ `UnauthorizedError`. `findBySlug` finds nothing ⇒ `AnalysisNotFoundError`.
-2. `threadId != null` ⇒ `probe`. On `live` or `unknown`: clear the buttons (best-effort) and return `already(link)`. On `deleted`: set `expected = threadId`.
+2. `threadId != null` ⇒ post the analysis into that thread. On success or an unknown failure (`telegram-unavailable`, `rate-limited`): clear the buttons (best-effort) and return `already(link)`. On a `rejected` post: set `expected = threadId`.
 3. `claimTopicCreation(expected, now, 60s)`. If it returns false, re-read the analysis. Linked ⇒ `already(link)`. Otherwise `busy`, a neutral no-op: the callback is answered silently and nothing is posted.
 4. `create(chat, topicNameFor(analysis))` can fail as follows:
 
@@ -45,7 +45,7 @@ The use case owns five things: the admin gate, the slug lookup, the live/deleted
 tap hp:<slug> ─ callbackCallerLocation ─ member+admin? ─no→ alert
 /hackathon join <slug> ─ parseJoinArgument ─┐       │yes
                                             └─ participateInHackathon
-   probe ─ claim(CAS) ─ create ─ moveTopicLink ─ post+pin (existing) ─ clearButtons
+   post-check ─ claim(CAS) ─ create ─ moveTopicLink ─ post+pin (existing) ─ clearButtons
    └→ replyText ─ safe post to General (threadId null)
 consumer: postToGeneral(text, participateSlug) ─ setGeneralMessageId (best-effort)
 ```
@@ -53,11 +53,9 @@ consumer: postToGeneral(text, participateSlug) ─ setGeneralMessageId (best-eff
 ## Interfaces / Contracts
 
 ```ts
-type TopicProbe = "live" | "deleted" | "unknown";            // probe never throws
 type TopicCreateFailure = "no-rights" | "not-forum" | "rate-limited" | "rejected" | "unavailable";
 interface ForumTopicManager {
   create(chatId: number, name: string): Promise<number>;      // throws ForumTopicCreateError(failure)
-  probe(chatId: number, threadId: number): Promise<TopicProbe>;
 }
 interface ChatPublisher { post(chatId, threadId, text, options?: { participateSlug?: string }): Promise<number>;
   pin; unpin; clearButtons(chatId: number, messageId: number): Promise<void>; }
@@ -112,9 +110,9 @@ or record `size:exception`.
 | Layer | Cases | Approach |
 |---|---|---|
 | Pure | `topicNameFor` (control and bidi characters, whitespace, empty ⇒ slug, 128-unit cap, no split surrogate); `topicLink` (`-100` stripping, non-`-100` ⇒ null); `parseJoinArgument` (bare, non-slug, three tokens) | Vitest |
-| Use case | Non-admin or non-member changes nothing. A live topic gets `already` and nothing is created. An `unknown` probe is treated as live. A **deleted** topic is recreated and the stale id replaced. **Redelivery:** a second call after success returns `already`. **Concurrent taps:** a claim loss followed by a re-read gives `already` or `busy`, with exactly one `create`. Missing rights or not a forum: the claim is released and nothing is linked. `unavailable` keeps the claim. **Link failure / post failure after creation**: never throws. **Pin failure** adds a note. A button-clear failure is ignored. | `FakeForumTopicManager` (scripted outcomes, call log), plus the fake publisher and repo |
+| Use case | Non-admin or non-member changes nothing. A live topic (the post succeeds) gets `already` and nothing is created. An unavailable or rate-limited post is treated as unknown: no recreate. A **deleted** topic (the post is `rejected`) is recreated and the stale id replaced. **Redelivery:** a second call after success returns `already`. **Concurrent taps:** a claim loss followed by a re-read gives `already` or `busy`, with exactly one `create`. Missing rights or not a forum: the claim is released and nothing is linked. `unavailable` keeps the claim. **Link failure / post failure after creation**: never throws. **Pin failure** adds a note. A button-clear failure is ignored. | `FakeForumTopicManager` (scripted outcomes, call log), plus the fake publisher and repo |
 | D1 | Claim CAS on `IS NULL` and `IS stale`, TTL expiry, release, `setGeneralMessageId`; `save`/`persistAnalysis` leave the new columns alone | vitest-pool-workers |
-| Adapters | Create-error classification table; probe mapping (ok, deleted strings, other ⇒ unknown); `clearButtons` sends `editMessageReplyMarkup` without markup; the keyboard carries `hp:<slug>` of at most 64 bytes | Injected `Api` stub |
+| Adapters | Create-error classification table; `clearButtons` sends `editMessageReplyMarkup` without markup; the keyboard carries `hp:<slug>` of at most 64 bytes | Injected `Api` stub |
 | Handlers | The `hp:` alert for non-admins; a private chat is ignored; the join usage; a failing safe General post never produces a 500; the consumer General post has the button, a topic post has none, and a `setGeneralMessageId` failure still acks | `telegram-stub.ts`, callback fixtures from `commands.test.ts` |
 
 No fetch, LLM or validation path changes, so `npm run harness` is not required.
@@ -132,12 +130,12 @@ The shell, VCS and PR rows are N/A: this change has no shell, subprocess, VCS or
 Both are additive. Operator steps:
 1. Apply 0004 remotely, then deploy.
 2. Grant "Administrar temas".
-3. Smoke test: tap the button; delete the topic and tap again (validates the probe strings and the link format); run a join on an old analysis.
+3. Smoke test: tap the button; delete the topic and tap again (validates that the rejected post recreates the topic, and the link format); run a join on an old analysis.
 
 Rollback: redeploy the previous Worker. The columns are ignored.
 
 ## Open Questions
 
 - [ ] Can the spec adopt the three design-proposed strings (`createFailed`, `createUncertain`, `linkFailed`)?
-- [ ] Probe error strings and the `t.me/c` topic link are unverified against production (smoke step 3).
+- [ ] The `t.me/c` topic link and the rejected-post recreation are unverified against production (smoke step 3).
 - [ ] Known race: a refresh job whose `persistAnalysis` upsert runs during participation can overwrite `thread_id` with its stale value. This is pre-existing behavior; recovery is `/hackathon <slug>` in the topic.
