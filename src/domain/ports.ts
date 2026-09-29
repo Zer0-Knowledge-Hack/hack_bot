@@ -149,6 +149,8 @@ export interface LogEvent {
   // A fixed, non-sensitive failure description (e.g. a ConfigError
   // message). Never a raw error message, input value, or secret.
   reason?: string;
+  // Non-2xx status of a failed page fetch (a bare number; no URL or body).
+  httpStatus?: number;
 }
 
 export interface Logger {

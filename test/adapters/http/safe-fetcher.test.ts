@@ -105,6 +105,34 @@ describe("createStaticFetcher", () => {
 
     expect(err).toBeInstanceOf(PageFetchFailedError);
     expect((err as PageFetchFailedError).kind).toBe("http-status");
+    expect((err as PageFetchFailedError).status).toBe(404);
+  });
+
+  it("carries the numeric status of a bot-wall response on the error", async () => {
+    const { fetchFn } = scriptedFetch([
+      new Response("blocked", { status: 403, headers: { "content-type": "text/html" } }),
+    ]);
+    const fetcher = createStaticFetcher({ fetch: fetchFn });
+
+    const err = await fetcher
+      .fetch("https://example.com/walled", new AbortController().signal)
+      .catch((e) => e);
+
+    expect((err as PageFetchFailedError).status).toBe(403);
+  });
+
+  it("carries no status on a non-http-status failure", async () => {
+    const { fetchFn } = scriptedFetch([
+      new Response("x", { status: 200, headers: { "content-type": "application/pdf" } }),
+    ]);
+    const fetcher = createStaticFetcher({ fetch: fetchFn });
+
+    const err = await fetcher
+      .fetch("https://example.com/doc", new AbortController().signal)
+      .catch((e) => e);
+
+    expect((err as PageFetchFailedError).kind).toBe("content-type");
+    expect((err as PageFetchFailedError).status).toBeUndefined();
   });
 
   it("rejects a disallowed content-type (spec: non-html rejected)", async () => {

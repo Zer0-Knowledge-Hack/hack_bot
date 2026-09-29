@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runHackathonJob } from "../../../src/domain/usecases/run-hackathon-job";
-import { UnsafeUrlError } from "../../../src/domain/errors";
+import { PageFetchFailedError, UnsafeUrlError } from "../../../src/domain/errors";
 import { asTeamId } from "../../../src/domain/ids";
 import type { AnalysisJob, AnalysisJobMessage } from "../../../src/domain/entities";
 import {
@@ -476,6 +476,44 @@ describe("runHackathonJob", () => {
     expect(deps.logger.entries).toContainEqual(
       expect.objectContaining({ event: "hackathon-job", outcome: "error", reason: "failure-reply-failed" }),
     );
+  });
+
+  it("logs the HTTP status of a failed page fetch and keeps the reply text unchanged", async () => {
+    const deps = makeDeps();
+    const job = baseJob();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.staticFetcher = fakePageFetcher([
+      { throws: new PageFetchFailedError("unexpected HTTP status 404", "http-status", 404) },
+    ]);
+
+    const outcome = await runHackathonJob(baseMsg(), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.logger.entries).toContainEqual(
+      expect.objectContaining({
+        event: "hackathon-job",
+        outcome: "error",
+        errorCode: "PageFetchFailedError",
+        reason: "fetch:http-status",
+        httpStatus: 404,
+      }),
+    );
+    expect(deps.chatPublisher.posted[0]!.text).toBe(
+      "Could not read that page (http-status). Any previous analysis was kept.",
+    );
+  });
+
+  it("logs no httpStatus for a failure that is not an http-status fetch error", async () => {
+    const deps = makeDeps();
+    const job = baseJob();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.staticFetcher = fakePageFetcher([{ throws: new UnsafeUrlError("blocked", "private-ip") }]);
+
+    await runHackathonJob(baseMsg(), 1, deps);
+
+    const entry = deps.logger.entries.find((e) => e.reason === "unsafe-url:private-ip");
+    expect(entry).toMatchObject({ event: "hackathon-job", outcome: "error" });
+    expect(entry).not.toHaveProperty("httpStatus");
   });
 
   it("a lost claim (persistAnalysis returns false) posts nothing, never marks success, and acks (FIXV-001)", async () => {

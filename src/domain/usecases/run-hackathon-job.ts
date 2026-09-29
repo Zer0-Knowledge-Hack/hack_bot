@@ -275,6 +275,18 @@ async function handleJobError(
   if (classification.transient && attempt < MAX_ATTEMPTS) {
     return { kind: "retry", delaySeconds: TRANSIENT_RETRY_DELAY_S };
   }
+  // Observability: the final failure is logged with its reason code and,
+  // for a failed page fetch, the HTTP status (never the URL, body or message).
+  deps.logger.log({
+    event: "hackathon-job",
+    teamId: job.teamId,
+    outcome: "error",
+    errorCode: err instanceof Error ? err.name : "UnknownError",
+    reason: classification.reason,
+    ...(err instanceof PageFetchFailedError && err.status !== undefined
+      ? { httpStatus: err.status }
+      : {}),
+  });
   // Post then mark (design.md "Post then mark ... never silence"): a crash
   // after this point yields at most a duplicate failure reply on
   // redelivery, never silence.

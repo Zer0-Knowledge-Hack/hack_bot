@@ -84,10 +84,14 @@ export type PageFetchFailureKind =
 
 export class PageFetchFailedError extends DomainError {
   readonly kind: PageFetchFailureKind;
+  // The non-2xx HTTP status; set only when `kind` is "http-status". A bare
+  // number (never the URL or body) so it is safe to log.
+  readonly status?: number;
 
-  constructor(message: string, kind: PageFetchFailureKind) {
+  constructor(message: string, kind: PageFetchFailureKind, status?: number) {
     super(message);
     this.kind = kind;
+    if (status !== undefined) this.status = status;
   }
 }
 

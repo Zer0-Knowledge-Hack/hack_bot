@@ -112,7 +112,11 @@ export function createStaticFetcher(options: StaticFetcherOptions): PageFetcher 
         }
 
         if (response.status < 200 || response.status >= 300) {
-          fail(`unexpected HTTP status ${response.status}`, "http-status");
+          throw new PageFetchFailedError(
+            `unexpected HTTP status ${response.status}`,
+            "http-status",
+            response.status,
+          );
         }
 
         const contentType = response.headers.get("content-type") ?? "";
