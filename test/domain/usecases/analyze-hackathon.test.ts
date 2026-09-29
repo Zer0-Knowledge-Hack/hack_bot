@@ -326,6 +326,39 @@ describe("analyzeHackathon: primary-then-fallback LLM call", () => {
     ]);
   });
 
+  it("copies the extractor's safe parse metadata into each attempt's diagnostics", async () => {
+    const deps = makeDeps();
+    deps.llmExtractor = fakeLlmExtractor([
+      { raw: null, meta: { finishReason: "length", contentLength: 2500, parseFailure: "unterminated" } },
+      { raw: null, meta: { finishReason: "stop", contentLength: 0, parseFailure: "no-content" } },
+    ]);
+
+    const thrown = (await analyzeHackathon(makeInput(), deps).catch(
+      (e: unknown) => e,
+    )) as ExtractionFailedError;
+
+    expect(thrown.attempts).toEqual([
+      {
+        model: "@cf/primary",
+        parsed: false,
+        rejectedCount: 0,
+        rejected: [],
+        finishReason: "length",
+        contentLength: 2500,
+        parseFailure: "unterminated",
+      },
+      {
+        model: "@cf/fallback",
+        parsed: false,
+        rejectedCount: 0,
+        rejected: [],
+        finishReason: "stop",
+        contentLength: 0,
+        parseFailure: "no-content",
+      },
+    ]);
+  });
+
   it("a timeout failure carries the primary attempt diagnostics only", async () => {
     const deps = makeDeps();
     deps.llmExtractor = fakeLlmExtractor([{ raw: rawWithRejectedCount(6) }]);

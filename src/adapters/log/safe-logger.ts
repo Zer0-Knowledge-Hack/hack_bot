@@ -1,4 +1,27 @@
+import { LLM_PARSE_FAILURE_CODES } from "../../domain/errors";
 import type { LogEvent, Logger } from "../../domain/ports";
+
+const FINISH_REASON_PATTERN = /^[A-Za-z_-]{1,20}$/;
+
+type Attempt = NonNullable<LogEvent["attempts"]>[number];
+
+// Parse metadata is re-validated here (not trusted from the caller): only a
+// short plain-token finish reason, a finite number, a fixed parse-failure
+// code and a literal true can pass — never free text from a model.
+function safeParseMeta(a: Attempt): Partial<Attempt> {
+  return {
+    ...(typeof a.finishReason === "string"
+      ? { finishReason: FINISH_REASON_PATTERN.test(a.finishReason) ? a.finishReason : "other" }
+      : {}),
+    ...(typeof a.contentLength === "number" && Number.isFinite(a.contentLength)
+      ? { contentLength: a.contentLength }
+      : {}),
+    ...(a.parseFailure !== undefined && LLM_PARSE_FAILURE_CODES.includes(a.parseFailure)
+      ? { parseFailure: a.parseFailure }
+      : {}),
+    ...(a.recovered === true ? { recovered: true } : {}),
+  };
+}
 
 // design.md "Logging": an allowlisted field set only (event, teamId,
 // membershipId, field, outcome, errorCode, reason, httpStatus, and the
@@ -29,6 +52,7 @@ export function createSafeLogger(): Logger {
                 parsed: a.parsed,
                 rejectedCount: a.rejectedCount,
                 rejected: a.rejected.map((r) => ({ field: r.field, reason: r.reason })),
+                ...safeParseMeta(a),
               })),
             }
           : {}),

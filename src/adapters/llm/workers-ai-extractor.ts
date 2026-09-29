@@ -1,6 +1,10 @@
 import { ConfigError } from "../../config-error";
-import { ExtractionFailedError, LlmQuotaExceededError } from "../../domain/errors";
-import type { LlmExtractor } from "../../domain/ports";
+import {
+  ExtractionFailedError,
+  LlmQuotaExceededError,
+  type LlmParseFailureCode,
+} from "../../domain/errors";
+import type { LlmExtraction, LlmExtractor, LlmOutputMeta } from "../../domain/ports";
 import { buildMessages } from "./prompt";
 
 // Injected `run`: a minimal structural subset of the real Workers AI
@@ -92,9 +96,11 @@ function isQuotaExhausted(err: unknown): boolean {
   return QUOTA_ERROR_PATTERN.test(err.message);
 }
 
-// Turns the model's raw output into the `unknown` value that
-// hackathon/extraction.ts's validateExtraction is the ONLY place trusted to
-// judge (ports.ts "LlmExtractor"). Accepted shapes:
+// Turns the model's raw output into an LlmExtraction: `value` is the
+// `unknown` that hackathon/extraction.ts's validateExtraction is the ONLY
+// place trusted to judge (ports.ts "LlmExtractor"), and `meta` is safe parse
+// metadata (finish reason, content length, parse-failure code — never content).
+// Accepted shapes:
 //   - OpenAI-style chat completion `{ choices: [{ message: { content } }] }`
 //     (GLM-4.7-Flash and Qwen3-30B-A3B return this shape in chat mode;
 //     `content` is `string | null`). Only `choices[0].message.content` is
@@ -105,7 +111,7 @@ function isQuotaExhausted(err: unknown): boolean {
 //   - a bare JSON string, or already-structured `{ response: <object> }`.
 //
 // Unparseable JSON text is NOT thrown here as an ExtractionFailedError:
-// this method returns `null` instead, so validateExtraction's existing
+// `value` is `null` instead, so validateExtraction's existing
 // "invalid-shape" rejection handles it uniformly with every other
 // content-shape problem, and analyzeHackathon's already-implemented
 // primary-then-fallback logic (analyze-hackathon.ts's `extractFields`)
@@ -113,19 +119,114 @@ function isQuotaExhausted(err: unknown): boolean {
 // response — this adapter never bypasses that fallback by throwing on a
 // content problem. Throwing here is reserved for `run` itself failing
 // (network/model/quota/timeout), never for shape or parse problems.
+//
+// Tolerant extraction: when a direct parse (after fence stripping) fails, the
+// first balanced JSON object in the text is parsed instead (string- and
+// escape-aware). If that yields an object it is returned with meta
+// { parseFailure: "prose-around", recovered: true } — the failure case is still
+// reported so the diagnostics show the model wraps its JSON in prose. The
+// recovered value is as untrusted as any other and still goes through
+// validateExtraction unchanged.
 const CODE_FENCE_PATTERN = /^\s*```[A-Za-z]*\s*\n([\s\S]*?)\n?\s*```\s*$/;
 
-function parseJsonText(text: string): unknown {
-  const fenced = CODE_FENCE_PATTERN.exec(text);
+// A finish_reason is a short plain token ("stop", "length", "tool_calls").
+// Anything else is replaced by a fixed value so no model text is ever echoed.
+const FINISH_REASON_PATTERN = /^[A-Za-z_-]{1,20}$/;
+
+function isPlainObject(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+type BalancedScan =
+  | { kind: "none" } // no "{" in the text
+  | { kind: "unterminated" } // a "{" whose matching "}" never arrives
+  | { kind: "found"; text: string };
+
+// Finds the first "{" and its matching "}", respecting JSON strings and
+// backslash escapes so braces inside string values do not count.
+function scanBalancedObject(text: string): BalancedScan {
+  const start = text.indexOf("{");
+  if (start === -1) return { kind: "none" };
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return { kind: "found", text: text.slice(start, i + 1) };
+    }
+  }
+  return { kind: "unterminated" };
+}
+
+interface ParsedText {
+  value: unknown;
+  parseFailure?: LlmParseFailureCode;
+  recovered?: boolean;
+}
+
+function tryParse(text: string): { ok: true; value: unknown } | { ok: false } {
   try {
-    return JSON.parse(fenced ? (fenced[1] ?? "") : text);
+    return { ok: true, value: JSON.parse(text) };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 
-function parseModelOutput(raw: unknown): unknown {
-  if (typeof raw === "string") return parseJsonText(raw);
+function parseJsonText(text: string): ParsedText {
+  if (text.trim() === "") return { value: null, parseFailure: "no-content" };
+  const fenced = CODE_FENCE_PATTERN.exec(text);
+  const body = fenced ? (fenced[1] ?? "") : text;
+
+  const direct = tryParse(body);
+  if (direct.ok) {
+    return isPlainObject(direct.value)
+      ? { value: direct.value }
+      : { value: direct.value, parseFailure: "non-object" };
+  }
+
+  const scan = scanBalancedObject(body);
+  if (scan.kind === "unterminated") return { value: null, parseFailure: "unterminated" };
+  if (scan.kind === "found") {
+    const inner = tryParse(scan.text);
+    if (inner.ok && isPlainObject(inner.value)) {
+      return { value: inner.value, parseFailure: "prose-around", recovered: true };
+    }
+  }
+  return { value: null, parseFailure: "not-json" };
+}
+
+function withMeta(parsed: ParsedText, meta: LlmOutputMeta): LlmExtraction {
+  return {
+    value: parsed.value,
+    meta: {
+      ...meta,
+      ...(parsed.parseFailure !== undefined ? { parseFailure: parsed.parseFailure } : {}),
+      ...(parsed.recovered === true ? { recovered: true } : {}),
+    },
+  };
+}
+
+function finishReasonOf(first: unknown): string | undefined {
+  if (first === null || typeof first !== "object") return undefined;
+  const reason = (first as { finish_reason?: unknown }).finish_reason;
+  if (typeof reason !== "string") return undefined;
+  return FINISH_REASON_PATTERN.test(reason) ? reason : "other";
+}
+
+function parseModelOutput(raw: unknown): LlmExtraction {
+  if (typeof raw === "string") {
+    return withMeta(parseJsonText(raw), { contentLength: raw.length });
+  }
   if (raw !== null && typeof raw === "object" && "choices" in raw) {
     const { choices } = raw as { choices: unknown };
     const first: unknown = Array.isArray(choices) ? choices[0] : undefined;
@@ -135,22 +236,31 @@ function parseModelOutput(raw: unknown): unknown {
       message !== null && typeof message === "object"
         ? (message as { content?: unknown }).content
         : undefined;
-    return typeof content === "string" ? parseJsonText(content) : null;
+    const finishReason = finishReasonOf(first);
+    const base: LlmOutputMeta = {
+      ...(finishReason !== undefined ? { finishReason } : {}),
+      contentLength: typeof content === "string" ? content.length : 0,
+    };
+    return typeof content === "string"
+      ? withMeta(parseJsonText(content), base)
+      : withMeta({ value: null, parseFailure: "no-content" }, base);
   }
   if (raw !== null && typeof raw === "object" && "response" in raw) {
     const { response } = raw as { response: unknown };
-    if (typeof response === "string") return parseJsonText(response);
-    if (response !== undefined) return response;
-    return null;
+    if (typeof response === "string") {
+      return withMeta(parseJsonText(response), { contentLength: response.length });
+    }
+    if (response !== undefined) return { value: response };
+    return { value: null };
   }
-  return raw;
+  return { value: raw };
 }
 
 export function createWorkersAiExtractor(options: WorkersAiExtractorOptions): LlmExtractor {
   const { run } = options;
 
   return {
-    async extract(pageText: string, modelId: string, signal: AbortSignal): Promise<unknown> {
+    async extract(pageText: string, modelId: string, signal: AbortSignal): Promise<LlmExtraction> {
       if (!MODEL_ID_PATTERN.test(modelId)) {
         throw new ConfigError(`invalid Workers AI model id: "${modelId}"`);
       }

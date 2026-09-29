@@ -35,6 +35,7 @@ import type {
   LogEvent,
   Logger,
   LlmExtractor,
+  LlmOutputMeta,
   MemberRepo,
   MembershipRepo,
   PageFetcher,
@@ -342,7 +343,7 @@ export function fakePageFetcher(
   };
 }
 
-export type ExtractStep = { raw: unknown } | { throws: unknown };
+export type ExtractStep = { raw: unknown; meta?: LlmOutputMeta } | { throws: unknown };
 
 export function fakeLlmExtractor(
   script: ExtractStep[],
@@ -359,7 +360,7 @@ export function fakeLlmExtractor(
       i += 1;
       if (!step) throw new Error("fakeLlmExtractor: empty script");
       if ("throws" in step) throw step.throws;
-      return step.raw;
+      return step.meta !== undefined ? { value: step.raw, meta: step.meta } : { value: step.raw };
     },
   };
 }
