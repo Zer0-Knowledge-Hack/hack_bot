@@ -123,8 +123,8 @@ Mode: Strict TDD. Base: main 934fd01 (PR1a and PR1b merged). Completed: Step 0 (
 - `94d4ba1` test(participation): cover unknown create error keeping the claim and rethrowing
 - `812929c` feat(hackathon): post the General analysis with the participation button and store its message id
 - `fe92e95` feat(telegram): confirm participation from the hp callback button
-- test(http) commit: hp callback e2e through the webhook route
-- docs commit: tasks and apply-progress (this file)
+- `74f8924` test(http): cover the hp callback through the webhook route
+- `9d2cfa1` docs: tasks and apply-progress (this file)
 
 ### Deviations / notes
 - Handler tests live in `commands.test.ts` (which already has the real-Bot harness with alert recording), not `participation.test.ts` as tasks 3.5/3.6 name it. The `callbackCallerLocation` tests are there too, as in 3.3.
