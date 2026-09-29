@@ -41,6 +41,7 @@ import type {
   MemberRepo,
   MembershipRepo,
   PageFetcher,
+  PostOptions,
   ProfileRepo,
   RepoMetadataSource,
   RepoTopicLinkRepo,
@@ -526,26 +527,46 @@ export function fakeRepoMetadataSource(
 }
 
 export function fakeChatPublisher(
-  opts: { throws?: boolean; failureClass?: AlertSendFailureClass } = {},
+  opts: {
+    throws?: boolean;
+    failureClass?: AlertSendFailureClass;
+    // clearButtons fails (participation: a button-clear failure is ignored).
+    clearThrows?: boolean;
+  } = {},
 ): ChatPublisher & {
   posted: Array<{ chatId: number; threadId: number | null; text: string }>;
+  // Parallel to `posted` (same index): the options each post received, so
+  // the existing `posted` entry shape stays unchanged for older tests.
+  postOptions: Array<PostOptions | undefined>;
   pinned: number[];
   unpinned: number[];
+  cleared: Array<{ chatId: number; messageId: number }>;
 } {
   const posted: Array<{ chatId: number; threadId: number | null; text: string }> = [];
+  const postOptions: Array<PostOptions | undefined> = [];
   const pinned: number[] = [];
   const unpinned: number[] = [];
+  const cleared: Array<{ chatId: number; messageId: number }> = [];
   let nextMessageId = 1;
   return {
     posted,
+    postOptions,
     pinned,
     unpinned,
-    post: async (chatId: number, threadId: number | null, text: string) => {
+    cleared,
+    post: async (chatId: number, threadId: number | null, text: string, options?: PostOptions) => {
       if (opts.throws) {
         throw new PublishFailedError("sendMessage failed", opts.failureClass ?? "rejected");
       }
       posted.push({ chatId, threadId, text });
+      postOptions.push(options);
       return nextMessageId++;
+    },
+    clearButtons: async (chatId: number, messageId: number) => {
+      if (opts.clearThrows) {
+        throw new PublishFailedError("editMessageReplyMarkup failed", opts.failureClass ?? "rejected");
+      }
+      cleared.push({ chatId, messageId });
     },
     pin: async (_chatId: number, messageId: number) => {
       pinned.push(messageId);

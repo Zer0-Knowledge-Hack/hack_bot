@@ -358,8 +358,23 @@ export interface ForumTopicManager {
   probe(chatId: number, threadId: number): Promise<TopicProbe>;
 }
 
+// Semantic post options (hackathon-participation design.md decision 1): the
+// domain never builds a keyboard. `participateSlug` asks the adapter to
+// attach the participation button for that analysis; the label and the
+// callback encoding stay in the adapter.
+export interface PostOptions {
+  participateSlug?: string;
+}
+
 export interface ChatPublisher {
-  post(chatId: number, threadId: number | null, text: string): Promise<number>;
+  post(
+    chatId: number,
+    threadId: number | null,
+    text: string,
+    options?: PostOptions,
+  ): Promise<number>;
   pin(chatId: number, messageId: number): Promise<void>;
   unpin(chatId: number, messageId: number): Promise<void>;
+  // Removes the inline keyboard from a message (throws PublishFailedError).
+  clearButtons(chatId: number, messageId: number): Promise<void>;
 }
