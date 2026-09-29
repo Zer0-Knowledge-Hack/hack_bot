@@ -14,7 +14,7 @@ import type {
 import type { RepoFullName } from "./github";
 import type { MemberId, MembershipId, TeamId } from "./ids";
 import type { Role } from "./entities";
-import type { ExtractionAttemptDiagnostics } from "./errors";
+import type { ExtractionAttemptDiagnostics, LlmParseFailureCode } from "./errors";
 
 // Every tenant-scoped method takes TeamId as its first parameter. This is a
 // deliberate design constraint (see design.md "Tenancy") that makes
@@ -204,13 +204,31 @@ export interface PageFetcher {
   fetch(url: string, signal: AbortSignal): Promise<string>;
 }
 
+// Safe metadata about one model response: numbers and fixed codes only,
+// never any part of the content. Lets a failed parse be diagnosed without
+// logging what the model said.
+export interface LlmOutputMeta {
+  // choices[0].finish_reason, capped; "other" when it is not a plain token.
+  finishReason?: string;
+  contentLength?: number;
+  parseFailure?: LlmParseFailureCode;
+  // true when parseFailure was reported but the object was still recovered.
+  recovered?: boolean;
+}
+
+export interface LlmExtraction {
+  value: unknown;
+  meta?: LlmOutputMeta;
+}
+
 // Throws ExtractionFailedError or LlmQuotaExceededError. Otherwise returns
-// the model's raw parsed JSON output — `validateExtraction` (the ONLY
-// place a raw model response is trusted, hackathon/extraction.ts) decides
-// whether it is usable. `signal` carries the per-attempt LLM timeout
+// the model's raw parsed JSON output as `value` (null when unparseable) —
+// `validateExtraction` (the ONLY place a raw model response is trusted,
+// hackathon/extraction.ts) decides whether it is usable — plus optional safe
+// parse `meta`. `signal` carries the per-attempt LLM timeout
 // (design.md "Time budget": 45 s per LLM attempt).
 export interface LlmExtractor {
-  extract(pageText: string, modelId: string, signal: AbortSignal): Promise<unknown>;
+  extract(pageText: string, modelId: string, signal: AbortSignal): Promise<LlmExtraction>;
 }
 
 export interface HackathonAnalysisRepo {

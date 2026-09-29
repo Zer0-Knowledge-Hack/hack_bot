@@ -21,6 +21,7 @@ import type {
   HackathonAnalysisRepo,
   IdGen,
   LlmExtractor,
+  LlmOutputMeta,
   PageFetcher,
   RepoTopicLinkRepo,
 } from "../ports";
@@ -218,10 +219,18 @@ function isUsable(
 function diagnosticsOf(
   model: string,
   result: ValidateExtractionResult,
+  meta: LlmOutputMeta | undefined,
 ): ExtractionAttemptDiagnostics {
-  return result.ok
+  const base: ExtractionAttemptDiagnostics = result.ok
     ? { model, parsed: true, rejectedCount: result.rejectedCount, rejected: result.rejections }
     : { model, parsed: false, rejectedCount: 0, rejected: [] };
+  return {
+    ...base,
+    ...(meta?.finishReason !== undefined ? { finishReason: meta.finishReason } : {}),
+    ...(meta?.contentLength !== undefined ? { contentLength: meta.contentLength } : {}),
+    ...(meta?.parseFailure !== undefined ? { parseFailure: meta.parseFailure } : {}),
+    ...(meta?.recovered !== undefined ? { recovered: meta.recovered } : {}),
+  };
 }
 
 function rejectedCountOf(result: ValidateExtractionResult): number {
@@ -236,28 +245,28 @@ async function extractFields(
   deps: Pick<AnalyzeHackathonDeps, "llmExtractor" | "clock">,
 ): Promise<ExtractedFields> {
   const { llmExtractor, clock } = deps;
-  const primaryRaw = await llmExtractor.extract(
+  const primaryOut = await llmExtractor.extract(
     pageText,
     input.primaryModel,
     stepSignal(LLM_ATTEMPT_TIMEOUT_MS, input.deadlineAt, clock),
   );
-  const primary = validateExtraction(primaryRaw, pageText);
+  const primary = validateExtraction(primaryOut.value, pageText);
   if (isUsable(primary)) return primary.fields;
 
   if (input.deadlineAt - clock.now() < MIN_REMAINING_FOR_FALLBACK_MS) {
     throw new ExtractionFailedError(
       "Primary model output was unusable and too little time remains for the fallback",
       "timeout",
-      [diagnosticsOf(input.primaryModel, primary)],
+      [diagnosticsOf(input.primaryModel, primary, primaryOut.meta)],
     );
   }
 
-  const fallbackRaw = await llmExtractor.extract(
+  const fallbackOut = await llmExtractor.extract(
     pageText,
     input.fallbackModel,
     stepSignal(LLM_ATTEMPT_TIMEOUT_MS, input.deadlineAt, clock),
   );
-  const fallback = validateExtraction(fallbackRaw, pageText);
+  const fallback = validateExtraction(fallbackOut.value, pageText);
 
   // "Use the fallback result when it is better": prefer whichever attempt
   // rejected fewer fields, then check that the better one clears the
@@ -269,8 +278,8 @@ async function extractFields(
     "Both the primary and fallback model produced too many invalid fields",
     "invalid-output",
     [
-      diagnosticsOf(input.primaryModel, primary),
-      diagnosticsOf(input.fallbackModel, fallback),
+      diagnosticsOf(input.primaryModel, primary, primaryOut.meta),
+      diagnosticsOf(input.fallbackModel, fallback, fallbackOut.meta),
     ],
   );
 }

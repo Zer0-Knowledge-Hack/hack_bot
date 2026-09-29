@@ -124,12 +124,34 @@ export type ExtractionFailureKind = "invalid-output" | "model-error" | "timeout"
 
 // One model attempt's outcome, for post-mortem logging only. Carries field
 // NAMES and fixed reason codes — never snippet text, values or page content.
+// Why a model's text did not parse as a JSON object. Fixed codes only.
+export type LlmParseFailureCode =
+  | "no-content" // null, missing or empty content
+  | "unterminated" // has a "{" but no matching closing "}" (truncated)
+  | "prose-around" // a parsable JSON object exists, wrapped in other text
+  | "not-json" // no JSON object in the text
+  | "non-object"; // valid JSON, but not an object (array, number, ...)
+
+export const LLM_PARSE_FAILURE_CODES: readonly LlmParseFailureCode[] = [
+  "no-content",
+  "unterminated",
+  "prose-around",
+  "not-json",
+  "non-object",
+];
+
 export interface ExtractionAttemptDiagnostics {
   model: string;
   // false when the response failed schema validation as a whole.
   parsed: boolean;
   rejectedCount: number;
   rejected: FieldRejection[];
+  // Parse metadata (numbers and fixed codes only — never model content).
+  finishReason?: string;
+  contentLength?: number;
+  parseFailure?: LlmParseFailureCode;
+  // true when parseFailure was reported but the object was still recovered.
+  recovered?: boolean;
 }
 
 export class ExtractionFailedError extends DomainError {
