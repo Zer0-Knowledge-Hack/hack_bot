@@ -72,11 +72,15 @@ function isQuotaExhausted(err: unknown): boolean {
 
 // Turns the model's raw output into the `unknown` value that
 // hackathon/extraction.ts's validateExtraction is the ONLY place trusted to
-// judge (ports.ts "LlmExtractor"). Workers AI text-generation models
-// typically return `{ response: string }`, where the string is expected to
-// be a JSON document; some configurations return already-structured JSON
-// output directly. Both shapes are accepted so the caller never needs to
-// know which one the configured model uses.
+// judge (ports.ts "LlmExtractor"). Accepted shapes:
+//   - OpenAI-style chat completion `{ choices: [{ message: { content } }] }`
+//     (GLM-5.3-Flash and DeepSeek V4 Flash declare this output schema;
+//     `content` is `string | null`). Only `choices[0].message.content` is
+//     read: `reasoning_content` is chain-of-thought, never the answer. The
+//     text may be wrapped in a markdown code fence, which is stripped.
+//   - `{ response: string }` (older Workers AI text-generation models),
+//     where the string is expected to be a JSON document.
+//   - a bare JSON string, or already-structured `{ response: <object> }`.
 //
 // Unparseable JSON text is NOT thrown here as an ExtractionFailedError:
 // this method returns `null` instead, so validateExtraction's existing
@@ -87,23 +91,33 @@ function isQuotaExhausted(err: unknown): boolean {
 // response — this adapter never bypasses that fallback by throwing on a
 // content problem. Throwing here is reserved for `run` itself failing
 // (network/model/quota/timeout), never for shape or parse problems.
+const CODE_FENCE_PATTERN = /^\s*```[A-Za-z]*\s*\n([\s\S]*?)\n?\s*```\s*$/;
+
+function parseJsonText(text: string): unknown {
+  const fenced = CODE_FENCE_PATTERN.exec(text);
+  try {
+    return JSON.parse(fenced ? (fenced[1] ?? "") : text);
+  } catch {
+    return null;
+  }
+}
+
 function parseModelOutput(raw: unknown): unknown {
-  if (typeof raw === "string") {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
+  if (typeof raw === "string") return parseJsonText(raw);
+  if (raw !== null && typeof raw === "object" && "choices" in raw) {
+    const { choices } = raw as { choices: unknown };
+    const first: unknown = Array.isArray(choices) ? choices[0] : undefined;
+    const message =
+      first !== null && typeof first === "object" ? (first as { message?: unknown }).message : undefined;
+    const content =
+      message !== null && typeof message === "object"
+        ? (message as { content?: unknown }).content
+        : undefined;
+    return typeof content === "string" ? parseJsonText(content) : null;
   }
   if (raw !== null && typeof raw === "object" && "response" in raw) {
     const { response } = raw as { response: unknown };
-    if (typeof response === "string") {
-      try {
-        return JSON.parse(response);
-      } catch {
-        return null;
-      }
-    }
+    if (typeof response === "string") return parseJsonText(response);
     if (response !== undefined) return response;
     return null;
   }
