@@ -113,3 +113,17 @@ export const pickerCopy = {
   notMember: "No eres miembro de ese equipo.",
   selected: "Equipo seleccionado. Vuelve a ejecutar tu comando para continuar.",
 };
+
+// hackathon-participation adapter replies (design.md "Copy Table").
+export const participateCopy = {
+  adminOnly: "Solo un administrador del equipo puede confirmar la participación.",
+  joinUsage: "Uso: /hackathon join <slug>",
+  noAnalysis: (slug: string) => `No se encontró ningún análisis con el slug ${slug}.`,
+  noRights:
+    "No puedo crear temas: concede al bot el permiso «Administrar temas» y vuelve a intentarlo.",
+  notForum:
+    "Este grupo no tiene los temas activados. Actívalos en la configuración del grupo y vuelve a intentarlo.",
+  createFailed: "Telegram rechazó la creación del tema. Inténtalo de nuevo en un minuto.",
+  createUncertain:
+    "No se pudo confirmar si se creó el tema. Revisa la lista de temas antes de volver a intentarlo.",
+};

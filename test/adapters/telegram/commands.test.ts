@@ -17,6 +17,7 @@ import {
   fakeHackathonAnalysisRepo,
   fakeIdGen,
   fakeMemberRepo,
+  fakeForumTopicManager,
   fakeMembershipRepo,
   fakeProfileRepo,
   fakeRepoTopicLinkRepo,
@@ -91,6 +92,7 @@ function makeBot(
   const analysisJobQueue = fakeAnalysisJobQueue({ throws: hackathon.queueThrows ?? false });
   const analysisJobRepo = fakeAnalysisJobRepo();
   const chatPublisher = fakeChatPublisher();
+  const forumTopicManager = fakeForumTopicManager();
   const deps = {
     teamRepo,
     memberRepo,
@@ -105,6 +107,7 @@ function makeBot(
     analysisJobQueue,
     analysisJobRepo,
     chatPublisher,
+    forumTopicManager,
     clock: fakeClock(),
     idGen: fakeIdGen(),
     logger: createSafeLogger(),
@@ -1431,5 +1434,134 @@ describe("registerCommands — remaining Spanish replies", () => {
     };
     const buttons = markup.inline_keyboard.flat();
     expect(buttons.map((b) => b.text)).toEqual(deps.teamRepo.rows.map((t) => `Equipo ${t.id}`));
+  });
+});
+
+// hackathon-participation (PR1b) — /hackathon join <slug>.
+describe("registerCommands — /hackathon join <slug> (hackathon-participation spec: Two Triggers)", () => {
+  it("an admin in General creates the topic, posts and pins the analysis, and confirms in General", async () => {
+    const { bot, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "join meridian" }));
+
+    expect(deps.forumTopicManager.created).toEqual([{ chatId: 10, name: "🏆 Hack meridian" }]);
+    const threadId = deps.hackathonAnalysisRepo.rows[0]?.threadId;
+    expect(threadId).toBe(1000);
+    expect(deps.chatPublisher.posted).toMatchObject([
+      { chatId: 10, threadId: 1000 },
+      { chatId: 10, threadId: null, text: "✅ Participamos en Hack meridian" },
+    ]);
+    expect(deps.chatPublisher.pinned).toHaveLength(1);
+    // No fetch, LLM or cap involved.
+    expect(deps.analysisQuota.reserved).toHaveLength(0);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+
+  it("works from inside a topic too", async () => {
+    const { bot, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { threadId: 5, args: "join meridian" }));
+
+    expect(deps.forumTopicManager.created).toHaveLength(1);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBe(1000);
+  });
+
+  it("a bare join replies with the join usage line and does nothing", async () => {
+    const { bot, replies, deps } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "join" }));
+
+    expect(replies.at(-1)?.text).toBe("Uso: /hackathon join <slug>");
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+    expect(deps.analysisJobQueue.sent).toHaveLength(0);
+  });
+
+  it("join with a non-slug target replies with the join usage line", async () => {
+    const { bot, replies } = await hackathonTeam();
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "join Not_Slug" }));
+    expect(replies.at(-1)?.text).toBe("Uso: /hackathon join <slug>");
+  });
+
+  it("a non-admin gets the admin-only reply and nothing changes", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 3, { args: "join meridian" }));
+
+    expect(replies.at(-1)?.text).toBe(
+      "Solo un administrador del equipo puede confirmar la participación.",
+    );
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBeNull();
+  });
+
+  it("a stranger with no membership gets the same admin-only reply", async () => {
+    const { bot, replies, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 999, { args: "join meridian" }));
+
+    expect(replies.at(-1)?.text).toBe(
+      "Solo un administrador del equipo puede confirmar la participación.",
+    );
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+  });
+
+  it("an unknown slug replies with the slug-specific not-found text", async () => {
+    const { bot, replies, deps } = await hackathonTeam();
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "join nope" }));
+
+    expect(replies.at(-1)?.text).toBe("No se encontró ningún análisis con el slug nope.");
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+  });
+
+  it("an old analysis (null generalMessageId) joins fine and removes no button", async () => {
+    const { bot, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian", { generalMessageId: null }));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "join meridian" }));
+
+    expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBe(1000);
+    expect(deps.chatPublisher.cleared).toEqual([]);
+  });
+
+  it("clears the stored General message's button when it is known", async () => {
+    const { bot, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian", { generalMessageId: 321 }));
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "join meridian" }));
+
+    expect(deps.chatPublisher.cleared).toEqual([{ chatId: 10, messageId: 321 }]);
+  });
+
+  it("replies with the linkFailed text when storing the link fails, without failing the update", async () => {
+    const { bot, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+    deps.hackathonAnalysisRepo.moveTopicLink = async () => {
+      throw new Error("D1 unavailable");
+    };
+
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "join meridian" }));
+
+    expect(deps.chatPublisher.posted.at(-1)).toMatchObject({
+      chatId: 10,
+      threadId: null,
+      text: "Se creó el tema, pero no se pudo vincular meridian. Ejecuta /hackathon meridian dentro del tema.",
+    });
+  });
+
+  it("replies in a private chat with the group-only line", async () => {
+    const { bot, replies } = await hackathonTeam();
+    await bot.handleUpdate(commandUpdate("hackathon", 20, 1, { chatType: "private", args: "join meridian" }));
+    expect(replies.at(-1)?.text).toBe("Ejecuta este comando dentro del chat grupal de tu equipo.");
+  });
+
+  it("leaves the existing whitespace rule intact for other multi-token arguments", async () => {
+    const { bot, replies } = await hackathonTeam();
+    await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "not join" }));
+    expect(replies.at(-1)?.text).toBe("Uso: /hackathon <url o slug>");
   });
 });
