@@ -119,6 +119,14 @@ function isQuotaExhausted(err: unknown): boolean {
 // response — this adapter never bypasses that fallback by throwing on a
 // content problem. Throwing here is reserved for `run` itself failing
 // (network/model/quota/timeout), never for shape or parse problems.
+//
+// Tolerant extraction: when a direct parse (after fence stripping) fails, the
+// first balanced JSON object in the text is parsed instead (string- and
+// escape-aware). If that yields an object it is returned with meta
+// { parseFailure: "prose-around", recovered: true } — the failure case is still
+// reported so the diagnostics show the model wraps its JSON in prose. The
+// recovered value is as untrusted as any other and still goes through
+// validateExtraction unchanged.
 const CODE_FENCE_PATTERN = /^\s*```[A-Za-z]*\s*\n([\s\S]*?)\n?\s*```\s*$/;
 
 // A finish_reason is a short plain token ("stop", "length", "tool_calls").
@@ -191,7 +199,7 @@ function parseJsonText(text: string): ParsedText {
   if (scan.kind === "found") {
     const inner = tryParse(scan.text);
     if (inner.ok && isPlainObject(inner.value)) {
-      return { value: null, parseFailure: "prose-around" };
+      return { value: inner.value, parseFailure: "prose-around", recovered: true };
     }
   }
   return { value: null, parseFailure: "not-json" };
