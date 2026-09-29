@@ -1,46 +1,64 @@
-import { describe, expect, it, vi } from "vitest";
-
-// task 10.4 (design.md "File Changes": "Puppeteer with an injected
-// `launch`"): the production `launch` is a thin pass-through to
-// `@cloudflare/puppeteer`'s `launch(binding)`. The package is mocked — no real
-// browser is ever started.
-const launchMock = vi.hoisted(() => vi.fn());
-vi.mock("@cloudflare/puppeteer", () => ({ default: { launch: launchMock } }));
-
+import { describe, expect, it } from "vitest";
 import { BrowserQuotaExceededError } from "../../../src/domain/errors";
 import { launchPuppeteerBrowser } from "../../../src/adapters/browser/puppeteer-launch";
 
+// task 10.4 (design.md "File Changes": "Puppeteer with an injected
+// `launch`"): the production `launch` runs the real `@cloudflare/puppeteer`
+// against a fake Browser Rendering binding, so no real browser is started.
+// (The package is not `vi.mock`ed: the main worker shares this isolate and
+// already imports it, which would make a module mock unreliable.)
+//
+// Documented Browser Run errors (developers.cloudflare.com/browser-run/
+// limits, checked 2026-09-28): the daily free-plan limit ("429 Browser time
+// limit exceeded for today") and the rate limit ("429 Too many requests") are
+// answered by the acquire request itself, so `launch` rejects — there is no
+// page or navigation status yet, and the fetcher's post-`goto` 429 check
+// would never see them. Mapping them here makes the use case degrade exactly
+// as designed.
+
+function fakeBinding(status: number, body: string) {
+  const requests: Array<{ url: string; method: string | undefined }> = [];
+  return {
+    requests,
+    binding: {
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        requests.push({ url: String(input), method: init?.method });
+        return new Response(body, { status });
+      },
+    },
+  };
+}
+
 describe("launchPuppeteerBrowser", () => {
-  it("launches through @cloudflare/puppeteer with the Browser Rendering binding and returns the browser", async () => {
-    const browser = { newPage: async () => ({}), close: async () => {} };
-    launchMock.mockResolvedValueOnce(browser);
-    const binding = { fetch: async () => new Response("") };
-
-    const launched = await launchPuppeteerBrowser(binding);
-
-    expect(launched).toBe(browser);
-    expect(launchMock).toHaveBeenCalledTimes(1);
-    expect(launchMock).toHaveBeenCalledWith(binding);
-  });
-
-  // Documented Browser Run errors (developers.cloudflare.com/browser-run/
-  // limits, checked 2026-09-28): the daily free-plan limit and the rate limit
-  // are both thrown by `launch` itself (there is no page yet), not returned
-  // as a navigation status, so the fetcher's post-goto 429 check never sees
-  // them. Mapping here makes the use case degrade exactly as designed.
   it.each([
-    "Error processing the request: Unable to create new browser: code: 429: message: Browser time limit exceeded for today",
-    "429 Too many requests",
-  ])("maps the documented launch error (%s) to BrowserQuotaExceededError", async (message) => {
-    launchMock.mockRejectedValueOnce(new Error(message));
+    ["the daily limit", "Browser time limit exceeded for today"],
+    ["the rate limit", "Too many requests"],
+  ])("maps a 429 acquire response (%s) to BrowserQuotaExceededError", async (_label, body) => {
+    const { binding, requests } = fakeBinding(429, body);
 
-    await expect(launchPuppeteerBrowser({})).rejects.toBeInstanceOf(BrowserQuotaExceededError);
+    await expect(launchPuppeteerBrowser(binding)).rejects.toBeInstanceOf(BrowserQuotaExceededError);
+
+    // The real package really did call the Browser Rendering binding.
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.method).toBe("POST");
+    expect(requests[0]?.url).toContain("/v1/devtools/browser");
   });
 
-  it("propagates any other launch failure unchanged", async () => {
-    const failure = new Error("Unable to create new browser: code: 500: message: internal error");
-    launchMock.mockRejectedValueOnce(failure);
+  it("propagates any other launch failure unchanged so the caller can treat it as transient", async () => {
+    const { binding } = fakeBinding(500, "internal error");
 
-    await expect(launchPuppeteerBrowser({})).rejects.toBe(failure);
+    const err = await launchPuppeteerBrowser(binding).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(BrowserQuotaExceededError);
+    expect((err as Error).message).toContain("code: 500");
+  });
+
+  it("does not misread a non-429 status whose message merely mentions a number", async () => {
+    const { binding } = fakeBinding(503, "retry in 4290 ms");
+
+    const err = await launchPuppeteerBrowser(binding).catch((e: unknown) => e);
+
+    expect(err).not.toBeInstanceOf(BrowserQuotaExceededError);
   });
 });
