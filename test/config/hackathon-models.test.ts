@@ -13,9 +13,9 @@ const wrangler = JSON.parse(
 // Blank-model behaviour is covered separately through env overrides
 // (composition.hackathon-consumer / index.queue tests).
 describe("hackathon model vars (11.4)", () => {
-  it("sets GLM-5.3-Flash as primary and DeepSeek V4 Flash as fallback", () => {
-    expect(wrangler.vars.HACKATHON_MODEL_PRIMARY).toBe("@cf/zai-org/glm-5.3-flash");
-    expect(wrangler.vars.HACKATHON_MODEL_FALLBACK).toBe("@cf/deepseek-ai/deepseek-v4-flash-0731");
+  it("sets the Workers Free plan models GLM-4.7-Flash (primary) and Qwen3-30B-A3B (fallback)", () => {
+    expect(wrangler.vars.HACKATHON_MODEL_PRIMARY).toBe("@cf/zai-org/glm-4.7-flash");
+    expect(wrangler.vars.HACKATHON_MODEL_FALLBACK).toBe("@cf/qwen/qwen3-30b-a3b-fp8");
   });
 
   it("uses two different models that pass the adapter's id pattern", () => {
