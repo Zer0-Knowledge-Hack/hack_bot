@@ -416,6 +416,99 @@ describe("runHackathonJob", () => {
     expect(deps.analysisJobRepo.succeeded).toEqual(["job-1"]);
   });
 
+  // hackathon-participation: the General post carries the participation
+  // button and its message id is stored so the button can be removed later.
+  it("claimed job in General: posts with the participate button and stores the message id", async () => {
+    const deps = makeDeps();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({
+      claimResult: { kind: "claimed", job: baseJob() },
+      hackathonAnalysisRepo: deps.hackathonAnalysisRepo,
+    });
+
+    const outcome = await runHackathonJob(baseMsg(), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    const saved = deps.hackathonAnalysisRepo.rows[0]!;
+    expect(deps.chatPublisher.postOptions).toEqual([{ participateSlug: saved.slug }]);
+    // The fake publisher's first message id is 1.
+    expect(saved.generalMessageId).toBe(1);
+  });
+
+  it("claimed job inside a topic: no button and no General message id", async () => {
+    const deps = makeDeps();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({
+      claimResult: { kind: "claimed", job: baseJob({ threadId: 500 }) },
+      hackathonAnalysisRepo: deps.hackathonAnalysisRepo,
+    });
+
+    await runHackathonJob(baseMsg({ threadId: 500 }), 1, deps);
+
+    expect(deps.chatPublisher.postOptions.every((o) => o === undefined)).toBe(true);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.generalMessageId).toBeNull();
+  });
+
+  it("claimed job in General: a message-id store failure is logged and the job still succeeds without a repost", async () => {
+    const deps = makeDeps();
+    deps.hackathonAnalysisRepo.setGeneralMessageId = async () => {
+      throw new Error("D1 unavailable");
+    };
+    deps.analysisJobRepo = fakeAnalysisJobRepo({
+      claimResult: { kind: "claimed", job: baseJob() },
+      hackathonAnalysisRepo: deps.hackathonAnalysisRepo,
+    });
+
+    const outcome = await runHackathonJob(baseMsg(), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.chatPublisher.posted).toHaveLength(1);
+    expect(deps.analysisJobRepo.succeeded).toEqual(["job-1"]);
+    expect(deps.logger.entries).toContainEqual({
+      event: "hackathon-job",
+      teamId,
+      outcome: "error",
+      errorCode: "Error",
+      reason: "general-message-id-store-failed",
+    });
+  });
+
+  it("persisted claim in General: reposts with the button and stores the message id", async () => {
+    const deps = makeDeps();
+    const job = baseJob({ status: "persisted", analysisId: "analysis-1" });
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "persisted", job } });
+    await deps.hackathonAnalysisRepo.save({
+      id: "analysis-1",
+      teamId,
+      slug: "meridian",
+      sourceUrl: job.fetchUrl,
+      normalizedUrl: "https://example.com/event",
+      fields: {
+        name: { value: "Meridian", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    const outcome = await runHackathonJob(baseMsg(), 1, deps);
+
+    expect(outcome).toEqual({ kind: "ack" });
+    expect(deps.chatPublisher.postOptions).toEqual([{ participateSlug: "meridian" }]);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.generalMessageId).toBe(1);
+  });
+
   it("transient failure: retries then fails on the final attempt (spec: Transient failure exhausts retries)", async () => {
     const depsRetry = makeDeps();
     const job = baseJob();

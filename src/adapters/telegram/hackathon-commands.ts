@@ -26,7 +26,7 @@ import { runCommand } from "./command-outcome";
 import type { DomainErrorReasons, DomainErrorReplies } from "./command-outcome";
 import { callerLocation, resolveGroupMembership } from "./context";
 import type { CallerLocation } from "./context";
-import { runParticipation } from "./participation";
+import { registerParticipationCallback, runParticipation } from "./participation";
 import { isPrivateChat } from "./team-picker";
 
 // `/hackathon` and `/hackathons` (design.md "Data Flow", "Error Taxonomy" —
@@ -104,6 +104,7 @@ async function resolveMember(deps: HackathonCommandDeps, loc: CallerLocation) {
 }
 
 export function registerHackathonCommands(bot: Bot, deps: HackathonCommandDeps): void {
+  registerParticipationCallback(bot, deps);
   bot.command("hackathon", async (ctx) => {
     const loc = await requireGroupCaller(ctx, deps, "hackathon");
     if (!loc) return;

@@ -2,6 +2,7 @@ import { Bot } from "grammy";
 import type { CallbackQuery, Update } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
 import { registerCommands } from "../../../src/adapters/telegram/commands";
+import { callbackCallerLocation } from "../../../src/adapters/telegram/context";
 import type { HackathonAnalysis } from "../../../src/domain/entities";
 import type { TeamId } from "../../../src/domain/ids";
 import { createSafeLogger } from "../../../src/adapters/log/safe-logger";
@@ -32,6 +33,8 @@ import {
 interface HackathonFakeOptions {
   quota?: "ok" | "busy" | "cap-reached";
   queueThrows?: boolean;
+  // answerCallbackQuery fails on the wire (expired or already answered query).
+  answerFails?: boolean;
 }
 
 function makeBot(
@@ -62,8 +65,12 @@ function makeBot(
   const payloads: Array<Record<string, unknown>> = [];
   // Text of every answerCallbackQuery alert shown to the user.
   const alerts: string[] = [];
+  // Every answerCallbackQuery payload, in call order.
+  const answers: Array<{ text?: string; show_alert?: boolean }> = [];
   bot.api.config.use((_prev, method, payload) => {
     if (method === "answerCallbackQuery") {
+      answers.push(payload as { text?: string; show_alert?: boolean });
+      if (hackathon.answerFails) return Promise.reject(new Error("query is too old"));
       const text = (payload as { text?: string }).text;
       if (text !== undefined) alerts.push(text);
     }
@@ -113,7 +120,7 @@ function makeBot(
     logger: createSafeLogger(),
   };
   registerCommands(bot, deps);
-  return { bot, replies, payloads, alerts, deps };
+  return { bot, replies, payloads, alerts, answers, deps };
 }
 
 let nextUpdateId = 1;
@@ -164,6 +171,31 @@ function callbackUpdate(chatId: number, userId: number, data: string): Update {
         message_id: nextUpdateId,
         date: 0,
         chat: { id: chatId, type: "private" },
+      },
+    } as CallbackQuery,
+  } as Update;
+}
+
+// A callback query on a button carried by a group message, with the message
+// id and optional topic of that message.
+function groupCallbackUpdate(
+  chatId: number,
+  userId: number,
+  data: string,
+  opts: { messageId?: number; threadId?: number; chatType?: "private" | "supergroup" } = {},
+): Update {
+  return {
+    update_id: nextUpdateId++,
+    callback_query: {
+      id: `callback-${nextUpdateId}`,
+      from: { id: userId, is_bot: false, first_name: "User" },
+      chat_instance: "test-chat-instance",
+      data,
+      message: {
+        message_id: opts.messageId ?? 4242,
+        date: 0,
+        chat: { id: chatId, type: opts.chatType ?? "supergroup", title: "Test group" },
+        ...(opts.threadId !== undefined ? { message_thread_id: opts.threadId } : {}),
       },
     } as CallbackQuery,
   } as Update;
@@ -1563,5 +1595,190 @@ describe("registerCommands — /hackathon join <slug> (hackathon-participation s
     const { bot, replies } = await hackathonTeam();
     await bot.handleUpdate(commandUpdate("hackathon", 10, 1, { args: "not join" }));
     expect(replies.at(-1)?.text).toBe("Uso: /hackathon <url o slug>");
+  });
+});
+
+// hackathon-participation (PR2) — callbackCallerLocation.
+describe("callbackCallerLocation", () => {
+  const ctxOf = (over: Record<string, unknown>) => over as never;
+
+  it("reads the chat, the tapping user, the button message's topic and its message id", () => {
+    const loc = callbackCallerLocation(
+      ctxOf({
+        chat: { id: 10 },
+        from: { id: 1 },
+        msg: { message_thread_id: 77 },
+        callbackQuery: { message: { message_id: 4242 } },
+      }),
+    );
+    expect(loc).toEqual({ chatId: 10, userId: 1, threadId: 77, messageId: 4242 });
+  });
+
+  it("reports General (null thread) and a null message id when they are absent", () => {
+    const loc = callbackCallerLocation(
+      ctxOf({ chat: { id: 10 }, from: { id: 1 }, msg: {}, callbackQuery: {} }),
+    );
+    expect(loc).toEqual({ chatId: 10, userId: 1, threadId: null, messageId: null });
+  });
+
+  it("returns null without a chat or a user", () => {
+    expect(callbackCallerLocation(ctxOf({ from: { id: 1 } }))).toBeNull();
+    expect(callbackCallerLocation(ctxOf({ chat: { id: 10 } }))).toBeNull();
+  });
+});
+
+// hackathon-participation (PR2) — the hp:<slug> callback.
+describe("registerCommands — hp:<slug> callback (hackathon-participation spec: Two Triggers)", () => {
+  const ALERT = "Solo un administrador del equipo puede confirmar la participación.";
+
+  it("a non-admin member gets the alert and nothing changes", async () => {
+    const { bot, deps, teamId, answers } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian", { generalMessageId: 5 }));
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 3, "hp:meridian"));
+
+    expect(answers).toMatchObject([{ text: ALERT, show_alert: true }]);
+    expect(answers).toHaveLength(1);
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+    expect(deps.chatPublisher.posted).toHaveLength(0);
+    expect(deps.chatPublisher.cleared).toHaveLength(0);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBeNull();
+  });
+
+  it("a non-member gets the same alert", async () => {
+    const { bot, deps, teamId, answers } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 999, "hp:meridian"));
+
+    expect(answers).toMatchObject([{ text: ALERT, show_alert: true }]);
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+  });
+
+  it("an admin tap creates the topic, confirms in General and removes the deduped buttons", async () => {
+    const { bot, deps, teamId, answers } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian", { generalMessageId: 4242 }));
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian", { messageId: 4242 }));
+
+    expect(deps.forumTopicManager.created).toEqual([{ chatId: 10, name: "🏆 Hack meridian" }]);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBe(1000);
+    expect(deps.chatPublisher.posted.at(-1)).toMatchObject({
+      chatId: 10,
+      threadId: null,
+      text: "✅ Participamos en Hack meridian",
+    });
+    // Callback message id equals the stored id: one removal, not two.
+    expect(deps.chatPublisher.cleared).toEqual([{ chatId: 10, messageId: 4242 }]);
+    // Answered once, silently (no alert text).
+    expect(answers).toHaveLength(1);
+    expect(answers[0]?.text).toBeUndefined();
+  });
+
+  it("clears both the tapped message and the stored General message when they differ", async () => {
+    const { bot, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian", { generalMessageId: 9 }));
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian", { messageId: 4242, threadId: 3 }));
+
+    expect(deps.chatPublisher.cleared.map((c) => c.messageId).sort((a, b) => a - b)).toEqual([9, 4242]);
+  });
+
+  it("answers the callback before creating the topic", async () => {
+    const { bot, deps, teamId, answers } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+    let answeredBeforeCreate = false;
+    const create = deps.forumTopicManager.create;
+    deps.forumTopicManager.create = async (chatId, name) => {
+      answeredBeforeCreate = answers.length === 1;
+      return create(chatId, name);
+    };
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian"));
+
+    expect(answeredBeforeCreate).toBe(true);
+  });
+
+  it("a failing answerCallbackQuery does not stop the participation", async () => {
+    const { bot, deps, teamId } = await hackathonTeam({ answerFails: true });
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian"));
+
+    expect(deps.forumTopicManager.created).toHaveLength(1);
+    expect(deps.hackathonAnalysisRepo.rows[0]?.threadId).toBe(1000);
+  });
+
+  it("a redelivered callback does not create a second topic", async () => {
+    const { bot, deps, teamId } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian"));
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian"));
+
+    expect(deps.forumTopicManager.created).toHaveLength(1);
+    // Chat id 10 has no -100 prefix, so the link is dropped from the text.
+    expect(deps.chatPublisher.posted.at(-1)?.text).toBe("Este hackathon ya tiene tema.");
+  });
+
+  it("an unknown slug replies with the no-analysis text and creates nothing", async () => {
+    const { bot, deps, replies } = await hackathonTeam();
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:nope"));
+
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+    expect(replies.at(-1)?.text).toBe("No se encontró ningún análisis con el slug nope.");
+  });
+
+  it("derives the team from the chat, never from the payload", async () => {
+    const ctx = makeBot([TEAM_ADMIN, { chatId: 20, userId: 1 }]);
+    await ctx.bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await ctx.bot.handleUpdate(commandUpdate("setup", 20, 1));
+    const otherTeam = ctx.deps.teamRepo.rows.find((t) => t.chatId === 20)!;
+    ctx.deps.hackathonAnalysisRepo.rows.push(storedAnalysis(otherTeam.id, "meridian"));
+
+    await ctx.bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian"));
+
+    expect(ctx.deps.forumTopicManager.created).toHaveLength(0);
+    expect(ctx.deps.hackathonAnalysisRepo.rows[0]?.threadId).toBeNull();
+  });
+
+  it.each([
+    ["an uppercase/underscore slug", "hp:Bad_Slug"],
+    ["an empty slug", "hp:"],
+    ["an over-long slug", `hp:${"a".repeat(41)}`],
+    ["a path-like payload", "hp:../team"],
+    ["a foreign prefix", "zz:meridian"],
+    ["a team id payload", "hp:meridian:team-1"],
+  ])("ignores %s safely", async (_label, data) => {
+    const { bot, deps, teamId, answers, replies, baseReplies } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, data));
+
+    expect(answers).toHaveLength(0);
+    expect(replies).toHaveLength(baseReplies);
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+    expect(deps.chatPublisher.posted).toHaveLength(0);
+  });
+
+  it("ignores a tap from a private chat", async () => {
+    const { bot, deps, teamId, answers } = await hackathonTeam();
+    deps.hackathonAnalysisRepo.rows.push(storedAnalysis(teamId, "meridian"));
+
+    await bot.handleUpdate(groupCallbackUpdate(10, 1, "hp:meridian", { chatType: "private" }));
+
+    expect(answers).toHaveLength(0);
+    expect(deps.forumTopicManager.created).toHaveLength(0);
+  });
+
+  it("keeps the team-picker sel: callback working next to hp:", async () => {
+    const { bot, deps, answers } = await hackathonTeam();
+    const teamId = deps.teamRepo.rows[0]!.id;
+
+    await bot.handleUpdate(callbackUpdate(50, 1, `sel:${teamId}`));
+
+    expect(answers).toHaveLength(1);
+    expect(deps.forumTopicManager.created).toHaveLength(0);
   });
 });
