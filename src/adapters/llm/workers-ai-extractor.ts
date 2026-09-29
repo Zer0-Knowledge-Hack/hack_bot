@@ -1,7 +1,7 @@
 import { ConfigError } from "../../config-error";
 import { ExtractionFailedError, LlmQuotaExceededError } from "../../domain/errors";
 import type { LlmExtractor } from "../../domain/ports";
-import { buildPrompt } from "./prompt";
+import { buildMessages } from "./prompt";
 
 // Injected `run`: a minimal structural subset of the real Workers AI
 // binding's `env.AI.run(model, inputs, options)` call shape. No real
@@ -22,7 +22,10 @@ export interface WorkersAiExtractorOptions {
 const MODEL_ID_PATTERN = /^@(cf|hf)\/[A-Za-z0-9._/-]+$/;
 
 const TEMPERATURE = 0; // design.md "the call uses temperature: 0"
-const MAX_TOKENS = 1200; // design.md "and max_tokens: 1200"
+// Both models are reasoning models: their thinking (reasoning_content) is
+// billed against max_tokens, so 1200 could be spent before any JSON answer is
+// emitted. 2500 leaves room for the reasoning plus the extraction object.
+const MAX_TOKENS = 2500;
 
 // Races `promise` against `signal` so a caller-driven abort rejects even
 // when the injected `run` never settles on its own. Mirrors
@@ -74,7 +77,7 @@ function isQuotaExhausted(err: unknown): boolean {
 // hackathon/extraction.ts's validateExtraction is the ONLY place trusted to
 // judge (ports.ts "LlmExtractor"). Accepted shapes:
 //   - OpenAI-style chat completion `{ choices: [{ message: { content } }] }`
-//     (GLM-5.3-Flash and DeepSeek V4 Flash declare this output schema;
+//     (GLM-4.7-Flash and Qwen3-30B-A3B return this shape in chat mode;
 //     `content` is `string | null`). Only `choices[0].message.content` is
 //     read: `reasoning_content` is chain-of-thought, never the answer. The
 //     text may be wrapped in a markdown code fence, which is stripped.
@@ -137,13 +140,13 @@ export function createWorkersAiExtractor(options: WorkersAiExtractorOptions): Ll
         throw new ExtractionFailedError("Workers AI call timed out", "timeout");
       }
 
-      const prompt = buildPrompt(pageText);
+      const messages = buildMessages(pageText);
 
       let raw: unknown;
       try {
         raw = await raceWithSignal(
           Promise.resolve(
-            run(modelId, { prompt, temperature: TEMPERATURE, max_tokens: MAX_TOKENS }, { signal }),
+            run(modelId, { messages, temperature: TEMPERATURE, max_tokens: MAX_TOKENS }, { signal }),
           ),
           signal,
         );

@@ -3,7 +3,7 @@ import {
   createWorkersAiExtractor,
   type WorkersAiRun,
 } from "../../../src/adapters/llm/workers-ai-extractor";
-import { PAGE_END, PAGE_START } from "../../../src/adapters/llm/prompt";
+import { PAGE_END, PAGE_START, SYSTEM_INSTRUCTIONS } from "../../../src/adapters/llm/prompt";
 import { ConfigError } from "../../../src/config-error";
 import { ExtractionFailedError, LlmQuotaExceededError } from "../../../src/domain/errors";
 import { validateExtraction } from "../../../src/domain/hackathon/extraction";
@@ -65,10 +65,13 @@ describe("createWorkersAiExtractor", () => {
 
     await extractor.extract(PAGE_TEXT, VALID_MODEL, neverAborts());
 
-    const prompt = String(sentInputs?.prompt ?? "");
-    expect(prompt).toContain(PAGE_START);
-    expect(prompt).toContain(PAGE_END);
-    expect(prompt).toContain(PAGE_TEXT);
+    expect(sentInputs).not.toHaveProperty("prompt");
+    expect(sentInputs?.messages).toEqual([
+      { role: "system", content: SYSTEM_INSTRUCTIONS },
+      { role: "user", content: `${PAGE_START}
+${PAGE_TEXT}
+${PAGE_END}` },
+    ]);
   });
 
   it("ensures page content containing the delimiter itself cannot break out of the frame", async () => {
@@ -82,7 +85,9 @@ describe("createWorkersAiExtractor", () => {
 
     await extractor.extract(malicious, VALID_MODEL, neverAborts());
 
-    const prompt = String(sentInputs?.prompt ?? "");
+    const messages = sentInputs?.messages as Array<{ role: string; content: string }>;
+    const prompt = messages.map((m) => m.content).join("\n");
+    expect(messages.map((m) => m.role)).toEqual(["system", "user"]);
     expect(prompt.split(PAGE_START).length - 1).toBe(1);
     expect(prompt.split(PAGE_END).length - 1).toBe(1);
   });
@@ -232,7 +237,7 @@ describe("createWorkersAiExtractor", () => {
     expect(calls).toBe(1);
   });
 
-  it("passes temperature 0 and max_tokens 1200 to run (design.md)", async () => {
+  it("passes temperature 0 and max_tokens 2500 to run (reasoning models spend completion tokens on thinking)", async () => {
     let sentInputs: Record<string, unknown> | undefined;
     const run: WorkersAiRun = async (_model, inputs) => {
       sentInputs = inputs;
@@ -243,7 +248,7 @@ describe("createWorkersAiExtractor", () => {
     await extractor.extract(PAGE_TEXT, VALID_MODEL, neverAborts());
 
     expect(sentInputs?.temperature).toBe(0);
-    expect(sentInputs?.max_tokens).toBe(1200);
+    expect(sentInputs?.max_tokens).toBe(2500);
   });
 
   // OpenAI-style output declared by GLM-5.3-Flash and DeepSeek V4 Flash
@@ -273,6 +278,19 @@ describe("createWorkersAiExtractor", () => {
         await expect(extractWith(envelope({ content }))).resolves.toEqual(FIELDS);
       },
     );
+
+    it.each(["\n%s", "\n\n%s\n", "  %s  ", "\r\n%s\r\n"])(
+      "parses content with leading or trailing whitespace (%j)",
+      async (tpl) => {
+        const content = tpl.replace("%s", JSON.stringify(FIELDS));
+        await expect(extractWith(envelope({ content }))).resolves.toEqual(FIELDS);
+      },
+    );
+
+    it("parses a fenced block surrounded by blank lines", async () => {
+      const content = "\n\n```json\n" + JSON.stringify(FIELDS) + "\n```\n\n";
+      await expect(extractWith(envelope({ content }))).resolves.toEqual(FIELDS);
+    });
 
     it.each([
       ["null content", envelope({ content: null })],
