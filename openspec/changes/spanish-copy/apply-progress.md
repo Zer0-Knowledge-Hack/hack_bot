@@ -2,9 +2,8 @@
 
 Mode: Strict TDD. Artifact store: hybrid. Branch: `feat/spanish-copy-hackathon` (from `main` 9caa453). Not pushed.
 
-## Phase 1 (PR1): Domain Catalog + Hackathon — COMPLETE (1.1-1.10)
+## Phase 1 (PR1): Domain Catalog + Hackathon — COMPLETE (1.1-1.10, merged as #39)
 
-Phases 2 and 3 pending.
 
 ### Commits
 
@@ -53,6 +52,48 @@ Phases 2 and 3 pending.
 - Leftover-English grep over the Phase 1 reply paths: only exception messages and comments remain.
 - Size: about 192 src lines changed (131 added, 61 removed) and 334 test lines changed (277 added, 57 removed); above the ~260 forecast because of the added tests.
 
+## Phase 2 (PR2): Profile, Team, Membership, Repo Commands + Picker — COMPLETE (2.1-2.7)
+
+Branch: `feat/spanish-copy-commands` (from `main` c4e7248). Not pushed.
+
+### Commits
+
+| Hash | Message |
+|------|---------|
+| 04d7a0d | feat(copy): extend Telegram adapter catalog with profile, team, repo and picker copy |
+| 719a45d | feat(copy): translate profile, team, membership, repo commands and team picker to Spanish |
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.1 | `test/adapters/telegram/commands.test.ts` | Integration | Full suite green before (71 files, 828 tests) | Exact Spanish assertions for /setup, /join, /datachannel, /profile, /promote, /demote, /linkrepo, /unlinkrepo, /repos, team resolution; role labels; `/…y d+ más$/`; 9 new cases | Passed | Many per-command cases | None needed |
+| 2.2 | same file (picker tests live in `commands.test.ts`; no separate picker file exists) | Integration | Same | Callback alert text (via new `alerts` capture), reply, "Equipo {id}" buttons; failed | Passed | Forged callback, valid selection, button labels | None needed |
+| 2.3 | `test/copy/catalog-language.test.ts` | Unit | Same | Imports missing catalogs; 12 failed | Passed | Denylist + non-empty per catalog, `ROLE_LABELS`, link/unlink map, shared phrases | None needed |
+| 2.4 | `src/adapters/telegram/copy.ts` | Unit | Same | Covered by 2.1-2.3 | Passed | Yes | None needed |
+| 2.5 | `src/adapters/telegram/commands.ts` | Integration | Same | Covered by 2.1 | Passed | Yes | `reposReply` delegates to `joinLinesWithinLimit`; removed `REPOS_REPLY_MAX` and duplicate loop |
+| 2.6 | `src/adapters/telegram/team-picker.ts` | Integration | Same | Covered by 2.2 | Passed | Yes | None needed |
+| 2.7 | full suite | - | - | - | 71 files, 857 tests pass; `npm run typecheck` clean | - | - |
+
+RED run: 51 failed / 76 passed in `test/adapters/telegram`, plus 12 failed in `test/copy`.
+
+### Work Unit Evidence
+
+| Evidence | Result |
+|---|---|
+| Focused test command | `npm test -- test/adapters/telegram test/copy`: RED 51 + 12 failed; GREEN after implementation. Full `npm test`: 857/857 |
+| Runtime harness | N/A: copy only |
+| Rollback boundary | `commands.ts`, `team-picker.ts`, the PR2 additions in `src/adapters/telegram/copy.ts` |
+
+### Deviations / notes
+
+- No dedicated team-picker test file exists; picker cases live in `commands.test.ts`, so they were extended there.
+- `test/http/webhook-e2e.test.ts` also asserted `/created/i` on the /setup reply; updated to the Spanish string (out of the listed files, required by the copy change).
+- Catalog shape: `ROLE_LABELS`, `teamResolutionCopy`, `setupCopy`, `joinCopy`, `dataChannelCopy`, `profileCopy`, `roleCopy`, `repoCopy` (`topicRequired` is `Record<"link"|"unlink">`), `pickerCopy`; `commonCopy` gained `noTeamForChat` and `membershipCheckFailed(cmd)`.
+- "Permanecer anónimo" used as the design assumed.
+- Leftover-English grep over Phase 2 reply paths: only domain exception messages (`NotFoundError`/`UnauthorizedError` args, never shown) and log event names remain.
+- Size: 6 files, +368 / -128 (src about 129 net lines changed in commands.ts/picker plus 87 catalog; rest tests).
+
 ### Remaining
 
-Phase 2 (2.1-2.7), Phase 3 (3.1-3.5), Phase 4 (4.1-4.2).
+Phase 3 (3.1-3.5), Phase 4 (4.1-4.2).

@@ -41,13 +41,13 @@ No `npm run harness` needed: fetch, LLM and validation logic are unchanged; fetc
 
 ## Phase 2: Profile, Team, Membership, Repo Commands + Picker (PR2)
 
-- [ ] 2.1 RED: `test/adapters/telegram/commands.test.ts` — Spanish assertions for /setup, /join, /datachannel, /profile, /promote, /demote, /linkrepo, /unlinkrepo, /repos, team resolution; add role labels ("administrador"/"miembro") in `/profile show` and `/promote`; `/repos` truncation `/…y \d+ más$/`.
-- [ ] 2.2 RED: `test/adapters/telegram/team-picker` tests (or nearest existing file) — callback alerts and "Equipo {id}" button.
-- [ ] 2.3 RED: extend `test/copy/catalog-language.test.ts` to the full adapter catalog incl. `Record<Role,string>`, link/unlink map; run, see fail.
-- [ ] 2.4 GREEN: extend `src/adapters/telegram/copy.ts` (tú form, "tema", role and link/unlink `Record` maps, shared `noTeamForChat`).
-- [ ] 2.5 GREEN: `src/adapters/telegram/commands.ts` uses catalog; `reposReply` delegates to `joinLinesWithinLimit(lines, REPLY_MAX, repoCopy.none)`.
-- [ ] 2.6 GREEN: `src/adapters/telegram/team-picker.ts` uses catalog.
-- [ ] 2.7 Run `npm test` and `npm run typecheck`.
+- [x] 2.1 RED: `test/adapters/telegram/commands.test.ts` — Spanish assertions for /setup, /join, /datachannel, /profile, /promote, /demote, /linkrepo, /unlinkrepo, /repos, team resolution; add role labels ("administrador"/"miembro") in `/profile show` and `/promote`; `/repos` truncation `/…y \d+ más$/`.
+- [x] 2.2 RED: `test/adapters/telegram/team-picker` tests (or nearest existing file) — callback alerts and "Equipo {id}" button.
+- [x] 2.3 RED: extend `test/copy/catalog-language.test.ts` to the full adapter catalog incl. `Record<Role,string>`, link/unlink map; run, see fail.
+- [x] 2.4 GREEN: extend `src/adapters/telegram/copy.ts` (tú form, "tema", role and link/unlink `Record` maps, shared `noTeamForChat`).
+- [x] 2.5 GREEN: `src/adapters/telegram/commands.ts` uses catalog; `reposReply` delegates to `joinLinesWithinLimit(lines, REPLY_MAX, repoCopy.none)`.
+- [x] 2.6 GREEN: `src/adapters/telegram/team-picker.ts` uses catalog.
+- [x] 2.7 Run `npm test` and `npm run typecheck`.
 
 ## Phase 3: GitHub Alerts (PR3)
 
