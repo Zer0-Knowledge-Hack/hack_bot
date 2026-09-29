@@ -1285,3 +1285,19 @@ Checked against the repo's generated types and the official docs (developers.clo
 - **Diagnostics (`feat(hackathon-llm)`, 9cac8b0):** seam chosen: `LlmExtractor.extract` returns `{ value, meta }` (not a sentinel), so the never-throw-for-content contract and `value: null` for unparseable output stay, and the domain builds `attempts` from plain data. `meta` is `finishReason` (plain token <= 20 chars, else `other`), `contentLength` and `parseFailure` (`no-content|unterminated|prose-around|not-json|non-object`). The safe logger re-validates each key (pattern, finite number, fixed-code set); tests prove no content, snippet or hostile finish_reason reaches the log.
 - **Tolerant extraction (`feat(hackathon-llm)`, c178c8c):** on a failed direct parse the first balanced `{...}` is parsed (string/escape-aware). Decision: a recovery reports `parseFailure: "prose-around"` AND `recovered: true`, so diagnostics still show the model wraps its JSON. Recovered values still pass through `validateExtraction` unchanged (tests: garbage and off-page snippets rejected). Fence, whitespace and `reasoning_content` tests are unchanged and green.
 - **Docs:** design.md "Extraction Schema and Prompt" updated.
+
+### Root-cause fix: production-faithful evidence (branch `fix/hackathon-extraction-root-cause`)
+
+- **Evidence:** a harness running the REAL modules on Cloudflare (`wrangler dev --remote`, real AI and BROWSER, Cloudflare egress) against .../tokenized-stocks showed: (1) the static fetch gets 403, so production always uses the rendered path; its text has TABs (`innerText` table cells). (2) Qwen copies TAB-containing snippets into JSON strings; `JSON.parse` throws "Bad control character", reported as `parseFailure: not-json`; escaping in-string control chars parses all 11 keys. (3) GLM returns unfindable fields as `{value:null,snippet:null,confidence:0}` and the all-or-nothing shape check failed the whole response as `invalid-shape`. (4) `parsed:false` was reported for any `ok:false`, even when JSON parsing succeeded.
+- **Decisions:** repair reported as a NEW code `parseFailure: "control-chars"` + `recovered: true` (one signal, allowlisted through the shared code list; inside prose it stays `prose-around`). A MISSING key counts as rejected (`wrong-shape`), not null: treating it as null would let `{"unrelated":true}` become a usable all-null success. `parsed` = JSON parsing succeeded (`value !== null` or `non-object`); `shape: "invalid"` only when parsed and the top level is not a plain object. `THIN_STATIC_TEXT_THRESHOLD` and `isUsable` are now exported so the harness shares the production rule.
+
+| Work unit | Commit | RED | GREEN | Notes |
+|---|---|---|---|---|
+| 1 Page text normalization | c04cb08 | 6 failing (tabs in rendered and static output, `normalizePageText` missing) | 770 passed | triangulated: table tabs, control chars/CR, blank-line runs, TEXT_MAX cap |
+| 2 Control-char tolerance | 34a6d42 | 6 failing (real TAB shape, CR/LF, prose-around, fence, non-object) | 76+ passed | also asserts structural whitespace untouched and no content in meta |
+| 3 Per-field shape | 2841998 | 20 failing | 798 passed | GLM null object, array value, string teamSize, top-level array, majority; old whole-response tests rewritten to per-field; spec + design updated |
+| 4 Diagnostics label | 7e077c9 | 4 failing | 803 passed | logger asserts fixed `shape` literal and no value leak |
+| 5 Harness | 6dbbcd5 | N/A: needs live Cloudflare bindings (run by the orchestrator, not vitest) | typecheck clean, harness type-checked separately, `wrangler deploy --dry-run` bundles it | excluded from root tsconfig, vitest and the main bundle |
+
+- **Work Unit Evidence:** focused commands `npx vitest run <files>` per unit (results above); runtime harness: N/A in this batch (run by the orchestrator against real URLs); rollback boundary: one commit per unit.
+- **Verification:** `npm test` 803 passed (70 files), `npm run typecheck` clean.
