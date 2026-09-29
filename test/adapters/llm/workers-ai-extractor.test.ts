@@ -149,6 +149,34 @@ describe("createWorkersAiExtractor", () => {
     );
   });
 
+  // Documented Workers AI error 3036 (HTTP 429, docs checked 2026-09-28,
+  // developers.cloudflare.com/workers-ai/platform/errors): its text carries
+  // none of "quota", "capacity", "429" or "rate limit", so a keyword-only
+  // match reported the real daily-neuron exhaustion as a generic model-error.
+  it.each([
+    "3036: You have used up your daily free allocation of 10,000 neurons. Please upgrade to Cloudflare's Workers Paid plan if you would like to continue usage.",
+    "AiError: 3036",
+  ])("maps the documented daily-allocation error (%s) to LlmQuotaExceededError", async (message) => {
+    const run: WorkersAiRun = async () => {
+      throw new Error(message);
+    };
+    const extractor = createWorkersAiExtractor({ run });
+
+    await expect(extractor.extract(PAGE_TEXT, VALID_MODEL, neverAborts())).rejects.toBeInstanceOf(
+      LlmQuotaExceededError,
+    );
+  });
+
+  it("does not treat an unrelated numeric code as quota exhaustion", async () => {
+    const run: WorkersAiRun = async () => {
+      throw new Error("5007: No such model @cf/x/y or task");
+    };
+    const extractor = createWorkersAiExtractor({ run });
+
+    const err = await extractor.extract(PAGE_TEXT, VALID_MODEL, neverAborts()).catch((e) => e);
+    expect(err).toBeInstanceOf(ExtractionFailedError);
+  });
+
   it("maps any other run() failure to ExtractionFailedError with kind model-error", async () => {
     const run: WorkersAiRun = async () => {
       throw new Error("upstream 500");
