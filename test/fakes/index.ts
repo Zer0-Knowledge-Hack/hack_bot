@@ -367,10 +367,36 @@ export function fakeLlmExtractor(
 
 export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
   rows: HackathonAnalysis[];
+  // Live topic-claim expiry per analysis id (mirrors topic_claim_until).
+  claims: Map<string, number>;
 } {
   const rows: HackathonAnalysis[] = [];
+  const claims = new Map<string, number>();
   return {
     rows,
+    claims,
+    // Mirrors the D1 CAS (single conditional UPDATE): wins only when the
+    // observed thread id still matches and no live claim exists.
+    claimTopicCreation: async (
+      teamId: TeamId,
+      analysisId: string,
+      expectedThreadId: number | null,
+      now: number,
+      ttlMs: number,
+    ) => {
+      const row = rows.find((r) => r.teamId === teamId && r.id === analysisId);
+      if (!row || row.threadId !== expectedThreadId) return false;
+      if ((claims.get(analysisId) ?? 0) > now) return false;
+      claims.set(analysisId, now + ttlMs);
+      return true;
+    },
+    releaseTopicClaim: async (_teamId: TeamId, analysisId: string) => {
+      claims.set(analysisId, 0);
+    },
+    setGeneralMessageId: async (teamId: TeamId, analysisId: string, messageId: number) => {
+      const row = rows.find((r) => r.teamId === teamId && r.id === analysisId);
+      if (row) row.generalMessageId = messageId;
+    },
     findBySlug: async (teamId: TeamId, slug: string) =>
       rows.find((r) => r.teamId === teamId && r.slug === slug) ?? null,
     findById: async (teamId: TeamId, id: string) =>

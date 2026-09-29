@@ -170,6 +170,7 @@ describe("createD1AnalysisJobRepo", () => {
       suggestedRepos: [],
       threadId: null,
       pinnedMessageId: null,
+      generalMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     };

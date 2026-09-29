@@ -113,6 +113,10 @@ export interface HackathonAnalysis {
   // whenever `threadId` is null, or when it is set but the pin attempt
   // failed (link-analysis-to-topic.ts, PR4).
   pinnedMessageId: number | null;
+  // Message id of the General analysis post carrying the participation
+  // button (hackathon-participation), so it can be removed later. Null for
+  // analyses posted before it was tracked or when storing it failed.
+  generalMessageId: number | null;
   createdAt: number;
   updatedAt: number;
 }

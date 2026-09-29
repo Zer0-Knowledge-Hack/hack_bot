@@ -953,6 +953,7 @@ function storedAnalysis(
     suggestedRepos: [],
     threadId: null,
     pinnedMessageId: null,
+    generalMessageId: null,
     createdAt: 0,
     updatedAt: 0,
     ...overrides,

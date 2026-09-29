@@ -15,6 +15,7 @@ interface AnalysisRow {
   suggested_repos: string;
   thread_id: number | null;
   pinned_message_id: number | null;
+  general_message_id: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -30,6 +31,7 @@ function rowToAnalysis(row: AnalysisRow): HackathonAnalysis {
     suggestedRepos: JSON.parse(row.suggested_repos) as RepoFullName[],
     threadId: row.thread_id,
     pinnedMessageId: row.pinned_message_id,
+    generalMessageId: row.general_message_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -156,6 +158,49 @@ export function createD1HackathonAnalysisRepo(db: D1Database): HackathonAnalysis
           )
           .bind(threadId, pinnedMessageId, teamId, analysisId),
       ]);
+    },
+
+    // hackathon-participation: single conditional UPDATE, so of two racing
+    // claims exactly one changes a row. `thread_id IS ?` matches null as
+    // well as a concrete stale id.
+    async claimTopicCreation(
+      teamId: TeamId,
+      analysisId: string,
+      expectedThreadId: number | null,
+      now: number,
+      ttlMs: number,
+    ): Promise<boolean> {
+      const result = await db
+        .prepare(
+          `UPDATE hackathon_analyses
+            SET topic_claim_until = ?
+            WHERE team_id = ? AND id = ? AND thread_id IS ? AND topic_claim_until <= ?`,
+        )
+        .bind(now + ttlMs, teamId, analysisId, expectedThreadId, now)
+        .run();
+      return result.meta.changes > 0;
+    },
+
+    async releaseTopicClaim(teamId: TeamId, analysisId: string): Promise<void> {
+      await db
+        .prepare(
+          "UPDATE hackathon_analyses SET topic_claim_until = 0 WHERE team_id = ? AND id = ?",
+        )
+        .bind(teamId, analysisId)
+        .run();
+    },
+
+    async setGeneralMessageId(
+      teamId: TeamId,
+      analysisId: string,
+      messageId: number,
+    ): Promise<void> {
+      await db
+        .prepare(
+          "UPDATE hackathon_analyses SET general_message_id = ? WHERE team_id = ? AND id = ?",
+        )
+        .bind(messageId, teamId, analysisId)
+        .run();
     },
   };
 }

@@ -53,6 +53,7 @@ function analysis(overrides: Partial<HackathonAnalysis> & { id: string; slug: st
     suggestedRepos: [],
     threadId: null,
     pinnedMessageId: null,
+    generalMessageId: null,
     createdAt: 0,
     updatedAt: 0,
     ...overrides,

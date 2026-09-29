@@ -509,6 +509,7 @@ describe("analyzeHackathon: builds (does not persist) and suggests", () => {
       suggestedRepos: [],
       threadId: null,
       pinnedMessageId: null,
+      generalMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -530,6 +531,7 @@ describe("analyzeHackathon: builds (does not persist) and suggests", () => {
       suggestedRepos: [],
       threadId: 7,
       pinnedMessageId: 42,
+      generalMessageId: null,
       createdAt: 10,
       updatedAt: 10,
     });

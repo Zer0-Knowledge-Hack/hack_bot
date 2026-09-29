@@ -267,6 +267,20 @@ export interface HackathonAnalysisRepo {
     threadId: number,
     pinnedMessageId: number | null,
   ): Promise<void>;
+  // hackathon-participation (design.md decision 3): compare-and-set claim on
+  // topic creation. Wins only when the row still holds `expectedThreadId`
+  // (null, or the stale id observed by the probe) and no live claim exists
+  // (`topic_claim_until < now`); a win stamps `now + ttlMs`. Returns false
+  // when the claim is lost.
+  claimTopicCreation(
+    teamId: TeamId,
+    analysisId: string,
+    expectedThreadId: number | null,
+    now: number,
+    ttlMs: number,
+  ): Promise<boolean>;
+  releaseTopicClaim(teamId: TeamId, analysisId: string): Promise<void>;
+  setGeneralMessageId(teamId: TeamId, analysisId: string, messageId: number): Promise<void>;
 }
 
 // design.md "reserve": one atomic batch reserves the cap slot and the

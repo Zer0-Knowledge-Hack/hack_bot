@@ -138,6 +138,7 @@ describe("runHackathonJob", () => {
       suggestedRepos: [],
       threadId: null,
       pinnedMessageId: null,
+      generalMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -183,6 +184,7 @@ describe("runHackathonJob", () => {
       suggestedRepos: [],
       threadId: null,
       pinnedMessageId: null,
+      generalMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -228,6 +230,7 @@ describe("runHackathonJob", () => {
       // Already linked and pinned to the SAME topic this redelivery targets.
       threadId: 500,
       pinnedMessageId: 900,
+      generalMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -270,6 +273,7 @@ describe("runHackathonJob", () => {
       suggestedRepos: [],
       threadId: null,
       pinnedMessageId: null,
+      generalMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -306,6 +310,7 @@ describe("runHackathonJob", () => {
       suggestedRepos: [],
       threadId: null,
       pinnedMessageId: null,
+      generalMessageId: null,
       createdAt: 0,
       updatedAt: 0,
     });
