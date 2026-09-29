@@ -254,3 +254,154 @@ describe("POST /telegram/webhook — /hackathon join through real composition", 
     expect(row).toEqual({ thread_id: null, topic_claim_until: 0 });
   });
 });
+
+// hackathon-participation (PR2): the `hp:<slug>` callback through the real
+// route, composition root, D1 and adapters (telegram-webhook spec: Command-Only
+// Routing).
+describe("POST /telegram/webhook — hp: callback through real composition", () => {
+  const stubForum = () =>
+    stubTelegramApi((method) => {
+      if (method === "createForumTopic") return { message_thread_id: 4242, name: "x", icon_color: 0 };
+      if (method === "sendChatAction") return true;
+      return undefined;
+    });
+
+  function callbackUpdate(chatId: number, userId: number, data: string, messageId = 321) {
+    return {
+      update_id: nextUpdateId++,
+      callback_query: {
+        id: `cb-${nextUpdateId}`,
+        from: { id: userId, is_bot: false, first_name: "User" },
+        chat_instance: "e2e",
+        data,
+        message: {
+          message_id: messageId,
+          date: 0,
+          chat: { id: chatId, type: "supergroup", title: "E2E group" },
+        },
+      },
+    };
+  }
+
+  async function seed(chatId: number, generalMessageId: number | null) {
+    const team = await env.DB.prepare("SELECT id FROM teams WHERE telegram_chat_id = ?")
+      .bind(chatId)
+      .first<{ id: string }>();
+    const teamId = asTeamId(team!.id);
+    const repo = createD1HackathonAnalysisRepo(env.DB);
+    const id = `e2e-cb-${chatId}`;
+    await repo.save({
+      id,
+      teamId,
+      slug: "meridian",
+      sourceUrl: "https://example.com/meridian",
+      normalizedUrl: "https://example.com/meridian",
+      fields: {
+        name: { value: "Meridian Hack", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    if (generalMessageId !== null) await repo.setGeneralMessageId(teamId, id, generalMessageId);
+    return id;
+  }
+
+  const threadOf = (id: string) =>
+    env.DB.prepare("SELECT thread_id FROM hackathon_analyses WHERE id = ?").bind(id).first();
+
+  it("an admin tap creates the topic, confirms in General, answers the callback and removes the button", async () => {
+    const calls = stubForum();
+    const queue = fakeQueue();
+    const chatId = -1_005_552_001;
+    const userId = 900_201;
+
+    await post(commandUpdate("setup", chatId, userId), queue.binding);
+    const id = await seed(chatId, 321);
+    const res = await post(callbackUpdate(chatId, userId, "hp:meridian"), queue.binding);
+
+    expect(res.status).toBe(200);
+    expect(await threadOf(id)).toEqual({ thread_id: 4242 });
+    expect(calls.filter((c) => c.method === "createForumTopic")).toHaveLength(1);
+    expect(calls.filter((c) => c.method === "answerCallbackQuery")).toHaveLength(1);
+    expect(calls.filter((c) => c.method === "editMessageReplyMarkup").map((c) => c.body)).toEqual([
+      expect.objectContaining({ chat_id: chatId, message_id: 321 }),
+    ]);
+    const texts = calls.filter((c) => c.method === "sendMessage").map((c) => (c.body as { text: string }).text);
+    expect(texts.at(-1)).toBe("✅ Participamos en Meridian Hack → https://t.me/c/5552001/4242");
+  });
+
+  it("a non-admin tap gets the alert and nothing changes", async () => {
+    const calls = stubForum();
+    const queue = fakeQueue();
+    const chatId = -1_005_552_002;
+    const adminId = 900_202;
+    const memberId = 900_203;
+
+    await post(commandUpdate("setup", chatId, adminId), queue.binding);
+    await post(commandUpdate("join", chatId, memberId), queue.binding);
+    const id = await seed(chatId, 321);
+    const res = await post(callbackUpdate(chatId, memberId, "hp:meridian"), queue.binding);
+
+    expect(res.status).toBe(200);
+    const answers = calls.filter((c) => c.method === "answerCallbackQuery").map((c) => c.body);
+    expect(answers).toEqual([
+      expect.objectContaining({
+        text: "Solo un administrador del equipo puede confirmar la participación.",
+        show_alert: true,
+      }),
+    ]);
+    expect(calls.some((c) => c.method === "createForumTopic")).toBe(false);
+    expect(calls.some((c) => c.method === "editMessageReplyMarkup")).toBe(false);
+    expect(await threadOf(id)).toEqual({ thread_id: null });
+  });
+
+  it("a redelivered tap creates no second topic", async () => {
+    const calls = stubForum();
+    const queue = fakeQueue();
+    const chatId = -1_005_552_003;
+    const userId = 900_204;
+
+    await post(commandUpdate("setup", chatId, userId), queue.binding);
+    await seed(chatId, null);
+    const update = callbackUpdate(chatId, userId, "hp:meridian");
+    await post(update, queue.binding);
+    await post(update, queue.binding);
+
+    expect(calls.filter((c) => c.method === "createForumTopic")).toHaveLength(1);
+    const texts = calls.filter((c) => c.method === "sendMessage").map((c) => (c.body as { text: string }).text);
+    expect(texts.at(-1)).toBe("Este hackathon ya tiene tema: https://t.me/c/5552003/4242");
+  });
+
+  it.each([
+    ["a malformed slug", "hp:Bad_Slug"],
+    ["a foreign prefix", "zz:meridian"],
+  ])("%s is ignored with 200 and no Telegram call", async (_label, data) => {
+    const calls = stubForum();
+    const queue = fakeQueue();
+    const chatId = -1_005_552_004;
+    const userId = 900_205;
+
+    await post(commandUpdate("setup", chatId, userId), queue.binding);
+    const id = await seed(chatId, 321);
+    const before = calls.length;
+    const res = await post(callbackUpdate(chatId, userId, data), queue.binding);
+
+    expect(res.status).toBe(200);
+    expect(calls.slice(before)).toEqual([]);
+    expect(await threadOf(id)).toEqual({ thread_id: null });
+  });
+});
