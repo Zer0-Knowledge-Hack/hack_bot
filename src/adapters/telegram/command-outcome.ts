@@ -25,11 +25,19 @@ import type { Logger } from "../../domain/ports";
 // silent-unsafe (falls to a generic swallowed-200 reply).
 export type DomainErrorReplies = Record<string, string>;
 
+// Optional fixed log `reason` for a recognized refusal, keyed like
+// `errorReplies`. A function derives it from the error (e.g. an
+// UnsafeUrlError's guard code). Reasons MUST be fixed, non-sensitive
+// strings — never a URL, message text or any other input (design.md
+// "Logging").
+export type DomainErrorReasons = Record<string, string | ((err: unknown) => string)>;
+
 export interface RunCommandOptions {
   event: string;
   logger: Logger;
   reply: (text: string) => Promise<unknown>;
   errorReplies: DomainErrorReplies;
+  errorReasons?: DomainErrorReasons;
 }
 
 export interface RunCommandOk {
@@ -61,7 +69,14 @@ export async function runCommand(
     const errorCode = err instanceof Error ? err.name : "UnknownError";
     const recognizedReply = options.errorReplies[errorCode];
     if (recognizedReply !== undefined) {
-      options.logger.log({ event: options.event, outcome: "refused", errorCode });
+      const declared = options.errorReasons?.[errorCode];
+      const reason = typeof declared === "function" ? declared(err) : declared;
+      options.logger.log({
+        event: options.event,
+        outcome: "refused",
+        errorCode,
+        ...(reason !== undefined ? { reason } : {}),
+      });
       await options.reply(recognizedReply);
       return;
     }
