@@ -3,7 +3,9 @@ import { analyzeHackathon } from "../../../src/domain/usecases/analyze-hackathon
 import {
   BrowserQuotaExceededError,
   ExtractionFailedError,
+  PageFetchFailedError,
   PageTooThinError,
+  UnsafeUrlError,
 } from "../../../src/domain/errors";
 import { asTeamId } from "../../../src/domain/ids";
 import {
@@ -97,6 +99,92 @@ describe("analyzeHackathon: static-then-browser fallback on thin static text", (
     await analyzeHackathon(makeInput(), deps);
 
     expect(deps.renderedFetcher.calls).toEqual([]);
+  });
+});
+
+describe("analyzeHackathon: browser fallback when the static fetch is bot-walled", () => {
+  function botWallDeps(staticError: unknown, rendered: Parameters<typeof fakePageFetcher>[0]) {
+    const deps = makeDeps({ renderedText: "z".repeat(900) });
+    deps.staticFetcher = fakePageFetcher([{ throws: staticError }]);
+    deps.renderedFetcher = fakePageFetcher(rendered);
+    return deps;
+  }
+
+  it.each([401, 403, 429, 503])(
+    "falls back to the rendered fetcher on a static http-status %i",
+    async (status) => {
+      const deps = botWallDeps(
+        new PageFetchFailedError(`unexpected HTTP status ${status}`, "http-status", status),
+        [{ text: "z".repeat(900) }],
+      );
+
+      const result = await analyzeHackathon(makeInput(), deps);
+
+      expect(deps.renderedFetcher.calls).toEqual([SOURCE_URL]);
+      expect(deps.llmExtractor.calls[0]?.pageText).toBe("z".repeat(900));
+      expect(result.fields.name?.value).toBe("Meridian");
+    },
+  );
+
+  it.each([404, 410, 500])(
+    "propagates a static http-status %i without calling the rendered fetcher",
+    async (status) => {
+      const err = new PageFetchFailedError(`unexpected HTTP status ${status}`, "http-status", status);
+      const deps = botWallDeps(err, [{ text: "z".repeat(900) }]);
+
+      const thrown: unknown = await analyzeHackathon(makeInput(), deps).catch((e: unknown) => e);
+
+      expect(thrown).toBe(err);
+      expect(deps.renderedFetcher.calls).toEqual([]);
+    },
+  );
+
+  it.each(["timeout", "network", "content-type", "redirects", "too-large"] as const)(
+    "propagates a static %s failure without calling the rendered fetcher",
+    async (kind) => {
+      const err = new PageFetchFailedError("static failed", kind);
+      const deps = botWallDeps(err, [{ text: "z".repeat(900) }]);
+
+      const thrown: unknown = await analyzeHackathon(makeInput(), deps).catch((e: unknown) => e);
+
+      expect(thrown).toBe(err);
+      expect(deps.renderedFetcher.calls).toEqual([]);
+    },
+  );
+
+  it("propagates an UnsafeUrlError without calling the rendered fetcher", async () => {
+    const err = new UnsafeUrlError("blocked", "private-ip");
+    const deps = botWallDeps(err, [{ text: "z".repeat(900) }]);
+
+    const thrown: unknown = await analyzeHackathon(makeInput(), deps).catch((e: unknown) => e);
+
+    expect(thrown).toBe(err);
+    expect(deps.renderedFetcher.calls).toEqual([]);
+  });
+
+  it("surfaces the rendered error when the rendered fetch fails after a bot-wall", async () => {
+    const renderedErr = new PageFetchFailedError("rendered fetch timed out", "timeout");
+    const deps = botWallDeps(
+      new PageFetchFailedError("unexpected HTTP status 403", "http-status", 403),
+      [{ throws: renderedErr }],
+    );
+
+    const thrown: unknown = await analyzeHackathon(makeInput(), deps).catch((e: unknown) => e);
+
+    expect(thrown).toBe(renderedErr);
+    expect(deps.renderedFetcher.calls).toEqual([SOURCE_URL]);
+  });
+
+  it("reports PageTooThinError (browser quota) when the browser quota is exhausted after a bot-wall", async () => {
+    const deps = botWallDeps(
+      new PageFetchFailedError("unexpected HTTP status 429", "http-status", 429),
+      [{ throws: new BrowserQuotaExceededError("429") }],
+    );
+
+    const thrown: unknown = await analyzeHackathon(makeInput(), deps).catch((e: unknown) => e);
+
+    expect(thrown).toBeInstanceOf(PageTooThinError);
+    expect((thrown as PageTooThinError).browserQuotaDegraded).toBe(true);
   });
 });
 

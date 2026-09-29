@@ -1,6 +1,7 @@
 import {
   BrowserQuotaExceededError,
   ExtractionFailedError,
+  PageFetchFailedError,
   PageTooThinError,
 } from "../errors";
 import { deriveBaseSlug, slugForAttempt } from "../hackathon/slug";
@@ -136,20 +137,46 @@ export async function analyzeHackathon(
   return analysis;
 }
 
-// spec page-fetch "Browser Rendering Fallback on Thin Static Text" and
-// "Browser Rendering Quota Exhaustion Degrades or Fails Based on Static
-// Text Length". A static-fetch failure (SSRF guard, size/time cap)
-// propagates as-is — the fallback is only attempted for THIN text, never
-// for a failed fetch.
+// Static http-status codes that mean "a bot wall blocked the Worker's
+// egress", not "the page does not exist": 401 (auth/challenge), 403
+// (forbidden / WAF), 429 (rate limited) and 503 (challenge or overload
+// page). A real browser can often pass these. 404/410 (and other 4xx/5xx)
+// mean the page is gone or broken, so rendering it would only burn Browser
+// Rendering quota; they propagate instead.
+const BOT_WALL_STATUSES: ReadonlySet<number> = new Set([401, 403, 429, 503]);
+
+function isBotWalled(err: unknown): boolean {
+  return (
+    err instanceof PageFetchFailedError &&
+    err.kind === "http-status" &&
+    err.status !== undefined &&
+    BOT_WALL_STATUSES.has(err.status)
+  );
+}
+
+// spec page-fetch "Browser Rendering Fallback on Thin Static Text",
+// "Browser Rendering Fallback on Bot-Walled Static Fetch" and "Browser
+// Rendering Quota Exhaustion Degrades or Fails Based on Static Text
+// Length". The rendered fetch is tried for THIN static text or a bot-wall
+// static status. Any other static failure (SSRF guard, timeout, network,
+// content-type, redirects, size cap, non-bot-wall status) propagates as-is.
+// After a bot-wall there is no static text, so a rendered quota
+// exhaustion mirrors the thin-text path with 0 chars: PageTooThinError
+// (browserQuotaDegraded); any other rendered error propagates unchanged.
 async function resolvePageText(
   sourceUrl: string,
   deadlineAt: number,
   deps: Pick<AnalyzeHackathonDeps, "staticFetcher" | "renderedFetcher" | "clock">,
 ): Promise<string> {
-  const staticText = await deps.staticFetcher.fetch(
-    sourceUrl,
-    stepSignal(STATIC_FETCH_TIMEOUT_MS, deadlineAt, deps.clock),
-  );
+  let staticText = "";
+  try {
+    staticText = await deps.staticFetcher.fetch(
+      sourceUrl,
+      stepSignal(STATIC_FETCH_TIMEOUT_MS, deadlineAt, deps.clock),
+    );
+  } catch (err) {
+    if (!isBotWalled(err)) throw err;
+  }
   if (staticText.length >= THIN_STATIC_TEXT_THRESHOLD) {
     return staticText;
   }
