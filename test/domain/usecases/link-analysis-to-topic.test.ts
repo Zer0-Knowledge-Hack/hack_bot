@@ -88,6 +88,8 @@ describe("linkAnalysisToTopic", () => {
     expect(stored?.threadId).toBe(500);
     expect(stored?.pinnedMessageId).toBe(1);
     expect(result.replyText).toContain("meridian");
+    // The analysis itself is the pinned post, so a clean link has no notes.
+    expect(result.notes).toEqual([]);
   });
 
   // spec hackathon-analysis "Topic already holds a different analysis".
@@ -112,6 +114,7 @@ describe("linkAnalysisToTopic", () => {
     expect(beta?.threadId).toBe(500);
     expect(beta?.pinnedMessageId).not.toBeNull();
     expect(result.replyText).toContain("Replaced");
+    expect(result.notes).toEqual(["Replaced the topic's previous link (was alpha)."]);
   });
 
   // spec hackathon-analysis "Analysis already linked to another topic".
@@ -132,6 +135,7 @@ describe("linkAnalysisToTopic", () => {
     expect(alpha?.threadId).toBe(600);
     expect(alpha?.pinnedMessageId).not.toBeNull();
     expect(result.replyText).toContain("Moved");
+    expect(result.notes).toEqual(["Moved this analysis's link from another topic."]);
   });
 
   // READ-001: notes appended after a maximal-length analysis body must not
@@ -178,6 +182,7 @@ describe("linkAnalysisToTopic", () => {
     expect(stored?.threadId).toBe(500);
     expect(stored?.pinnedMessageId).toBeNull();
     expect(result.replyText).toContain("pin");
+    expect(result.notes).toEqual(["Pinning failed; the message was posted unpinned."]);
     expect(deps.logger.entries).toHaveLength(1);
     expect(deps.logger.entries[0]).toMatchObject({
       outcome: "error",
