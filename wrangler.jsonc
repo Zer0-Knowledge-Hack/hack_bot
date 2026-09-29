@@ -55,13 +55,14 @@
   // Not a secret; the token-bearing values are Worker secrets.
   "vars": {
     // Workers AI catalog IDs (`@cf/...`) for the extraction model and its
-    // fallback (IDs and 1,310,720-token context windows verified with
-    // `wrangler ai models schema`, tasks.md 11.4). Both return an OpenAI-style
-    // `choices` output. If either var is blank, a queued analysis fails
-    // closed with "Hackathon analysis is not configured" and its reserved
-    // daily slot is refunded.
-    "HACKATHON_MODEL_PRIMARY": "@cf/zai-org/glm-5.3-flash",
-    "HACKATHON_MODEL_FALLBACK": "@cf/deepseek-ai/deepseek-v4-flash-0731",
+    // fallback. Both are Workers Free plan models (GLM-5.3-Flash and DeepSeek
+    // V4 need Workers Paid; the account stays on Free). The extractor calls
+    // them in chat mode (system + user messages) and reads the OpenAI-style
+    // `choices[0].message.content`. If either var is blank, a queued analysis
+    // fails closed with "Hackathon analysis is not configured" and its
+    // reserved daily slot is refunded.
+    "HACKATHON_MODEL_PRIMARY": "@cf/zai-org/glm-4.7-flash",
+    "HACKATHON_MODEL_FALLBACK": "@cf/qwen/qwen3-30b-a3b-fp8",
     "BOT_INFO": "{\"id\":8808165755,\"is_bot\":true,\"first_name\":\"Hack Bot\",\"username\":\"hackZK_bot\",\"can_join_groups\":true,\"can_read_all_group_messages\":false,\"supports_inline_queries\":false,\"can_connect_to_business\":false,\"has_main_web_app\":false}"
   }
 }
