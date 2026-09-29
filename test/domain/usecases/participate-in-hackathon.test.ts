@@ -323,6 +323,20 @@ describe("participateInHackathon: creation failures", () => {
     expect(retry.kind).toBe("busy");
     expect(deps.forumTopicManager.created).toHaveLength(1);
   });
+
+  it("keeps the claim and rethrows an unknown create error (the topic may exist)", async () => {
+    const deps = setup();
+    const boom = new TypeError("unexpected create failure");
+    deps.forumTopicManager.create = async () => {
+      throw boom;
+    };
+
+    await expect(participateInHackathon(input(), deps)).rejects.toBe(boom);
+
+    expect(deps.hackathonAnalysisRepo.claims.get("a-1")).toBeGreaterThan(deps.clock.now());
+    expect(row(deps).threadId).toBeNull();
+    expect(deps.chatPublisher.posted).toHaveLength(0);
+  });
 });
 
 describe("participateInHackathon: after the topic exists (never rethrows)", () => {
