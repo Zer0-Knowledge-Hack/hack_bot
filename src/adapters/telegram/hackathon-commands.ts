@@ -20,6 +20,7 @@ import { listAnalyses } from "../../domain/usecases/list-analyses";
 import { requestHackathonAnalysis } from "../../domain/usecases/request-hackathon-analysis";
 import { showAnalysis } from "../../domain/usecases/show-analysis";
 import { showTopicAnalysis } from "../../domain/usecases/show-topic-analysis";
+import { commonCopy, hackathonCopy } from "./copy";
 import { runCommand } from "./command-outcome";
 import type { DomainErrorReasons, DomainErrorReplies } from "./command-outcome";
 import { callerLocation, resolveGroupMembership } from "./context";
@@ -46,8 +47,6 @@ export interface HackathonCommandDeps {
   logger: Logger;
 }
 
-const USAGE = "Usage: /hackathon <url or slug>";
-const GROUP_ONLY = "Run this command inside your team's group chat.";
 // hackathon_analysis_jobs.fetch_url is CHECK-limited to 2048 characters
 // (migrations/0003_hackathon_analysis.sql).
 const FETCH_URL_MAX = 2048;
@@ -62,18 +61,16 @@ class UrlTooLongError extends Error {
 // (or deliberately left unrecognized, which rethrows to a 500) — see
 // command-outcome.ts. Texts are the design.md "Error Taxonomy" replies.
 const ERROR_REPLIES: DomainErrorReplies = {
-  NotFoundError: "You are not a member of this team.",
-  UnauthorizedError: "Only a team admin may analyze or link a hackathon.",
-  AnalysisNotFoundError: "No analysis with that slug. See /hackathons.",
-  UnsafeUrlError: "Only public http(s) pages can be analyzed.",
-  UrlTooLongError: `That URL is too long (max ${FETCH_URL_MAX} characters).`,
-  DailyCapReachedError:
-    "Daily limit reached (5 new analyses per UTC day). Re-showing a slug is free.",
-  AnalysisBusyError: "An analysis is already running for this team. Wait for its result.",
-  QueueSendFailedError:
-    "Could not start the analysis; try again in a minute. This did not count toward the daily limit.",
-  ConfigError: "Hackathon analysis is not configured.",
-  PublishFailedError: "Could not post to this chat right now. Try again in a minute.",
+  NotFoundError: commonCopy.notMember,
+  UnauthorizedError: hackathonCopy.adminOnly,
+  AnalysisNotFoundError: hackathonCopy.noAnalysis,
+  UnsafeUrlError: hackathonCopy.unsafeUrl,
+  UrlTooLongError: hackathonCopy.urlTooLong(FETCH_URL_MAX),
+  DailyCapReachedError: hackathonCopy.dailyCap,
+  AnalysisBusyError: hackathonCopy.busy,
+  QueueSendFailedError: hackathonCopy.queueSendFailed,
+  ConfigError: hackathonCopy.notConfigured,
+  PublishFailedError: hackathonCopy.publishFailed,
 };
 
 // Fixed, non-sensitive log reasons (design.md "Error Taxonomy" — Log reason).
@@ -91,7 +88,7 @@ async function requireGroupCaller(
   if (!loc) return null;
   if (isPrivateChat(ctx)) {
     deps.logger.log({ event, outcome: "refused", errorCode: "PrivateChat" });
-    await ctx.reply(GROUP_ONLY);
+    await ctx.reply(hackathonCopy.groupOnly);
     return null;
   }
   return loc;
@@ -115,7 +112,7 @@ export function registerHackathonCommands(bot: Bot, deps: HackathonCommandDeps):
     }
     if (/\s/.test(argument)) {
       deps.logger.log({ event: "hackathon", outcome: "refused", errorCode: "BadArgument" });
-      await ctx.reply(USAGE);
+      await ctx.reply(hackathonCopy.usage);
       return;
     }
     const classified = classifyHackathonArgument(argument);
@@ -164,12 +161,12 @@ async function showLinkedAnalysis(
     },
     async () => {
       const { team, membership } = await resolveMember(deps, loc);
-      if (loc.threadId === null) return { okReply: USAGE, teamId: team.id };
+      if (loc.threadId === null) return { okReply: hackathonCopy.usage, teamId: team.id };
       const result = await showTopicAnalysis(
         { teamId: team.id, actorMembershipId: membership.id, threadId: loc.threadId },
         deps,
       );
-      return { okReply: result?.replyText ?? USAGE, teamId: team.id };
+      return { okReply: result?.replyText ?? hackathonCopy.usage, teamId: team.id };
     },
   );
 }
@@ -207,7 +204,7 @@ async function showBySlug(
         );
         return {
           okReply:
-            linked.notes.length > 0 ? linked.notes.join("\n") : `Linked ${slug} to this topic.`,
+            linked.notes.length > 0 ? linked.notes.join("\n") : commonCopy.linkedHere(slug),
           teamId: team.id,
         };
       }

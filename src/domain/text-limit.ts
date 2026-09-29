@@ -1,8 +1,10 @@
+import { moreItems } from "./copy";
+
 // Generic line-list truncation shared by `/repos` and `/hackathons` (spec
 // hackathon-analysis: "Listing Is Read-Only and Truncated" — "the same
 // pattern as /repos"). Telegram rejects a message over 4096 chars; below
 // the limit whole lines are kept, and once a line would push the reply
-// over the limit, listing stops and a fixed "...and N more" summary line
+// over the limit, listing stops and a fixed "…y N más" summary line
 // replaces the rest (see adapters/telegram/commands.ts's prior `reposReply`,
 // which this generalizes).
 export function joinLinesWithinLimit(
@@ -18,10 +20,11 @@ export function joinLinesWithinLimit(
   for (let kept = lines.length - 1; kept >= 0; kept--) {
     const omitted = lines.length - kept;
     const head = lines.slice(0, kept).join("\n");
-    const candidate = kept > 0 ? `${head}\n...and ${omitted} more` : `...and ${omitted} more`;
+    const summary = moreItems(omitted);
+    const candidate = kept > 0 ? `${head}\n${summary}` : summary;
     if (candidate.length <= limit) return candidate;
   }
   // Pathological case: even the summary line alone does not fit —
   // defensively truncate rather than ever exceed the limit.
-  return `...and ${lines.length} more`.slice(0, limit);
+  return moreItems(lines.length).slice(0, limit);
 }

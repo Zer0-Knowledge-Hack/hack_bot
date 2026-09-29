@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { runHackathonJob } from "../../../src/domain/usecases/run-hackathon-job";
-import { PageFetchFailedError, UnsafeUrlError } from "../../../src/domain/errors";
+import {
+  ConfigError,
+  ExtractionFailedError,
+  LlmQuotaExceededError,
+  PageFetchFailedError,
+  PageTooThinError,
+  UnsafeUrlError,
+  type PageFetchFailureKind,
+} from "../../../src/domain/errors";
 import { asTeamId } from "../../../src/domain/ids";
 import type { AnalysisJob, AnalysisJobMessage } from "../../../src/domain/entities";
 import {
@@ -324,7 +332,7 @@ describe("runHackathonJob", () => {
 
     expect(outcome).toEqual({ kind: "ack" });
     expect(deps.chatPublisher.posted).toHaveLength(1);
-    expect(deps.chatPublisher.posted[0]!.text).toContain("could not be found");
+    expect(deps.chatPublisher.posted[0]!.text).toBe("No se encontró el análisis guardado; ejecútalo de nuevo.");
     expect(deps.analysisJobRepo.succeeded).toEqual([]);
     expect(deps.analysisJobRepo.failed).toEqual([
       { id: "job-1", reason: "job:missing-analysis" },
@@ -347,7 +355,7 @@ describe("runHackathonJob", () => {
     expect(deps.analysisQuota.released).toEqual([
       { team: teamId, day: job.utcDay, jobId: job.id, refund: true },
     ]);
-    expect(deps.chatPublisher.posted[0]!.text).toContain("expired");
+    expect(deps.chatPublisher.posted[0]!.text).toBe("El análisis caducó; ejecútalo de nuevo.");
   });
 
   it("claimed job: runs the pipeline, persists, posts, and succeeds", async () => {
@@ -424,7 +432,9 @@ describe("runHackathonJob", () => {
     expect(depsFinal.analysisQuota.released).toEqual([
       { team: teamId, day: job.utcDay, jobId: job.id, refund: false },
     ]);
-    expect(depsFinal.chatPublisher.posted[0]!.text).toContain("temporary error");
+    expect(depsFinal.chatPublisher.posted[0]!.text).toBe(
+      "El análisis falló por un error temporal. Inténtalo de nuevo más tarde.",
+    );
   });
 
   it("stale job: posts the expiry reply before marking failed, never silently (RESI-001, design.md 'Post then mark')", async () => {
@@ -440,7 +450,7 @@ describe("runHackathonJob", () => {
     );
 
     expect(deps.chatPublisher.posted).toHaveLength(1);
-    expect(deps.chatPublisher.posted[0]!.text).toContain("expired");
+    expect(deps.chatPublisher.posted[0]!.text).toBe("El análisis caducó; ejecútalo de nuevo.");
   });
 
   it("permanent failure: posts the failure reply before marking failed, never silently (RESI-001, design.md 'Post then mark')", async () => {
@@ -457,7 +467,7 @@ describe("runHackathonJob", () => {
     );
 
     expect(deps.chatPublisher.posted).toHaveLength(1);
-    expect(deps.chatPublisher.posted[0]!.text).toContain("public http(s)");
+    expect(deps.chatPublisher.posted[0]!.text).toBe("Solo se pueden analizar páginas públicas http(s).");
   });
 
   it("a failure reply that cannot be sent is logged, and the job is still acked and failed (FIXV-001)", async () => {
@@ -478,7 +488,7 @@ describe("runHackathonJob", () => {
     );
   });
 
-  it("logs the HTTP status of a failed page fetch and keeps the reply text unchanged", async () => {
+  it("logs the HTTP status of a failed page fetch and replies with the Spanish http-status phrase", async () => {
     const deps = makeDeps();
     const job = baseJob();
     deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
@@ -499,8 +509,60 @@ describe("runHackathonJob", () => {
       }),
     );
     expect(deps.chatPublisher.posted[0]!.text).toBe(
-      "Could not read that page (http-status). Any previous analysis was kept.",
+      "No se pudo leer esa página (el sitio respondió con un error). Se conservó el análisis anterior.",
     );
+  });
+
+  it.each<[PageFetchFailureKind, string]>([
+    ["timeout", "tiempo de espera agotado"],
+    ["too-large", "la página es demasiado grande"],
+    ["http-status", "el sitio respondió con un error"],
+    ["content-type", "el contenido no es una página web"],
+    ["redirects", "demasiadas redirecciones"],
+    ["network", "error de red"],
+  ])("fetch failure %s replies with its Spanish phrase and never the raw code", async (kind, phrase) => {
+    const deps = makeDeps();
+    const job = baseJob();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.staticFetcher = fakePageFetcher([{ throws: new PageFetchFailedError("boom", kind) }]);
+
+    await runHackathonJob(baseMsg(), 1, deps);
+
+    const text = deps.chatPublisher.posted[0]!.text;
+    expect(text).toBe(`No se pudo leer esa página (${phrase}). Se conservó el análisis anterior.`);
+    if (kind !== "network" && kind !== "timeout") expect(text).not.toContain(kind);
+  });
+
+  it.each<[string, () => Error, string]>([
+    [
+      "too little text",
+      () => new PageTooThinError("thin"),
+      "La página tiene muy poco texto legible. Se conservó el análisis anterior.",
+    ],
+    [
+      "AI quota",
+      () => new LlmQuotaExceededError("quota"),
+      "Se agotó la cuota compartida de IA de hoy; inténtalo después de las 00:00 UTC. Se conservó el análisis anterior.",
+    ],
+    [
+      "invalid AI output",
+      () => new ExtractionFailedError("bad", "invalid-output"),
+      "La IA no pudo generar un análisis válido. Se conservó el análisis anterior.",
+    ],
+    [
+      "not configured",
+      () => new ConfigError("no models"),
+      "El análisis de hackathons no está configurado.",
+    ],
+  ])("%s replies in Spanish", async (_name, makeError, expected) => {
+    const deps = makeDeps();
+    const job = baseJob();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.staticFetcher = fakePageFetcher([{ throws: makeError() }]);
+
+    await runHackathonJob(baseMsg(), 1, deps);
+
+    expect(deps.chatPublisher.posted[0]!.text).toBe(expected);
   });
 
   it("logs no httpStatus for a failure that is not an http-status fetch error", async () => {

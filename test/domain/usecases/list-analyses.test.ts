@@ -88,13 +88,13 @@ describe("listAnalyses", () => {
 
     const result = await listAnalyses({ teamId, actorMembershipId }, deps);
 
-    expect(result.replyText).toContain("meridian — Meridian Hacks — 2025-01-01 — linked");
-    expect(result.replyText).toContain("unlinked-hack — (unnamed) — no deadline found — not linked");
+    expect(result.replyText).toContain("meridian — Meridian Hacks — 2025-01-01 — vinculado");
+    expect(result.replyText).toContain("unlinked-hack — (sin nombre) — sin fecha límite — no vinculado");
     expect(result.replyText.length).toBeLessThanOrEqual(4096);
   });
 
   // spec hackathon-analysis "Listing exceeds the limit".
-  it("truncates the reply and appends an and-N-more note past 4096 characters", async () => {
+  it("truncates the reply and appends a …y-N-más note past 4096 characters", async () => {
     const deps = makeDeps();
     const actorMembershipId = pushMember(deps);
     for (let i = 0; i < 100; i++) {
@@ -106,7 +106,7 @@ describe("listAnalyses", () => {
     const result = await listAnalyses({ teamId, actorMembershipId }, deps);
 
     expect(result.replyText.length).toBeLessThanOrEqual(4096);
-    expect(result.replyText).toMatch(/\.\.\.and \d+ more/);
+    expect(result.replyText).toMatch(/…y \d+ más/);
   });
 
   it("throws NotFoundError when the actor is not a registered member", async () => {

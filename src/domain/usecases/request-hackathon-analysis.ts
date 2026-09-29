@@ -1,3 +1,4 @@
+import { analysisCopy } from "../copy";
 import {
   AnalysisBusyError,
   DailyCapReachedError,
@@ -128,7 +129,7 @@ export async function requestHackathonAnalysis(
   }
 
   const host = new URL(input.sourceUrl).hostname;
-  return { jobId, replyText: `Analyzing ${host}… the result will be posted here.` };
+  return { jobId, replyText: analysisCopy.ack(host) };
 }
 
 function utcDayOf(nowMs: number): string {

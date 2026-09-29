@@ -396,7 +396,7 @@ describe("default export", () => {
 
     expect(msg.retries).toEqual([]);
     expect(msg.acked).toBe(1);
-    expect(publisher.posted.map((p) => p.text)).toEqual(["Hackathon analysis is not configured."]);
+    expect(publisher.posted.map((p) => p.text)).toEqual(["El análisis de hackathons no está configurado."]);
     const row = await env.DB.prepare(
       "SELECT status, failure_reason FROM hackathon_analysis_jobs WHERE id = ?",
     )

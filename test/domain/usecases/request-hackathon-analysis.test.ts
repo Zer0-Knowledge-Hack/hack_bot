@@ -70,7 +70,7 @@ describe("requestHackathonAnalysis", () => {
       deps,
     );
 
-    expect(result.replyText).toContain("example.com");
+    expect(result.replyText).toBe("Analizando example.com… el resultado se publicará aquí.");
     expect(deps.analysisQuota.reserved).toHaveLength(1);
     expect(deps.analysisJobQueue.sent).toHaveLength(1);
     expect(deps.analysisJobQueue.sent[0]!.jobId).toBe(result.jobId);

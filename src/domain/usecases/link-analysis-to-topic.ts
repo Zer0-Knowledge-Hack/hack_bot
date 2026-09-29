@@ -1,4 +1,5 @@
 import { AnalysisNotFoundError, NotFoundError, UnauthorizedError } from "../errors";
+import { analysisCopy } from "../copy";
 import { formatAnalysis, REPLY_MAX, truncate } from "../hackathon/format";
 import type { HackathonAnalysis } from "../entities";
 import type { MembershipId, TeamId } from "../ids";
@@ -94,7 +95,7 @@ export async function postAnalysisAndLinkTopic(
   const displaced = await deps.hackathonAnalysisRepo.findByThreadId(teamId, threadId);
   if (displaced && displaced.id !== analysis.id) {
     await safeUnpin(chatId, displaced.pinnedMessageId, deps);
-    notes.push(`Replaced the topic's previous link (was ${displaced.slug}).`);
+    notes.push(analysisCopy.replacedLink(displaced.slug));
   }
 
   // spec: "Analysis already linked to another topic" — unpin its old
@@ -105,7 +106,7 @@ export async function postAnalysisAndLinkTopic(
       : null;
   if (movedFromThreadId !== null) {
     await safeUnpin(chatId, analysis.pinnedMessageId, deps);
-    notes.push(`Moved this analysis's link from another topic.`);
+    notes.push(analysisCopy.movedLink);
   }
 
   const text = formatAnalysis({
@@ -130,7 +131,7 @@ export async function postAnalysisAndLinkTopic(
       errorCode: err instanceof Error ? err.name : "UnknownError",
       reason: "pin-failed",
     });
-    notes.push("Pinning failed; the message was posted unpinned.");
+    notes.push(analysisCopy.pinFailed);
   }
 
   // task 5.3a (RELI-002/RESI-003): one atomic D1 batch replaces the two

@@ -75,7 +75,7 @@ describe("POST /telegram/webhook — /hackathon <url> through real composition",
 
     expect(res.status).toBe(200);
     const replies = calls.filter((c) => c.method === "sendMessage").map((c) => (c.body as { text: string }).text);
-    expect(replies.at(-1)).toMatch(/^Analyzing example\.com/);
+    expect(replies.at(-1)).toBe("Analizando example.com… el resultado se publicará aquí.");
     expect(queue.sent).toMatchObject([
       { v: 1, chatId, threadId: null, fetchUrl: "https://example.com/event" },
     ]);
@@ -89,7 +89,7 @@ describe("POST /telegram/webhook — /hackathon <url> through real composition",
     // The lease is real (D1): a second fresh run is refused, nothing enqueued.
     await post(commandUpdate("hackathon", chatId, userId, "https://example.com/other"), queue.binding);
     const repliesAfter = calls.filter((c) => c.method === "sendMessage").map((c) => (c.body as { text: string }).text);
-    expect(repliesAfter.at(-1)).toMatch(/already running/i);
+    expect(repliesAfter.at(-1)).toBe("Ya hay un análisis en curso para este equipo. Espera su resultado.");
     expect(queue.sent).toHaveLength(1);
   });
 
@@ -107,7 +107,9 @@ describe("POST /telegram/webhook — /hackathon <url> through real composition",
 
     expect(res.status).toBe(200);
     const replies = calls.filter((c) => c.method === "sendMessage").map((c) => (c.body as { text: string }).text);
-    expect(replies.at(-1)).toMatch(/could not start the analysis/i);
+    expect(replies.at(-1)).toBe(
+      "No se pudo iniciar el análisis; inténtalo de nuevo en un minuto. No se contó en el límite diario.",
+    );
     const usage = await env.DB.prepare(
       `SELECT u.runs AS runs FROM hackathon_analysis_usage u
          JOIN teams t ON t.id = u.team_id WHERE t.telegram_chat_id = ?`,
@@ -128,8 +130,8 @@ describe("POST /telegram/webhook — /hackathon <url> through real composition",
     await post(commandUpdate("hackathons", chatId, userId), queue.binding);
 
     const replies = calls.filter((c) => c.method === "sendMessage").map((c) => (c.body as { text: string }).text);
-    expect(replies.at(-2)).toBe("No analysis with that slug. See /hackathons.");
-    expect(replies.at(-1)).toBe("No hackathons analyzed yet.");
+    expect(replies.at(-2)).toBe("No hay ningún análisis con ese slug. Consulta /hackathons.");
+    expect(replies.at(-1)).toBe("Todavía no se ha analizado ningún hackathon.");
     expect(queue.sent).toHaveLength(0);
   });
 });
