@@ -1239,3 +1239,10 @@ Checked against the repo's generated types and the official docs (developers.clo
 ### Status
 
 4/4 Phase 10 tasks complete (41/56 cumulative; Phase 11's 5 manual tasks remain). Ready for `sdd-verify`. **Do not merge to `main` before the queue exists**: merging triggers a CI deploy that runs `wrangler d1 migrations apply --remote` and then `wrangler deploy`.
+
+### PR10c correction: R4-001
+
+- **Finding (CRITICAL):** with `HACKATHON_MODEL_PRIMARY`/`FALLBACK` empty (the shipped state until task 11.4), `buildHackathonConsumer` threw `ConfigError` before `runHackathonJob` ran. The queue handler only retried it, so after `max_retries` the message was dropped: job never failed, slot never refunded, lease held, no reply.
+- **Fix:** composition no longer validates the models; it passes the trimmed (possibly blank) values through. `runClaimedJob` throws `ConfigError` for a blank model inside its own try, so the existing `config` branch of `classifyJobError` replies "Hackathon analysis is not configured.", refunds the slot, marks the job failed (`config`), releases the lease and acks. `index.ts` is unchanged; truly unexpected composition failures (e.g. a missing binding) still take the retry path. The wrangler.jsonc comment is now accurate as written.
+- **Tests:** new production-path test in `test/index.queue.test.ts` (real `buildHackathonConsumer` + real D1, both models empty and fallback blank) asserts reply + refund + `failed`/`config` + lease cleared + ack with no retry; the composition test that asserted a throw now asserts the blank pass-through.
+- **Verification:** `npm test` 674 passed, `npm run typecheck` clean. Fix delta (src + test): 97 changed lines (81 added, 16 deleted).
