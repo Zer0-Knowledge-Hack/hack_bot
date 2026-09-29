@@ -86,7 +86,7 @@ The system MUST NOT create a topic when the analysis is linked to a live topic. 
 
 ### Requirement: Deleted Topic Is Recreated
 
-The system MUST detect a linked topic that no longer exists by posting the analysis into it (a rejected post means the topic is gone), drop the stale link, and create and link a new topic as for a fresh confirmation. A topic that still exists, or whose post fails for an unknown reason (unavailable, rate-limited), MUST NOT be treated as deleted.
+The system MUST detect a linked topic that no longer exists by posting the analysis into it (only a post that fails as `thread-gone`, a 400 saying the thread does not exist, means the topic is gone), drop the stale link, and create and link a new topic as for a fresh confirmation. A topic that still exists, or whose post fails for any other reason (closed topic, missing rights or another rejection, unavailable, rate-limited), MUST NOT be treated as deleted.
 
 #### Scenario: Linked topic was deleted
 
@@ -97,7 +97,7 @@ The system MUST detect a linked topic that no longer exists by posting the analy
 
 #### Scenario: Topic check is inconclusive
 
-- GIVEN `meridian` is linked to a topic and posting the analysis into it fails as unavailable or rate-limited
+- GIVEN `meridian` is linked to a topic and posting the analysis into it fails as rejected (closed topic, no rights), unavailable or rate-limited
 - WHEN an admin confirms participation
 - THEN no new topic is created and the link is kept
 - AND General replies with the existing topic link
