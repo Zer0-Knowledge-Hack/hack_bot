@@ -18,9 +18,14 @@ import type { AnalysisJobRepo, AnalysisQuota, ChatPublisher, Logger } from "../p
 const ATTEMPT_BUDGET_MS = 180_000;
 // design.md "Stale": a queued job older than 1 h is failed as expired.
 const STALE_JOB_MS = 60 * 60 * 1000;
-// design.md "Retries": max_retries: 2 -> 3 total delivery attempts.
+// design.md "Retries": this use case retries transient failures up to 3
+// deliveries, independent of the queue `max_retries` (5, sized for held
+// claims; see test/config/queue-retry-window.test.ts).
 const MAX_ATTEMPTS = 3;
-const HELD_RETRY_DELAY_S = 60;
+// A held claim (another delivery still owns the lease) is retried after this
+// delay. Exported so the queue redelivery window can be checked against the
+// claim lease (R4-001).
+export const HELD_RETRY_DELAY_S = 60;
 // Exported as the single source of truth for the transient retry cadence:
 // the queue entry point (`src/index.ts`) reuses it for unexpected failures.
 export const TRANSIENT_RETRY_DELAY_S = 30;
@@ -132,6 +137,11 @@ async function runClaimedJob(
   }
 
   try {
+    // R4-001: unset models are a config failure classified below (reply,
+    // refund, markFailed, ack), not a transient error to retry.
+    if (!deps.primaryModel || !deps.fallbackModel) {
+      throw new ConfigError("HACKATHON_MODEL_PRIMARY and HACKATHON_MODEL_FALLBACK must be set");
+    }
     const deadlineAt = deps.clock.now() + ATTEMPT_BUDGET_MS;
     const analysis = await analyzeHackathon(
       {

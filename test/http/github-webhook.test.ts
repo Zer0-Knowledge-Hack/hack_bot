@@ -209,7 +209,7 @@ describe("POST /github/webhook — fails closed when GITHUB_WEBHOOK_SECRET is un
         },
         body: JSON.stringify({ update_id: 1 }),
       },
-      { ...env, GITHUB_WEBHOOK_SECRET: "" } as Env,
+      { ...env, GITHUB_WEBHOOK_SECRET: "" } as unknown as Env,
     );
     expect(res.status).toBe(200);
   });
@@ -218,7 +218,7 @@ describe("POST /github/webhook — fails closed when GITHUB_WEBHOOK_SECRET is un
     const res = await app.request(
       "/health",
       { method: "GET" },
-      { ...env, GITHUB_WEBHOOK_SECRET: "" } as Env,
+      { ...env, GITHUB_WEBHOOK_SECRET: "" } as unknown as Env,
     );
     expect(res.status).toBe(200);
   });

@@ -109,10 +109,10 @@ Chain strategy: stacked-to-main
 
 ## Phase 10: Publisher, Commands, Env, Wrangler (PR10)
 
-- [ ] 10.1 RED/GREEN: `src/adapters/telegram/chat-publisher.ts` — `sendMessage` (optional thread), pin, unpin; `PublishFailedError` on unavailable/rate-limited, with test.
-- [ ] 10.2 RED: `test/adapters/telegram/commands.test.ts` — `/hackathon <url>` ack reply (spec: Admin runs a fresh analysis), non-admin refusal, `/hackathon <slug>` re-show + link/pin in topic, `/hackathon` no-arg linked vs unlinked (spec: No-Argument Behavior), `/hackathons` truncated listing, plain-text/4096 cap on every reply (spec: Plain Text Replies).
-- [ ] 10.3 GREEN: `src/adapters/telegram/commands.ts` — register `/hackathon`, `/hackathons`; `command-outcome.ts` reason passthrough.
-- [ ] 10.4 Modify `src/env.ts`, `wrangler.jsonc`, `package.json` — `AI`, `BROWSER`, `HACKATHON_QUEUE` bindings, `queues.producers`/`queues.consumers` (`max_batch_size: 1`, `max_retries: 2`, `retry_delay: 30`, `max_concurrency: 1`), `HACKATHON_MODEL_PRIMARY`/`HACKATHON_MODEL_FALLBACK` vars, `@cloudflare/puppeteer` dependency.
+- [x] 10.1 RED/GREEN: `src/adapters/telegram/chat-publisher.ts` — `sendMessage` (optional thread), pin, unpin; `PublishFailedError` on unavailable/rate-limited, with test.
+- [x] 10.2 RED: `test/adapters/telegram/commands.test.ts` — `/hackathon <url>` ack reply (spec: Admin runs a fresh analysis), non-admin refusal, `/hackathon <slug>` re-show + link/pin in topic, `/hackathon` no-arg linked vs unlinked (spec: No-Argument Behavior), `/hackathons` truncated listing, plain-text/4096 cap on every reply (spec: Plain Text Replies).
+- [x] 10.3 GREEN: `src/adapters/telegram/commands.ts` — register `/hackathon`, `/hackathons`; `command-outcome.ts` reason passthrough.
+- [x] 10.4 Modify `src/env.ts`, `wrangler.jsonc`, `package.json` — `AI`, `BROWSER`, `HACKATHON_QUEUE` bindings, `queues.producers`/`queues.consumers` (`max_batch_size: 1`, `max_retries: 5` (redelivery window must outlast the 240 s claim lease, R4-001), `retry_delay: 30`, `max_concurrency: 1`), `HACKATHON_MODEL_PRIMARY`/`HACKATHON_MODEL_FALLBACK` vars, `@cloudflare/puppeteer` dependency.
 
 ## Phase 11: Operator Rollout (Manual — Not Performed by Apply)
 

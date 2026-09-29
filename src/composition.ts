@@ -1,11 +1,13 @@
 import { Api } from "grammy";
 import { createAesGcmCipher } from "./adapters/crypto/aes-gcm-cipher";
 import { parseKeyRing } from "./adapters/crypto/key-ring";
+import { launchPuppeteerBrowser } from "./adapters/browser/puppeteer-launch";
 import { createRenderedFetcher, type BrowserLaunch } from "./adapters/browser/rendered-fetcher";
 import { createD1AnalysisJobRepo } from "./adapters/d1/analysis-job-repo";
 import { createD1AnalysisQuota } from "./adapters/d1/analysis-quota";
 import { createD1HackathonAnalysisRepo } from "./adapters/d1/hackathon-analysis-repo";
 import { createStaticFetcher } from "./adapters/http/safe-fetcher";
+import { createQueueAnalysisJobQueue } from "./adapters/queue/analysis-job-queue";
 import { createWorkersAiExtractor } from "./adapters/llm/workers-ai-extractor";
 import { createD1DmSelectionRepo } from "./adapters/d1/dm-selection-repo";
 import { createD1GithubOrgClaimRepo } from "./adapters/d1/github-org-claim-repo";
@@ -17,6 +19,7 @@ import { createD1TeamRepo } from "./adapters/d1/team-repo";
 import { createSafeLogger } from "./adapters/log/safe-logger";
 import { createTelegramAlertSender } from "./adapters/telegram/alert-sender";
 import { createBot } from "./adapters/telegram/bot";
+import { createTelegramChatPublisher } from "./adapters/telegram/chat-publisher";
 import { createChatAdminChecker } from "./adapters/telegram/chat-admin-checker";
 import { registerCommands } from "./adapters/telegram/commands";
 import { ConfigError } from "./config-error";
@@ -24,7 +27,7 @@ import type { ChatPublisher, FieldCipher } from "./domain/ports";
 import type { RunHackathonJobDeps } from "./domain/usecases/run-hackathon-job";
 import type { RouteGithubEventDeps } from "./domain/usecases/route-github-event";
 import type { UserFromGetMe } from "grammy/types";
-import type { Env, HackathonConsumerEnv } from "./env";
+import type { Env } from "./env";
 
 // Composition root: wires env bindings -> adapters -> use cases for one
 // request (design.md "src/composition.ts"). No module-level mutable
@@ -92,6 +95,11 @@ export function buildBot(env: Env) {
 
   const bot = createBot(env.BOT_TOKEN, parseBotInfo(env.BOT_INFO));
   const chatAdminChecker = createChatAdminChecker(bot.api);
+  // Producer side of the hackathon analysis (design.md "Config errors": no
+  // eager validation here — a missing queue surfaces as a
+  // QueueSendFailedError refusal on `/hackathon <url>` only, never as a
+  // broken bot).
+  const analysisJobQueue = createQueueAnalysisJobQueue(env.HACKATHON_QUEUE);
 
   registerCommands(bot, {
     teamRepo,
@@ -102,6 +110,11 @@ export function buildBot(env: Env) {
     chatAdminChecker,
     githubOrgClaimRepo,
     repoTopicLinkRepo,
+    hackathonAnalysisRepo: createD1HackathonAnalysisRepo(env.DB),
+    analysisQuota: createD1AnalysisQuota(env.DB),
+    analysisJobRepo: createD1AnalysisJobRepo(env.DB, clock),
+    analysisJobQueue,
+    chatPublisher: createTelegramChatPublisher(bot.api),
     clock,
     idGen,
     logger,
@@ -124,10 +137,8 @@ export function buildGithubRouter(env: Env): RouteGithubEventDeps {
   };
 }
 
-// Ports whose concrete adapters land in PR10 (task 10.1 Telegram
-// `ChatPublisher`, and the `@cloudflare/puppeteer` `launch` from task
-// 10.4). They are injected so this composition stays complete and typed
-// today without pulling PR10 scope in.
+// Test seams: the production defaults are the real Telegram publisher and
+// the @cloudflare/puppeteer launch; a test may replace either.
 export interface HackathonConsumerAdapters {
   chatPublisher: ChatPublisher;
   launchBrowser: BrowserLaunch;
@@ -135,21 +146,17 @@ export interface HackathonConsumerAdapters {
 
 // design.md "File Changes": no `Bot` and no `PII_KEYRING` on the consumer
 // path — a broken keyring must not stop analyses, and this path never
-// touches PII fields (mirrors `buildGithubRouter`). Fails closed with a
-// ConfigError when the models or the PR10 adapters are missing, so the
-// queue handler retries instead of running half-wired.
+// touches PII fields (mirrors `buildGithubRouter`: `new Api(BOT_TOKEN)`).
+// Unset models are NOT rejected here (R4-001): they are passed through blank
+// and `runHackathonJob` raises the ConfigError inside its own error handling,
+// so the job ends terminally (reply, refund, markFailed) instead of the queue
+// handler retrying a composition failure until the message is dropped.
 export function buildHackathonConsumer(
-  env: HackathonConsumerEnv,
-  adapters?: HackathonConsumerAdapters,
+  env: Env,
+  adapters: Partial<HackathonConsumerAdapters> = {},
 ): RunHackathonJobDeps {
-  const primaryModel = env.HACKATHON_MODEL_PRIMARY?.trim();
-  const fallbackModel = env.HACKATHON_MODEL_FALLBACK?.trim();
-  if (!primaryModel || !fallbackModel) {
-    throw new ConfigError("HACKATHON_MODEL_PRIMARY and HACKATHON_MODEL_FALLBACK must be set");
-  }
-  if (!adapters) {
-    throw new ConfigError("Hackathon chat publisher and browser launcher are not wired");
-  }
+  const primaryModel = env.HACKATHON_MODEL_PRIMARY?.trim() ?? "";
+  const fallbackModel = env.HACKATHON_MODEL_FALLBACK?.trim() ?? "";
 
   return {
     analysisJobRepo: createD1AnalysisJobRepo(env.DB, clock),
@@ -158,13 +165,13 @@ export function buildHackathonConsumer(
     repoTopicLinkRepo: createD1RepoTopicLinkRepo(env.DB),
     staticFetcher: createStaticFetcher({ fetch: (input, init) => fetch(input, init) }),
     renderedFetcher: createRenderedFetcher({
-      launch: adapters.launchBrowser,
+      launch: adapters.launchBrowser ?? launchPuppeteerBrowser,
       binding: env.BROWSER,
     }),
     llmExtractor: createWorkersAiExtractor({
       run: (model, inputs, options) => env.AI.run(model, inputs, options),
     }),
-    chatPublisher: adapters.chatPublisher,
+    chatPublisher: adapters.chatPublisher ?? createTelegramChatPublisher(new Api(env.BOT_TOKEN)),
     clock,
     idGen,
     logger: createSafeLogger(),

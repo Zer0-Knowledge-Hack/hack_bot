@@ -2,7 +2,6 @@ import { Bot } from "grammy";
 import type { CallbackQuery, Update } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
 import { registerCommands } from "../../../src/adapters/telegram/commands";
-import { registerHackathonCommands } from "../../../src/adapters/telegram/hackathon-commands";
 import type { HackathonAnalysis } from "../../../src/domain/entities";
 import type { TeamId } from "../../../src/domain/ids";
 import { createSafeLogger } from "../../../src/adapters/log/safe-logger";
@@ -105,10 +104,6 @@ function makeBot(
     logger: createSafeLogger(),
   };
   registerCommands(bot, deps);
-  // /hackathon and /hackathons are not part of `registerCommands` yet: the
-  // live bot cannot supply their queue producer until the HACKATHON_QUEUE
-  // binding exists, so they are registered alongside it here.
-  registerHackathonCommands(bot, deps);
   return { bot, replies, payloads, deps };
 }
 

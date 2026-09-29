@@ -23,9 +23,44 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Hackathon analysis (design.md "Migration / Rollout"). Workers AI and
+  // Browser Rendering are account-level Cloudflare products (billed by
+  // usage; see design.md for the daily quota handling).
+  "ai": { "binding": "AI" },
+  "browser": { "binding": "BROWSER" },
+  // The same Worker produces (`/hackathon <url>`) and consumes (`queue()`)
+  // the `hackathon-analysis` queue. The queue MUST exist before a deploy:
+  // create it once with `npx wrangler queues create hackathon-analysis`
+  // (tasks.md 11.1). Serial single-message batches keep the shared AI and
+  // browser quotas predictable; there is deliberately no dead-letter queue
+  // (the D1 job row records terminal failures). max_retries is 5 so a
+  // delivery that dies before acking is still redelivered after its 240 s
+  // claim lease expires: redeliveries land at ~30/90/150/210/270 s (a held
+  // claim retries every 60 s), and the last one re-claims the job instead of
+  // the message being dropped while the job stays `running`. Guarded by
+  // test/config/queue-retry-window.test.ts (R4-001).
+  "queues": {
+    "producers": [{ "queue": "hackathon-analysis", "binding": "HACKATHON_QUEUE" }],
+    "consumers": [
+      {
+        "queue": "hackathon-analysis",
+        "max_batch_size": 1,
+        "max_retries": 5,
+        "retry_delay": 30,
+        "max_concurrency": 1
+      }
+    ]
+  },
   // Public getMe result, cached so grammY never calls getMe per request.
   // Not a secret; the token-bearing values are Worker secrets.
   "vars": {
+    // Workers AI catalog IDs (`@cf/...`) for the extraction model and its
+    // fallback. Deliberately empty until an operator verifies the exact IDs
+    // and context windows (tasks.md 11.4): while empty, a queued analysis
+    // fails closed with "Hackathon analysis is not configured" and its
+    // reserved daily slot is refunded.
+    "HACKATHON_MODEL_PRIMARY": "",
+    "HACKATHON_MODEL_FALLBACK": "",
     "BOT_INFO": "{\"id\":8808165755,\"is_bot\":true,\"first_name\":\"Hack Bot\",\"username\":\"hackZK_bot\",\"can_join_groups\":true,\"can_read_all_group_messages\":false,\"supports_inline_queries\":false,\"can_connect_to_business\":false,\"has_main_web_app\":false}"
   }
 }

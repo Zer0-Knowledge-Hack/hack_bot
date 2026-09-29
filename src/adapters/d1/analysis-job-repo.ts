@@ -8,8 +8,9 @@ import { asTeamId } from "../../domain/ids";
 import type { Clock } from "../../domain/ports";
 import type { AnalysisJobRepo } from "../../domain/ports";
 
-// design.md "Claim": `claim_until = now + 240s`.
-const CLAIM_MS = 240_000;
+// design.md "Claim": `claim_until = now + 240s`. Exported so the queue
+// redelivery window can be checked against it (R4-001).
+export const CLAIM_MS = 240_000;
 
 interface JobRow {
   id: string;

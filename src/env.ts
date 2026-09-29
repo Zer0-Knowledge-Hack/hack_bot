@@ -1,5 +1,8 @@
-// Worker bindings/secrets (wrangler.jsonc `d1_databases`, and secrets set via
-// `wrangler secret put` / `.dev.vars` locally — see .dev.vars.example).
+import type { AnalysisJobMessage } from "./domain/entities";
+
+// Worker bindings/secrets (wrangler.jsonc `d1_databases`, `ai`, `browser`,
+// `queues.producers` and `vars`, and secrets set via `wrangler secret put` /
+// `.dev.vars` locally — see .dev.vars.example).
 export interface Env {
   DB: D1Database;
   BOT_TOKEN: string;
@@ -10,13 +13,9 @@ export interface Env {
   // secret). Missing/empty is a config error, never a default (see
   // src/adapters/github/signature.ts).
   GITHUB_WEBHOOK_SECRET: string;
-}
-
-// Bindings and vars the hackathon queue consumer needs (design.md "File
-// Changes": `AI`, `BROWSER`, model vars). Declared here as their own type
-// so the consumer composition is typed today; PR10 (task 10.4) folds these
-// into `Env` together with the `wrangler.jsonc` bindings.
-export interface HackathonConsumerEnv extends Env {
+  // Hackathon analysis (design.md "File Changes"). `AI` is typed as the
+  // structural subset the extractor adapter calls, so tests inject plain
+  // fakes; the generated `Ai` binding satisfies it.
   AI: {
     run(
       model: string,
@@ -24,7 +23,12 @@ export interface HackathonConsumerEnv extends Env {
       options?: { signal?: AbortSignal },
     ): Promise<unknown>;
   };
-  BROWSER: unknown;
+  // Browser Rendering binding, handed opaquely to `puppeteer.launch`.
+  BROWSER: BrowserRun;
+  // Producer side of the `hackathon-analysis` queue (`/hackathon <url>`).
+  HACKATHON_QUEUE: Queue<AnalysisJobMessage>;
+  // Workers AI catalog IDs for the primary and fallback extraction models
+  // (validated by the extractor; empty means "not configured").
   HACKATHON_MODEL_PRIMARY: string;
   HACKATHON_MODEL_FALLBACK: string;
 }

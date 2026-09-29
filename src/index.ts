@@ -14,7 +14,7 @@ import {
   type RunHackathonJobDeps,
 } from "./domain/usecases/run-hackathon-job";
 import { routeGithubEvent } from "./domain/usecases/route-github-event";
-import type { Env, HackathonConsumerEnv } from "./env";
+import type { Env } from "./env";
 
 export type { Env } from "./env";
 
@@ -223,7 +223,7 @@ export interface QueueBatchLike {
   readonly messages: readonly QueueMessageLike[];
 }
 
-type BuildConsumerDeps = (env: HackathonConsumerEnv) => RunHackathonJobDeps;
+type BuildConsumerDeps = (env: Env) => RunHackathonJobDeps;
 
 // design.md "Consumer (`queue()` handler)": shape-validates each body,
 // runs `runHackathonJob`, and maps its `JobOutcome` to `ack()`/`retry()`.
@@ -256,7 +256,7 @@ async function handleMessage(
   }
 
   try {
-    const deps = buildDeps(env as HackathonConsumerEnv);
+    const deps = buildDeps(env);
     const outcome = await runHackathonJob(parsed.message, msg.attempts, deps);
     if (outcome.kind === "ack") {
       msg.ack();
