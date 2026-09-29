@@ -30,18 +30,18 @@ Each PR is independently deployable and keeps `npm test` green. PR1a adds unused
 
 ## Phase 1: Infrastructure (PR1a)
 
-- [ ] 1.1 RED: `test/adapters/migrations.test.ts` — 0004 adds `general_message_id` (nullable) and `topic_claim_until` (NOT NULL DEFAULT 0); existing rows keep defaults.
-- [ ] 1.2 GREEN: create `migrations/0004_hackathon_participation.sql` (two additive `ADD COLUMN`).
-- [ ] 1.3 RED: `test/adapters/d1/hackathon-analysis-repo.test.ts` — **concurrent taps (the claim)**: `claimTopicCreation` CAS wins on `thread_id IS NULL`, wins on `IS stale`, loses when another claim is live, wins after TTL expiry; two claims race and exactly one wins.
-- [ ] 1.4 RED: same file — `releaseTopicClaim` reopens the claim; `setGeneralMessageId` stores the id; `save`/`persistAnalysis` never clobber `general_message_id`/`topic_claim_until`; rows without an id read `generalMessageId: null`.
-- [ ] 1.5 GREEN: `src/domain/entities.ts` (`generalMessageId`), `src/domain/ports.ts` (`HackathonAnalysisRepo` additions), `src/adapters/d1/hackathon-analysis-repo.ts` (CAS `UPDATE`, release, set id, row mapping).
-- [ ] 1.6 RED: create `test/adapters/telegram/forum-topic-manager.test.ts` (injected `Api` stub) — `create` classification: `not enough rights`/`chat_admin_required` → `no-rights`; `not a forum`/`channel_forum_missing` → `not-forum`; 429 → `rate-limited`; other 4xx → `rejected`; `HttpError`/5xx/timeout → `unavailable`; returns `message_thread_id` on success.
-- [ ] 1.7 RED: same file — **deleted topic detected**: `probe` via `sendChatAction("typing", {message_thread_id})`: ok → `live`; 400 `message thread not found`/`TOPIC_ID_INVALID`/`TOPIC_DELETED` → `deleted`. **Ambiguous probe error treated as live**: other 400, 403, 429, 5xx, timeout → `unknown`; never throws.
-- [ ] 1.8 GREEN: `src/domain/ports.ts` (`ForumTopicManager`, `TopicProbe`, `TopicCreateFailure`, `PostOptions`), `src/domain/errors.ts` (`ForumTopicCreateError`), create `src/adapters/telegram/forum-topic-manager.ts`.
-- [ ] 1.9 RED: `test/adapters/telegram/chat-publisher.test.ts` — `clearButtons` calls `editMessageReplyMarkup` with no `reply_markup`; `post` accepts optional `{ participateSlug }` without altering the no-option payload; when set, the keyboard carries `hp:<slug>` (≤ 64 bytes) and label "✅ Participamos".
-- [ ] 1.10 GREEN: `src/adapters/telegram/chat-publisher.ts` (`clearButtons`, `PostOptions` keyboard); `src/adapters/telegram/copy.ts` (`participateButton`).
-- [ ] 1.11 GREEN: `test/fakes/index.ts` — `FakeForumTopicManager` (scripted outcomes, call log), fake repo claim/release/message-id, fake publisher `clearButtons` and options log.
-- [ ] 1.12 Run `npm test` and `npm run typecheck`; green with infrastructure unused.
+- [x] 1.1 RED: `test/adapters/migrations.test.ts` — 0004 adds `general_message_id` (nullable) and `topic_claim_until` (NOT NULL DEFAULT 0); existing rows keep defaults.
+- [x] 1.2 GREEN: create `migrations/0004_hackathon_participation.sql` (two additive `ADD COLUMN`).
+- [x] 1.3 RED: `test/adapters/d1/hackathon-analysis-repo.test.ts` — **concurrent taps (the claim)**: `claimTopicCreation` CAS wins on `thread_id IS NULL`, wins on `IS stale`, loses when another claim is live, wins after TTL expiry; two claims race and exactly one wins.
+- [x] 1.4 RED: same file — `releaseTopicClaim` reopens the claim; `setGeneralMessageId` stores the id; `save`/`persistAnalysis` never clobber `general_message_id`/`topic_claim_until`; rows without an id read `generalMessageId: null`.
+- [x] 1.5 GREEN: `src/domain/entities.ts` (`generalMessageId`), `src/domain/ports.ts` (`HackathonAnalysisRepo` additions), `src/adapters/d1/hackathon-analysis-repo.ts` (CAS `UPDATE`, release, set id, row mapping).
+- [x] 1.6 RED: create `test/adapters/telegram/forum-topic-manager.test.ts` (injected `Api` stub) — `create` classification: `not enough rights`/`chat_admin_required` → `no-rights`; `not a forum`/`channel_forum_missing` → `not-forum`; 429 → `rate-limited`; other 4xx → `rejected`; `HttpError`/5xx/timeout → `unavailable`; returns `message_thread_id` on success.
+- [x] 1.7 RED: same file — **deleted topic detected**: `probe` via `sendChatAction("typing", {message_thread_id})`: ok → `live`; 400 `message thread not found`/`TOPIC_ID_INVALID`/`TOPIC_DELETED` → `deleted`. **Ambiguous probe error treated as live**: other 400, 403, 429, 5xx, timeout → `unknown`; never throws.
+- [x] 1.8 GREEN: `src/domain/ports.ts` (`ForumTopicManager`, `TopicProbe`, `TopicCreateFailure`, `PostOptions`), `src/domain/errors.ts` (`ForumTopicCreateError`), create `src/adapters/telegram/forum-topic-manager.ts`.
+- [x] 1.9 RED: `test/adapters/telegram/chat-publisher.test.ts` — `clearButtons` calls `editMessageReplyMarkup` with no `reply_markup`; `post` accepts optional `{ participateSlug }` without altering the no-option payload; when set, the keyboard carries `hp:<slug>` (≤ 64 bytes) and label "✅ Participamos".
+- [x] 1.10 GREEN: `src/adapters/telegram/chat-publisher.ts` (`clearButtons`, `PostOptions` keyboard); `src/adapters/telegram/copy.ts` (`participateButton`).
+- [x] 1.11 GREEN: `test/fakes/index.ts` — `FakeForumTopicManager` (scripted outcomes, call log), fake repo claim/release/message-id, fake publisher `clearButtons` and options log.
+- [x] 1.12 Run `npm test` and `npm run typecheck`; green with infrastructure unused.
 
 ## Phase 2: Use Case and Join Command (PR1b)
 
