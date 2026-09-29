@@ -50,18 +50,24 @@ function raceWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T>
   });
 }
 
-// Workers AI reports capacity/rate exhaustion as a thrown error rather than
-// a typed response field, and no fixed error-code contract exists for the
-// injected `run` type used here (no real binding is wired until Phase 10).
-// This keyword match is this adapter's own, explicit assumption about how
-// a quota-exhaustion failure surfaces through `run` — distinguishing it
-// from every other model failure (spec llm-extraction: "Workers AI Quota
-// Exhaustion Is Reported and Non-Retrying"). Recorded as a deviation in
-// apply-progress; PR10's real wiring should confirm or replace it once the
-// concrete `env.AI.run` error shape is known.
+// Workers AI reports exhaustion as a thrown error. The repo's generated
+// runtime types declare `InferenceUpstreamError`/`AiInternalError` as bare
+// `extends Error` (no `code`/`status` field), so the only observable signal
+// is the message. The documented errors that mean "no more AI today" are
+// (developers.cloudflare.com/workers-ai/platform/errors, both HTTP 429):
+//   3036 "You have used up your daily free allocation of 10,000 neurons..."
+//   3040 "Capacity temporarily exceeded, please try again."
+// The keywords below cover both (3036's text has no "quota"/"capacity"/"429"
+// word, hence the explicit code and phrase) plus generic 429/rate-limit
+// wording. This distinguishes exhaustion from every other model failure
+// (spec llm-extraction: "Workers AI Quota Exhaustion Is Reported and
+// Non-Retrying").
+const QUOTA_ERROR_PATTERN =
+  /quota|capacity|429|rate.?limit|daily free allocation|\b(?:3036|3040)\b/i;
+
 function isQuotaExhausted(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  return /quota|capacity|429|rate.?limit/i.test(err.message);
+  return QUOTA_ERROR_PATTERN.test(err.message);
 }
 
 // Turns the model's raw output into the `unknown` value that

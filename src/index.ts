@@ -8,7 +8,11 @@ import { parseAnalysisJobMessage } from "./adapters/queue/analysis-job-message";
 import { buildBot, buildGithubRouter, buildHackathonConsumer } from "./composition";
 import { ConfigError } from "./config-error";
 import type { Logger } from "./domain/ports";
-import { runHackathonJob, type RunHackathonJobDeps } from "./domain/usecases/run-hackathon-job";
+import {
+  runHackathonJob,
+  TRANSIENT_RETRY_DELAY_S,
+  type RunHackathonJobDeps,
+} from "./domain/usecases/run-hackathon-job";
 import { routeGithubEvent } from "./domain/usecases/route-github-event";
 import type { Env, HackathonConsumerEnv } from "./env";
 
@@ -221,11 +225,6 @@ export interface QueueBatchLike {
 
 type BuildConsumerDeps = (env: HackathonConsumerEnv) => RunHackathonJobDeps;
 
-// Delay for a message whose handling failed unexpectedly (a use-case throw
-// or a composition failure): a transient infrastructure problem, retried
-// on the same cadence as the use case's own transient retry.
-const UNEXPECTED_RETRY_DELAY_S = 30;
-
 // design.md "Consumer (`queue()` handler)": shape-validates each body,
 // runs `runHackathonJob`, and maps its `JobOutcome` to `ack()`/`retry()`.
 // It never throws: a malformed or unknown-version message is acked and
@@ -274,7 +273,10 @@ async function handleMessage(
       errorCode: err instanceof Error ? err.name : "UnknownError",
       ...(err instanceof ConfigError ? { reason: err.message } : {}),
     });
-    msg.retry({ delaySeconds: UNEXPECTED_RETRY_DELAY_S });
+    // An unexpected failure (use-case throw or composition failure) is a
+    // transient infrastructure problem: same cadence as the use case's own
+    // transient retry (R2-001).
+    msg.retry({ delaySeconds: TRANSIENT_RETRY_DELAY_S });
   }
 }
 

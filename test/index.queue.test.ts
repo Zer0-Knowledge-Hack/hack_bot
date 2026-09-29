@@ -6,7 +6,10 @@ import { ConfigError } from "../src/config-error";
 import { PageFetchFailedError } from "../src/domain/errors";
 import { asTeamId } from "../src/domain/ids";
 import type { AnalysisJob, AnalysisJobMessage } from "../src/domain/entities";
-import type { RunHackathonJobDeps } from "../src/domain/usecases/run-hackathon-job";
+import {
+  TRANSIENT_RETRY_DELAY_S,
+  type RunHackathonJobDeps,
+} from "../src/domain/usecases/run-hackathon-job";
 import {
   fakeAnalysisJobRepo,
   fakeAnalysisQuota,
@@ -242,6 +245,25 @@ describe("queue handler: outcome mapping", () => {
 });
 
 describe("queue handler: never throws", () => {
+  // R2-001: the unexpected-failure delay and the use case's transient delay
+  // are one exported constant, so the two retry cadences cannot drift apart.
+  it("retries an unexpected failure with the use case's transient retry delay", async () => {
+    const deps = makeDeps();
+    deps.analysisJobRepo = {
+      ...fakeAnalysisJobRepo(),
+      claim: async () => {
+        throw new TypeError("boom");
+      },
+    };
+    const { handler } = handlerFor(deps);
+    const msg = fakeMessage(validBody());
+
+    await handler({ messages: [msg] }, testEnv);
+
+    expect(TRANSIENT_RETRY_DELAY_S).toBe(30);
+    expect(msg.retries).toEqual([{ delaySeconds: TRANSIENT_RETRY_DELAY_S }]);
+  });
+
   it("retries with a delay and logs only the error name when the use case throws", async () => {
     const deps = makeDeps();
     deps.analysisJobRepo = {
