@@ -40,9 +40,9 @@ const SCHEMA_DESCRIPTION = `Respond with ONLY a single JSON object (no prose, no
   "tracks": Field<string> | null,
   "eligibility": Field<string> | null
 }
-Every key above MUST be present. Each Field is either null, or an object { "value": <the field's value>, "snippet": <a verbatim excerpt from the page text in the user message, at most 200 characters, that supports this value>, "confidence": <a number between 0 and 1> }.
+Every key above MUST be present. Each Field is either null, or an object { "value": <the field's value>, "snippet": <a short verbatim quote from the page text in the user message, at most 160 characters, copied from a single passage, that supports this value>, "confidence": <a number between 0 and 1> }.
 Use null for any field the page text does not clearly state. Never invent, guess, or infer a value that is not explicitly present in the page text — null is always preferred over a guess.
-The "snippet" for a non-null field MUST be copied verbatim from the page text in the user message; never paraphrase it.`;
+The "snippet" for a non-null field MUST be copied verbatim from the page text in the user message; never paraphrase it. Quote one short passage only; never join separate passages or copy a whole paragraph. Keep every "value" concise (a short phrase, not a paragraph).`;
 
 // spec llm-extraction: "Page Content Is Framed as Untrusted" — the model is
 // told the framed block is untrusted, user-supplied web content, and MUST
