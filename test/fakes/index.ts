@@ -415,9 +415,15 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
     slugExists: async (teamId: TeamId, slug: string) =>
       rows.some((r) => r.teamId === teamId && r.slug === slug),
     save: async (analysis: HackathonAnalysis) => {
+      // Mirrors the D1 upsert: it never writes general_message_id (nor
+      // topic_claim_until, which lives in `claims`), so an update keeps the
+      // stored value. The row is copied, never stored by reference.
       const idx = rows.findIndex((r) => r.id === analysis.id);
-      if (idx >= 0) rows[idx] = analysis;
-      else rows.push(analysis);
+      if (idx >= 0) {
+        rows[idx] = { ...analysis, generalMessageId: rows[idx]!.generalMessageId };
+      } else {
+        rows.push({ ...analysis });
+      }
     },
     listByTeam: async (teamId: TeamId) => rows.filter((r) => r.teamId === teamId),
     moveTopicLink: async (

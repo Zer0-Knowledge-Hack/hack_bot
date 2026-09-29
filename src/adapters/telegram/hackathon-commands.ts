@@ -1,6 +1,6 @@
 import type { Bot, Context } from "grammy";
 import { NotFoundError, UnsafeUrlError } from "../../domain/errors";
-import { classifyHackathonArgument } from "../../domain/hackathon/argument";
+import { classifyHackathonArgument, parseJoinArgument } from "../../domain/hackathon/argument";
 import { assertSafeUrl } from "../../domain/hackathon/url";
 import type {
   AnalysisJobQueue,
@@ -8,6 +8,7 @@ import type {
   AnalysisQuota,
   ChatPublisher,
   Clock,
+  ForumTopicManager,
   HackathonAnalysisRepo,
   IdGen,
   Logger,
@@ -20,11 +21,12 @@ import { listAnalyses } from "../../domain/usecases/list-analyses";
 import { requestHackathonAnalysis } from "../../domain/usecases/request-hackathon-analysis";
 import { showAnalysis } from "../../domain/usecases/show-analysis";
 import { showTopicAnalysis } from "../../domain/usecases/show-topic-analysis";
-import { commonCopy, hackathonCopy } from "./copy";
+import { commonCopy, hackathonCopy, participateCopy } from "./copy";
 import { runCommand } from "./command-outcome";
 import type { DomainErrorReasons, DomainErrorReplies } from "./command-outcome";
 import { callerLocation, resolveGroupMembership } from "./context";
 import type { CallerLocation } from "./context";
+import { runParticipation } from "./participation";
 import { isPrivateChat } from "./team-picker";
 
 // `/hackathon` and `/hackathons` (design.md "Data Flow", "Error Taxonomy" —
@@ -42,6 +44,7 @@ export interface HackathonCommandDeps {
   analysisJobQueue: AnalysisJobQueue;
   analysisJobRepo: AnalysisJobRepo;
   chatPublisher: ChatPublisher;
+  forumTopicManager: ForumTopicManager;
   clock: Clock;
   idGen: IdGen;
   logger: Logger;
@@ -108,6 +111,17 @@ export function registerHackathonCommands(bot: Bot, deps: HackathonCommandDeps):
 
     if (argument === "") {
       await showLinkedAnalysis(ctx, loc, deps);
+      return;
+    }
+    // `join` is checked before the whitespace rule (design.md decision 6).
+    const join = parseJoinArgument(argument);
+    if (join?.kind === "join-usage") {
+      deps.logger.log({ event: "hackathon-join", outcome: "refused", errorCode: "BadArgument" });
+      await ctx.reply(participateCopy.joinUsage);
+      return;
+    }
+    if (join) {
+      await joinHackathon(ctx, loc, join.slug, deps);
       return;
     }
     if (/\s/.test(argument)) {
@@ -251,5 +265,34 @@ async function requestFresh(
       );
       return { okReply: result.replyText, teamId: team.id };
     },
+  );
+}
+
+// `/hackathon join <slug>`: the same behavior as the participation button,
+// from General or any topic. The team comes from the chat and the role from
+// the caller; a non-member gets the same refusal as a non-admin.
+async function joinHackathon(
+  ctx: Context,
+  loc: CallerLocation,
+  slug: string,
+  deps: HackathonCommandDeps,
+): Promise<void> {
+  const resolved = await resolveGroupMembership(deps, loc.chatId, loc.userId);
+  if (!resolved) {
+    deps.logger.log({ event: "hackathon-join", outcome: "refused", errorCode: "NotFoundError" });
+    await ctx.reply(participateCopy.adminOnly);
+    return;
+  }
+  await runParticipation(
+    {
+      event: "hackathon-join",
+      teamId: resolved.team.id,
+      membershipId: resolved.membership.id,
+      chatId: loc.chatId,
+      slug,
+      callbackMessageId: null,
+      reply: (text) => ctx.reply(text),
+    },
+    deps,
   );
 }

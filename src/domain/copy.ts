@@ -61,6 +61,28 @@ export const analysisCopy = {
   pinFailed: "No se pudo fijar el mensaje; se publicó sin fijar.",
 };
 
+// hackathon-participation replies composed by the domain. A null link (chat
+// ids without a t.me/c form) drops the link and its separator.
+const withLink = (prefix: string, link: string | null): string =>
+  link === null ? `${prefix}.` : `${prefix}: ${link}`;
+
+export const participationCopy = {
+  alreadyHasTopic: (link: string | null): string =>
+    link === null ? "Este hackathon ya tiene tema." : `Este hackathon ya tiene tema: ${link}`,
+  confirmed: (name: string, link: string | null): string =>
+    link === null ? `✅ Participamos en ${name}` : `✅ Participamos en ${name} → ${link}`,
+  postFailed: (slug: string, link: string | null): string =>
+    withLink(
+      `Se creó el tema y se vinculó ${slug}, pero no se pudo publicar el análisis. Ejecuta /hackathon ${slug} dentro del tema`,
+      link,
+    ),
+  linkFailed: (slug: string, link: string | null): string =>
+    withLink(
+      `Se creó el tema, pero no se pudo vincular ${slug}. Ejecuta /hackathon ${slug} dentro del tema`,
+      link,
+    ),
+};
+
 // One header phrase per kind:action pair; the type makes a missing pair a
 // compile error. The mapper never produces `issues:merged` or
 // `issues:review_requested`, but the domain type allows them, so they carry

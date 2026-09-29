@@ -6,12 +6,15 @@ import {
   GITHUB_ALERT_HEADERS,
   githubCopy,
   moreItems,
+  participationCopy,
 } from "../../src/domain/copy";
 import {
   commonCopy,
   dataChannelCopy,
   hackathonCopy,
   joinCopy,
+  participateButton,
+  participateCopy,
   pickerCopy,
   profileCopy,
   repoCopy,
@@ -70,6 +73,9 @@ const CATALOGS: Array<[string, Catalog]> = [
   ["ROLE_LABELS", ROLE_LABELS as unknown as Catalog],
   ["GITHUB_ALERT_HEADERS", GITHUB_ALERT_HEADERS as unknown as Catalog],
   ["githubCopy", githubCopy as unknown as Catalog],
+  ["participationCopy", participationCopy as unknown as Catalog],
+  ["participateCopy", participateCopy as unknown as Catalog],
+  ["participateButton", { participateButton } as unknown as Catalog],
 ];
 
 describe("copy catalogs are Spanish", () => {
@@ -152,5 +158,29 @@ describe("copy catalogs are Spanish", () => {
       expect(text.trim(), key).not.toBe("");
     }
     expect(githubCopy).toEqual({ reviewerLabel: "Revisor:", byLabel: "Por:" });
+  });
+});
+
+describe("participation copy uses the neutral tú form", () => {
+  const VOSEO_OR_USTED = /\b(vos|usted|ustedes|tenés|podés|intentá|revisá|concedé|activá)\b/i;
+
+  it("every participation string is free of voseo and usted", () => {
+    const all = [
+      ...strings(participationCopy as unknown as Catalog, "participationCopy"),
+      ...strings(participateCopy as unknown as Catalog, "participateCopy"),
+    ];
+    expect(all.length).toBeGreaterThan(10);
+    for (const [path, text] of all) {
+      expect(VOSEO_OR_USTED.test(text), `${path}: ${text}`).toBe(false);
+    }
+  });
+
+  it("the design strings render verbatim", () => {
+    expect(participateButton).toBe("✅ Participamos");
+    expect(participationCopy.confirmed("N", "L")).toBe("✅ Participamos en N → L");
+    expect(participationCopy.alreadyHasTopic("L")).toBe("Este hackathon ya tiene tema: L");
+    expect(participateCopy.createFailed).toBe(
+      "Telegram rechazó la creación del tema. Inténtalo de nuevo en un minuto.",
+    );
   });
 });

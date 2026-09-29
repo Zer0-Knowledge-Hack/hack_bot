@@ -20,6 +20,7 @@ import { createSafeLogger } from "./adapters/log/safe-logger";
 import { createTelegramAlertSender } from "./adapters/telegram/alert-sender";
 import { createBot } from "./adapters/telegram/bot";
 import { createTelegramChatPublisher } from "./adapters/telegram/chat-publisher";
+import { createTelegramForumTopicManager } from "./adapters/telegram/forum-topic-manager";
 import { createChatAdminChecker } from "./adapters/telegram/chat-admin-checker";
 import { registerCommands } from "./adapters/telegram/commands";
 import { ConfigError } from "./config-error";
@@ -115,6 +116,7 @@ export function buildBot(env: Env) {
     analysisJobRepo: createD1AnalysisJobRepo(env.DB, clock),
     analysisJobQueue,
     chatPublisher: createTelegramChatPublisher(bot.api),
+    forumTopicManager: createTelegramForumTopicManager(bot.api),
     clock,
     idGen,
     logger,

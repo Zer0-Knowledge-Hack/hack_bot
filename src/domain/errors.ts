@@ -225,3 +225,13 @@ export class ForumTopicCreateError extends DomainError {
     this.failure = failure;
   }
 }
+
+// hackathon-participation (design.md "Use Case Step Order" step 4): refusals
+// raised before any topic exists. The first two are operator-fixable (the
+// claim is released, nothing persisted); the last two follow the create
+// classification: a rejected creation releases the claim, an uncertain one
+// (timeout/5xx, the topic may exist) keeps it until its TTL expires.
+export class TopicRightsMissingError extends DomainError {}
+export class ChatNotForumError extends DomainError {}
+export class TopicCreationFailedError extends DomainError {}
+export class TopicCreationUncertainError extends DomainError {}
