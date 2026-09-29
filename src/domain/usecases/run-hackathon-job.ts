@@ -10,7 +10,7 @@ import {
 import { analysisCopy, FETCH_FAILURE_PHRASES } from "../copy";
 import { formatAnalysis } from "../hackathon/format";
 import { normalizeUrlKey } from "../hackathon/url";
-import type { AnalysisJob, AnalysisJobMessage, JobOutcome } from "../entities";
+import type { AnalysisJob, AnalysisJobMessage, HackathonAnalysis, JobOutcome } from "../entities";
 import { analyzeHackathon, type AnalyzeHackathonDeps } from "./analyze-hackathon";
 import { postAnalysisAndLinkTopic } from "./link-analysis-to-topic";
 import type { AnalysisJobRepo, AnalysisQuota, ChatPublisher, Logger } from "../ports";
@@ -98,11 +98,7 @@ async function postPersistedResult(
         deps,
       );
     } else {
-      await deps.chatPublisher.post(job.chatId, null, formatAnalysis({
-        slug: analysis.slug,
-        fields: analysis.fields,
-        suggestions: analysis.suggestedRepos,
-      }));
+      await postToGeneral(job, analysis, deps);
     }
   } catch (err) {
     // RESI-001: postPersistedResult must never throw out of
@@ -176,17 +172,47 @@ async function runClaimedJob(
         deps,
       );
     } else {
-      await deps.chatPublisher.post(job.chatId, null, formatAnalysis({
-        slug: analysis.slug,
-        fields: analysis.fields,
-        suggestions: analysis.suggestedRepos,
-      }));
+      await postToGeneral(job, analysis, deps);
     }
     await deps.analysisJobRepo.markSucceeded(job.id);
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
     return { kind: "ack" };
   } catch (err) {
     return handleJobError(err, job, attempt, deps);
+  }
+}
+
+// hackathon-participation: the General post carries the participation button
+// (a topic post never does) and its message id is stored so the button can be
+// removed later. The store is best-effort: the post already went out, so a
+// failure here must not fail the job (a retry would repost the analysis). The
+// only cost is that the stored message's button is not cleared on join; the
+// tapped message's own button still is.
+async function postToGeneral(
+  job: AnalysisJob,
+  analysis: HackathonAnalysis,
+  deps: RunHackathonJobDeps,
+): Promise<void> {
+  const messageId = await deps.chatPublisher.post(
+    job.chatId,
+    null,
+    formatAnalysis({
+      slug: analysis.slug,
+      fields: analysis.fields,
+      suggestions: analysis.suggestedRepos,
+    }),
+    { participateSlug: analysis.slug },
+  );
+  try {
+    await deps.hackathonAnalysisRepo.setGeneralMessageId(job.teamId, analysis.id, messageId);
+  } catch (err) {
+    deps.logger.log({
+      event: "hackathon-job",
+      teamId: job.teamId,
+      outcome: "error",
+      errorCode: err instanceof Error ? err.name : "UnknownError",
+      reason: "general-message-id-store-failed",
+    });
   }
 }
 
