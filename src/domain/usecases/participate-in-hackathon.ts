@@ -19,12 +19,21 @@ import type {
   HackathonAnalysisRepo,
   Logger,
   MembershipRepo,
+  Sleep,
 } from "../ports";
 import { postAnalysisAndLinkTopic } from "./link-analysis-to-topic";
 
 // design.md decision 3: the creation claim outlives a slow createForumTopic
 // but not a stuck one.
 const CLAIM_TTL_MS = 60_000;
+
+// Pacing for a FRESH topic only. Telegram accepted the pin of a message posted
+// into a just-created topic (ok: true) yet never pinned it, so the topic gets
+// a moment to settle before the post, and the post before the pin. The whole
+// join adds 2.5 s of wall-clock waiting (no CPU; Workers only bill/limit CPU
+// time, and Telegram's webhook client waits far longer), well inside budget.
+export const TOPIC_POST_DELAY_MS = 1500;
+export const PIN_DELAY_MS = 1000;
 
 export interface ParticipateInHackathonInput {
   teamId: TeamId;
@@ -42,6 +51,7 @@ export interface ParticipateInHackathonDeps {
   chatPublisher: ChatPublisher;
   forumTopicManager: ForumTopicManager;
   clock: Clock;
+  sleep: Sleep;
   logger: Logger;
 }
 
@@ -137,12 +147,13 @@ export async function participateInHackathon(
     return { kind: "linkFailed", replyText: participationCopy.linkFailed(analysis.slug, link) };
   }
 
-  // 6. Post and pin in the new topic; the threadId override avoids a spurious
+  // 6. Let the new topic settle, then post and pin in it; the threadId override avoids a spurious
   // unpin and "moved" note for a recreated topic.
   let notes: string[];
   try {
+    await deps.sleep(TOPIC_POST_DELAY_MS);
     const posted = await postAnalysisAndLinkTopic(
-      { teamId, chatId, threadId, analysis: { ...analysis, threadId } },
+      { teamId, chatId, threadId, analysis: { ...analysis, threadId }, pinDelayMs: PIN_DELAY_MS },
       deps,
     );
     notes = posted.notes;

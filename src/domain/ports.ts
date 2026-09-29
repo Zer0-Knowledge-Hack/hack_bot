@@ -136,6 +136,9 @@ export interface Clock {
   now(): number;
 }
 
+// Delay seam: the domain owns no timers, the composition root injects one.
+export type Sleep = (ms: number) => Promise<void>;
+
 export interface IdGen {
   newId(): string;
 }

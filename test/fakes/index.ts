@@ -30,6 +30,7 @@ import type {
   ChatPublisher,
   Clock,
   ForumTopicManager,
+  Sleep,
   TopicCreateOptions,
   DmSelectionRepo,
   GithubOrgClaimRepo,
@@ -632,4 +633,15 @@ export function fakeLogger(): Logger & { entries: LogEvent[] } {
       entries.push(entry);
     },
   };
+}
+
+// Records every requested delay and resolves at once (no real waiting).
+// `onSleep` lets a test interleave the calls with other fakes' events.
+export function fakeSleep(onSleep?: (ms: number) => void): Sleep & { calls: number[] } {
+  const calls: number[] = [];
+  const sleep = async (ms: number) => {
+    calls.push(ms);
+    onSleep?.(ms);
+  };
+  return Object.assign(sleep, { calls });
 }

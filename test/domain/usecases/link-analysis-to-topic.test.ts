@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { linkAnalysisToTopic } from "../../../src/domain/usecases/link-analysis-to-topic";
+import {
+  linkAnalysisToTopic,
+  postAnalysisAndLinkTopic,
+} from "../../../src/domain/usecases/link-analysis-to-topic";
 import { REPLY_MAX } from "../../../src/domain/hackathon/format";
 import {
   AnalysisNotFoundError,
@@ -14,6 +17,7 @@ import {
   fakeLogger,
   fakeMemberRepo,
   fakeMembershipRepo,
+  fakeSleep,
 } from "../../fakes";
 
 const teamId = asTeamId("team-1");
@@ -240,5 +244,56 @@ describe("linkAnalysisToTopic", () => {
         deps,
       ),
     ).rejects.toThrow(NotFoundError);
+  });
+});
+
+describe("postAnalysisAndLinkTopic: pin delay", () => {
+  const row = () => analysis({ id: "a-pin", slug: "pin" });
+
+  it("waits pinDelayMs between the post and the pin when asked", async () => {
+    const deps = makeDeps();
+    const events: string[] = [];
+    const realPost = deps.chatPublisher.post;
+    const realPin = deps.chatPublisher.pin;
+    deps.chatPublisher.post = async (...args) => {
+      events.push("post");
+      return realPost(...args);
+    };
+    deps.chatPublisher.pin = async (...args) => {
+      events.push("pin");
+      return realPin(...args);
+    };
+    const sleep = fakeSleep((ms) => events.push(`sleep:${ms}`));
+    deps.hackathonAnalysisRepo.rows.push(row());
+
+    await postAnalysisAndLinkTopic(
+      { teamId, chatId: 10, threadId: 5, analysis: row(), pinDelayMs: 750 },
+      { ...deps, sleep },
+    );
+
+    expect(events).toEqual(["post", "sleep:750", "pin"]);
+  });
+
+  it("never sleeps without pinDelayMs, even when a sleep dep is present", async () => {
+    const deps = makeDeps();
+    const sleep = fakeSleep();
+    deps.hackathonAnalysisRepo.rows.push(row());
+
+    await postAnalysisAndLinkTopic(
+      { teamId, chatId: 10, threadId: 5, analysis: row() },
+      { ...deps, sleep },
+    );
+
+    expect(sleep.calls).toEqual([]);
+    expect(deps.chatPublisher.pinned).toHaveLength(1);
+  });
+
+  it("works with no sleep dep at all (existing callers)", async () => {
+    const deps = makeDeps();
+    deps.hackathonAnalysisRepo.rows.push(row());
+
+    await postAnalysisAndLinkTopic({ teamId, chatId: 10, threadId: 5, analysis: row() }, deps);
+
+    expect(deps.chatPublisher.pinned).toHaveLength(1);
   });
 });

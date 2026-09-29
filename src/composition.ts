@@ -117,6 +117,7 @@ export function buildBot(env: Env) {
     analysisJobQueue,
     chatPublisher: createTelegramChatPublisher(bot.api),
     forumTopicManager: createTelegramForumTopicManager(bot.api),
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     clock,
     idGen,
     logger,

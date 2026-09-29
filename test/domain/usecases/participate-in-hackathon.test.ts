@@ -10,7 +10,11 @@ import {
 } from "../../../src/domain/errors";
 import type { HackathonAnalysis } from "../../../src/domain/entities";
 import { asMemberId, asMembershipId, asTeamId } from "../../../src/domain/ids";
-import { participateInHackathon } from "../../../src/domain/usecases/participate-in-hackathon";
+import {
+  PIN_DELAY_MS,
+  TOPIC_POST_DELAY_MS,
+  participateInHackathon,
+} from "../../../src/domain/usecases/participate-in-hackathon";
 import {
   fakeChatPublisher,
   fakeClock,
@@ -19,6 +23,7 @@ import {
   fakeLogger,
   fakeMemberRepo,
   fakeMembershipRepo,
+  fakeSleep,
 } from "../../fakes";
 import type { TopicCreateStep } from "../../fakes";
 
@@ -83,6 +88,7 @@ function setup(
       ...(opts.create ? { create: opts.create } : {}),
     }),
     clock: fakeClock(),
+    sleep: fakeSleep(),
     logger: fakeLogger(),
   };
 }
@@ -475,5 +481,71 @@ describe("participateInHackathon: after the topic exists (never rethrows)", () =
 
     expect(result.kind).toBe("created");
     expect(deps.chatPublisher.cleared).toEqual([]);
+  });
+});
+
+describe("participateInHackathon: pacing on a fresh topic", () => {
+  it("waits create -> sleep -> post -> sleep -> pin", async () => {
+    const deps = setup({ create: [{ threadId: 77 }] });
+    const events: string[] = [];
+    const realPost = deps.chatPublisher.post;
+    const realPin = deps.chatPublisher.pin;
+    const realCreate = deps.forumTopicManager.create;
+    deps.forumTopicManager.create = async (...args) => {
+      const id = await realCreate(...args);
+      events.push("create");
+      return id;
+    };
+    deps.chatPublisher.post = async (...args) => {
+      events.push("post");
+      return realPost(...args);
+    };
+    deps.chatPublisher.pin = async (...args) => {
+      events.push("pin");
+      return realPin(...args);
+    };
+    deps.sleep = fakeSleep((ms) => events.push(`sleep:${ms}`));
+
+    const result = await participateInHackathon(input(), deps);
+
+    expect(result.kind).toBe("created");
+    expect(events).toEqual([
+      "create",
+      `sleep:${TOPIC_POST_DELAY_MS}`,
+      "post",
+      `sleep:${PIN_DELAY_MS}`,
+      "pin",
+    ]);
+    expect(TOPIC_POST_DELAY_MS).toBe(1500);
+    expect(PIN_DELAY_MS).toBe(1000);
+  });
+
+  it("does not sleep when the topic already exists and is verified", async () => {
+    const deps = setup({ row: { threadId: 40, pinnedMessageId: 8 } });
+
+    const result = await participateInHackathon(input(), deps);
+
+    expect(result.kind).toBe("already");
+    expect(deps.sleep.calls).toEqual([]);
+  });
+
+  it("does not sleep when creation fails", async () => {
+    const deps = setup({ create: [{ fails: "no-rights" }] });
+
+    await expect(participateInHackathon(input(), deps)).rejects.toThrow();
+
+    expect(deps.sleep.calls).toEqual([]);
+  });
+
+  it("does not sleep when the link save fails (nothing is posted)", async () => {
+    const deps = setup({ create: [{ threadId: 77 }] });
+    deps.hackathonAnalysisRepo.moveTopicLink = async () => {
+      throw new Error("d1 down");
+    };
+
+    const result = await participateInHackathon(input(), deps);
+
+    expect(result.kind).toBe("linkFailed");
+    expect(deps.sleep.calls).toEqual([]);
   });
 });

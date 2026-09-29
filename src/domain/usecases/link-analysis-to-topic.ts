@@ -3,7 +3,13 @@ import { analysisCopy } from "../copy";
 import { formatAnalysis, REPLY_MAX, truncate } from "../hackathon/format";
 import type { HackathonAnalysis } from "../entities";
 import type { MembershipId, TeamId } from "../ids";
-import type { ChatPublisher, HackathonAnalysisRepo, Logger, MembershipRepo } from "../ports";
+import type {
+  ChatPublisher,
+  HackathonAnalysisRepo,
+  Logger,
+  MembershipRepo,
+  Sleep,
+} from "../ports";
 
 export interface LinkAnalysisToTopicInput {
   teamId: TeamId;
@@ -68,12 +74,16 @@ export interface PostAnalysisAndLinkTopicInput {
   chatId: number;
   threadId: number;
   analysis: HackathonAnalysis;
+  // Wait this long between the post and the pin. Only a freshly created topic
+  // needs it (Telegram can silently drop a pin issued right after the post);
+  // every other caller omits it and pins at once.
+  pinDelayMs?: number;
 }
 
 export type PostAnalysisAndLinkTopicDeps = Pick<
   LinkAnalysisToTopicDeps,
   "hackathonAnalysisRepo" | "chatPublisher" | "logger"
->;
+> & { sleep?: Sleep };
 
 // The permission-free core (design.md "Pin Behavior": "a `/hackathon <url>`
 // run inside a topic now links and pins from the consumer"). Reused by
@@ -84,7 +94,7 @@ export async function postAnalysisAndLinkTopic(
   input: PostAnalysisAndLinkTopicInput,
   deps: PostAnalysisAndLinkTopicDeps,
 ): Promise<LinkAnalysisToTopicResult> {
-  const { teamId, chatId, threadId, analysis } = input;
+  const { teamId, chatId, threadId, analysis, pinDelayMs } = input;
   const notes: string[] = [];
 
   // spec: "Topic already holds a different analysis" — move the link,
@@ -118,6 +128,7 @@ export async function postAnalysisAndLinkTopic(
 
   let pinnedMessageId: number | null = messageId;
   try {
+    if (pinDelayMs !== undefined && pinDelayMs > 0 && deps.sleep) await deps.sleep(pinDelayMs);
     await deps.chatPublisher.pin(chatId, messageId);
   } catch (err) {
     // Best-effort (spec "Pin Failure Falls Back to Unpinned Posting"): the
