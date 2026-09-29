@@ -7,6 +7,7 @@ import {
   PublishFailedError,
   UnsafeUrlError,
 } from "../errors";
+import { analysisCopy, FETCH_FAILURE_PHRASES } from "../copy";
 import { formatAnalysis } from "../hackathon/format";
 import { normalizeUrlKey } from "../hackathon/url";
 import type { AnalysisJob, AnalysisJobMessage, JobOutcome } from "../entities";
@@ -79,11 +80,7 @@ async function postPersistedResult(
     // The persisted analysis is missing: this is a permanent failure, not
     // a silent success — post then mark (design.md "Post then mark ...
     // never silence").
-    await safePost(
-      job,
-      "The saved analysis could not be found; run it again.",
-      deps,
-    );
+    await safePost(job, analysisCopy.missingAnalysis, deps);
     await deps.analysisJobRepo.markFailed(job.id, "job:missing-analysis");
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, false);
     return { kind: "ack" };
@@ -130,7 +127,7 @@ async function runClaimedJob(
     // Post then mark (design.md "Post then mark ... never silence"): a
     // crash after this point yields at most a duplicate expiry reply on
     // redelivery, never silence.
-    await safePost(job, "Analysis expired; run it again.", deps);
+    await safePost(job, analysisCopy.expired, deps);
     await deps.analysisJobRepo.markFailed(job.id, "job:expired");
     await deps.analysisQuota.release(job.teamId, job.utcDay, job.id, true);
     return { kind: "ack" };
@@ -210,7 +207,7 @@ function classifyJobError(err: unknown): JobErrorClassification {
       transient: false,
       refund: false,
       reason: `unsafe-url:${err.reason}`,
-      reply: "Only public http(s) pages can be analyzed.",
+      reply: analysisCopy.unsafeUrl,
     };
   }
   if (err instanceof PageFetchFailedError) {
@@ -218,7 +215,7 @@ function classifyJobError(err: unknown): JobErrorClassification {
       transient: false,
       refund: false,
       reason: `fetch:${err.kind}`,
-      reply: `Could not read that page (${err.kind}). Any previous analysis was kept.`,
+      reply: analysisCopy.fetchFailed(FETCH_FAILURE_PHRASES[err.kind]),
     };
   }
   if (err instanceof PageTooThinError) {
@@ -226,7 +223,7 @@ function classifyJobError(err: unknown): JobErrorClassification {
       transient: false,
       refund: false,
       reason: `fetch:too-thin${err.browserQuotaDegraded ? "-browser-quota" : ""}`,
-      reply: "The page has too little readable text. Previous analysis kept.",
+      reply: analysisCopy.tooThin,
     };
   }
   if (err instanceof LlmQuotaExceededError) {
@@ -234,7 +231,7 @@ function classifyJobError(err: unknown): JobErrorClassification {
       transient: false,
       refund: false,
       reason: "llm:quota",
-      reply: "Today's shared AI quota is used up; try after 00:00 UTC. Previous analysis kept.",
+      reply: analysisCopy.quota,
     };
   }
   if (err instanceof ExtractionFailedError) {
@@ -242,7 +239,7 @@ function classifyJobError(err: unknown): JobErrorClassification {
       transient: false,
       refund: false,
       reason: `llm:${err.kind}`,
-      reply: "The AI could not produce a valid analysis. Previous analysis kept.",
+      reply: analysisCopy.invalidOutput,
     };
   }
   if (err instanceof ConfigError) {
@@ -250,7 +247,7 @@ function classifyJobError(err: unknown): JobErrorClassification {
       transient: false,
       refund: true,
       reason: "config",
-      reply: "Hackathon analysis is not configured.",
+      reply: analysisCopy.notConfigured,
     };
   }
   if (err instanceof PublishFailedError && err.failureClass === "rejected") {
@@ -261,7 +258,7 @@ function classifyJobError(err: unknown): JobErrorClassification {
     transient: true,
     refund: false,
     reason: `job:transient:${name}`,
-    reply: "The analysis failed due to a temporary error. Try again later.",
+    reply: analysisCopy.transient,
   };
 }
 

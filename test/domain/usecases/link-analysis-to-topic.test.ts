@@ -113,8 +113,8 @@ describe("linkAnalysisToTopic", () => {
     const beta = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "a-beta");
     expect(beta?.threadId).toBe(500);
     expect(beta?.pinnedMessageId).not.toBeNull();
-    expect(result.replyText).toContain("Replaced");
-    expect(result.notes).toEqual(["Replaced the topic's previous link (was alpha)."]);
+    expect(result.replyText).toContain("Se reemplazó");
+    expect(result.notes).toEqual(["Se reemplazó el vínculo anterior del tema (era alpha)."]);
   });
 
   // spec hackathon-analysis "Analysis already linked to another topic".
@@ -134,8 +134,8 @@ describe("linkAnalysisToTopic", () => {
     const alpha = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "a-alpha");
     expect(alpha?.threadId).toBe(600);
     expect(alpha?.pinnedMessageId).not.toBeNull();
-    expect(result.replyText).toContain("Moved");
-    expect(result.notes).toEqual(["Moved this analysis's link from another topic."]);
+    expect(result.replyText).toContain("Se movió");
+    expect(result.notes).toEqual(["Se movió el vínculo de este análisis desde otro tema."]);
   });
 
   // READ-001: notes appended after a maximal-length analysis body must not
@@ -160,7 +160,7 @@ describe("linkAnalysisToTopic", () => {
     );
 
     expect(result.replyText.length).toBeLessThanOrEqual(REPLY_MAX);
-    expect(result.replyText).toContain("Replaced");
+    expect(result.replyText).toContain("Se reemplazó");
   });
 
   // spec hackathon-analysis "Pin Failure Falls Back to Unpinned Posting".
@@ -181,8 +181,8 @@ describe("linkAnalysisToTopic", () => {
     const stored = deps.hackathonAnalysisRepo.rows.find((r) => r.id === "a-1");
     expect(stored?.threadId).toBe(500);
     expect(stored?.pinnedMessageId).toBeNull();
-    expect(result.replyText).toContain("pin");
-    expect(result.notes).toEqual(["Pinning failed; the message was posted unpinned."]);
+    expect(result.replyText).toContain("fijar");
+    expect(result.notes).toEqual(["No se pudo fijar el mensaje; se publicó sin fijar."]);
     expect(deps.logger.entries).toHaveLength(1);
     expect(deps.logger.entries[0]).toMatchObject({
       outcome: "error",
