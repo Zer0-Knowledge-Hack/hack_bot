@@ -165,4 +165,25 @@ it("logs the safe parse metadata and drops anything else a model could smuggle i
     expect(line).not.toContain("IGNORE");
     spy.mockRestore();
   });
+
+  it("passes the control-chars parse-failure code through as a fixed value", () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    createSafeLogger().log({
+      event: "hackathon-job",
+      outcome: "error",
+      attempts: [
+        {
+          model: "@cf/primary",
+          parsed: true,
+          rejectedCount: 0,
+          rejected: [],
+          parseFailure: "control-chars",
+          recovered: true,
+        },
+      ],
+    });
+    const logged = JSON.parse(spy.mock.calls[0]?.[0] as string);
+    expect(logged.attempts[0]).toMatchObject({ parseFailure: "control-chars", recovered: true });
+    spy.mockRestore();
+  });
 });

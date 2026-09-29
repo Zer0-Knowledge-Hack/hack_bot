@@ -129,6 +129,7 @@ export type LlmParseFailureCode =
   | "no-content" // null, missing or empty content
   | "unterminated" // has a "{" but no matching closing "}" (truncated)
   | "prose-around" // a parsable JSON object exists, wrapped in other text
+  | "control-chars" // parsed only after escaping raw TAB/CR/LF inside string literals
   | "not-json" // no JSON object in the text
   | "non-object"; // valid JSON, but not an object (array, number, ...)
 
@@ -136,6 +137,7 @@ export const LLM_PARSE_FAILURE_CODES: readonly LlmParseFailureCode[] = [
   "no-content",
   "unterminated",
   "prose-around",
+  "control-chars",
   "not-json",
   "non-object",
 ];

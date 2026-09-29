@@ -478,3 +478,70 @@ describe("createWorkersAiExtractor tolerant extraction", () => {
     expect(validated.ok && validated.fields.name).toBeFalsy();
   });
 });
+
+// Production evidence (Cloudflare egress, bnbchain page): Qwen copies snippets
+// that contain raw TAB characters (table cells in rendered innerText) into
+// JSON string literals, and JSON.parse throws "Bad control character in
+// string literal". Raw \t \r \n inside string literals are escaped and the
+// parse retried once; the recovery is reported as parseFailure "control-chars"
+// with recovered: true (fixed code, allowlisted by the safe logger).
+describe("createWorkersAiExtractor control-character repair", () => {
+  const extractContent = (content: string) =>
+    createWorkersAiExtractor({
+      run: async () => ({ choices: [{ message: { content }, finish_reason: "stop" }] }),
+    }).extract(PAGE_TEXT, VALID_MODEL, neverAborts());
+
+  it("recovers a string literal that contains a raw TAB and reports control-chars + recovered", async () => {
+    const content = '{"prizes":{"value":"1st\t$5,000","snippet":"1st\t$5,000","confidence":0.9}}';
+    expect(() => JSON.parse(content)).toThrow();
+    const out = await extractContent(content);
+    expect(out.value).toEqual({
+      prizes: { value: "1st\t$5,000", snippet: "1st\t$5,000", confidence: 0.9 },
+    });
+    expect(out.meta).toMatchObject({ parseFailure: "control-chars", recovered: true });
+  });
+
+  it("escapes raw CR and LF inside string literals too", async () => {
+    const out = await extractContent('{"a":"line1\r\nline2","b":"x\ty"}');
+    expect(out.value).toEqual({ a: "line1\r\nline2", b: "x\ty" });
+    expect(out.meta?.parseFailure).toBe("control-chars");
+  });
+
+  it("leaves structural whitespace outside strings untouched and does not double-escape", async () => {
+    const content = '{\n\t"a": "x\ty",\r\n\t"b": "p\tq"\n}';
+    const out = await extractContent(content);
+    expect(out.value).toEqual({ a: "x\ty", b: "p\tq" });
+  });
+
+  it("does not report a repair for valid JSON with structural newlines and tabs", async () => {
+    const out = await extractContent('{\n\t"a": "x"\n}');
+    expect(out.value).toEqual({ a: "x" });
+    expect(out.meta).not.toHaveProperty("parseFailure");
+    expect(out.meta).not.toHaveProperty("recovered");
+  });
+
+  it("repairs control characters inside JSON that is wrapped in prose", async () => {
+    const out = await extractContent('Here you go:\n{"a":"p\tq"}\nDone.');
+    expect(out.value).toEqual({ a: "p\tq" });
+    expect(out.meta).toMatchObject({ recovered: true });
+    expect(out.meta?.parseFailure).toBe("prose-around");
+  });
+
+  it("repairs a fenced block with raw TABs in a string", async () => {
+    const out = await extractContent('```json\n{"a":"p\tq"}\n```');
+    expect(out.value).toEqual({ a: "p\tq" });
+    expect(out.meta?.parseFailure).toBe("control-chars");
+  });
+
+  it("still fails as not-json when the text is not repairable", async () => {
+    const out = await extractContent('{"a": p\tq}');
+    expect(out.value).toBeNull();
+    expect(out.meta?.parseFailure).toBe("not-json");
+  });
+
+  it("a repaired non-object is still non-object, and never leaks content in meta", async () => {
+    const out = await extractContent('["a\tb"]');
+    expect(out.meta?.parseFailure).toBe("non-object");
+    expect(JSON.stringify(out.meta)).not.toContain("a\tb");
+  });
+});
