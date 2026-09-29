@@ -27,6 +27,25 @@ const TEMPERATURE = 0; // design.md "the call uses temperature: 0"
 // emitted. 2500 leaves room for the reasoning plus the extraction object.
 const MAX_TOKENS = 2500;
 
+// Per-model input override (real-model evidence, production account, bnbchain
+// page: 22k chars, ~4.8k prompt tokens, max_tokens 2500):
+//   - glm-4.7-flash default or reasoning_effort "low": finish_reason "length",
+//     truncated JSON (reasoning ate ~8k chars / 34 s / 117 neurons), so the
+//     primary always failed.
+//   - glm-4.7-flash with chat_template_kwargs { enable_thinking: false }:
+//     finish_reason "stop", valid JSON with all 11 fields, 312 tokens, 4 s.
+//   - qwen3-30b-a3b-fp8 default: valid JSON. With enable_thinking false it
+//     BREAKS (message.content is null).
+// So thinking is disabled for GLM models only; every other model gets the
+// plain { messages, temperature, max_tokens } input.
+const GLM_MODEL_PREFIX = "@cf/zai-org/glm-";
+
+function modelInputOverrides(modelId: string): Record<string, unknown> {
+  return modelId.startsWith(GLM_MODEL_PREFIX)
+    ? { chat_template_kwargs: { enable_thinking: false } }
+    : {};
+}
+
 // Races `promise` against `signal` so a caller-driven abort rejects even
 // when the injected `run` never settles on its own. Mirrors
 // rendered-fetcher.ts's raceWithSignal — this adapter never starts a
@@ -146,7 +165,16 @@ export function createWorkersAiExtractor(options: WorkersAiExtractorOptions): Ll
       try {
         raw = await raceWithSignal(
           Promise.resolve(
-            run(modelId, { messages, temperature: TEMPERATURE, max_tokens: MAX_TOKENS }, { signal }),
+            run(
+              modelId,
+              {
+                messages,
+                temperature: TEMPERATURE,
+                max_tokens: MAX_TOKENS,
+                ...modelInputOverrides(modelId),
+              },
+              { signal },
+            ),
           ),
           signal,
         );

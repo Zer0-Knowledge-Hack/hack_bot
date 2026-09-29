@@ -251,6 +251,36 @@ ${PAGE_END}` },
     expect(sentInputs?.max_tokens).toBe(2500);
   });
 
+  // Real-model evidence (production account): GLM-4.7-Flash spends the whole
+  // max_tokens on reasoning (finish_reason "length", truncated JSON) unless
+  // thinking is disabled; Qwen3-30B breaks (content null) when it is.
+  it("disables thinking for GLM models only, sending the exact chat input", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const run: WorkersAiRun = async (_model, inputs) => {
+      seen.push(inputs);
+      return { response: "{}" };
+    };
+    const extractor = createWorkersAiExtractor({ run });
+    const messages = [
+      { role: "system", content: SYSTEM_INSTRUCTIONS },
+      { role: "user", content: `${PAGE_START}\n${PAGE_TEXT}\n${PAGE_END}` },
+    ];
+
+    await extractor.extract(PAGE_TEXT, "@cf/zai-org/glm-4.7-flash", neverAborts());
+    await extractor.extract(PAGE_TEXT, "@cf/qwen/qwen3-30b-a3b-fp8", neverAborts());
+    await extractor.extract(PAGE_TEXT, VALID_MODEL, neverAborts());
+
+    expect(seen[0]).toEqual({
+      messages,
+      temperature: 0,
+      max_tokens: 2500,
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    expect(seen[1]).toEqual({ messages, temperature: 0, max_tokens: 2500 });
+    expect(seen[1]).not.toHaveProperty("chat_template_kwargs");
+    expect(seen[2]).toEqual({ messages, temperature: 0, max_tokens: 2500 });
+  });
+
   // OpenAI-style output declared by GLM-5.3-Flash and DeepSeek V4 Flash
   // (`wrangler ai models schema`): choices[].message.content is string | null.
   describe("OpenAI-style choices output", () => {
