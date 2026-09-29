@@ -101,11 +101,11 @@ Chain strategy: stacked-to-main
 
 ## Phase 9: Queue Adapter, Consumer Wiring, Handler Tests (PR9)
 
-- [ ] 9.1 RED: `test/adapters/queue/analysis-job-queue.test.ts` — `Queue.send` failure maps to `QueueSendFailedError`.
-- [ ] 9.2 GREEN: `src/adapters/queue/analysis-job-queue.ts`.
-- [ ] 9.3 RED: `test/index.queue.test.ts` — `worker.queue(fakeBatch)` with fake `Message` (`ack`/`retry` spies): malformed body acked+logged, duplicate delivery no-op, retry uses `delaySeconds`, handler never throws.
-- [ ] 9.4 GREEN: `src/index.ts` — `export default { fetch: app.fetch, queue }`, shape-validates message, maps `JobOutcome` to `ack`/`retry`.
-- [ ] 9.5 GREEN: `src/composition.ts` — `buildHackathonConsumer(env)` (`new Api(BOT_TOKEN)`, no `PII_KEYRING`, mirrors `buildGithubRouter`).
+- [x] 9.1 RED: `test/adapters/queue/analysis-job-queue.test.ts` — `Queue.send` failure maps to `QueueSendFailedError`.
+- [x] 9.2 GREEN: `src/adapters/queue/analysis-job-queue.ts`.
+- [x] 9.3 RED: `test/index.queue.test.ts` — `worker.queue(fakeBatch)` with fake `Message` (`ack`/`retry` spies): malformed body acked+logged, duplicate delivery no-op, retry uses `delaySeconds`, handler never throws.
+- [x] 9.4 GREEN: `src/index.ts` — `export default { fetch: app.fetch, queue }`, shape-validates message, maps `JobOutcome` to `ack`/`retry`.
+- [x] 9.5 GREEN: `src/composition.ts` — `buildHackathonConsumer(env)` (`new Api(BOT_TOKEN)`, no `PII_KEYRING`, mirrors `buildGithubRouter`).
 
 ## Phase 10: Publisher, Commands, Env, Wrangler (PR10)
 

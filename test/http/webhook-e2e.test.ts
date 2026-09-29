@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import app from "../../src/index";
+import { app } from "../../src/index";
 import type { Env } from "../../src/index";
 import { stubTelegramApi } from "../support/telegram-stub";
 

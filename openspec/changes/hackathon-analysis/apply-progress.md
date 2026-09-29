@@ -1037,3 +1037,75 @@ Non-blocking info:
 - READ-002 / RESI-001: the quota keyword heuristic can misreport a transient error as daily quota exhaustion. It must be confirmed against the real `env.AI` errors in Phase 10.
 - READ-001: `raceWithSignal` is duplicated in the LLM and browser adapters.
 - RELI-002: the GitHub timeout test does not assert the 3 s value.
+
+## Phase 9 (PR9: Queue Adapter, Consumer Wiring, Handler Tests) — branch `feat/hackathon-queue-consumer`
+
+### Scope of this batch
+
+Tasks 9.1-9.5 only (branched from `main` at `a689171`). Phases 10-11 untouched.
+
+### Completed Tasks
+
+- [x] 9.1 RED: `test/adapters/queue/analysis-job-queue.test.ts`
+- [x] 9.2 GREEN: `src/adapters/queue/analysis-job-queue.ts`
+- [x] 9.3 RED: `test/index.queue.test.ts`
+- [x] 9.4 GREEN: `src/index.ts` (+ `src/adapters/queue/analysis-job-message.ts`)
+- [x] 9.5 GREEN: `src/composition.ts` `buildHackathonConsumer` (+ `test/composition.hackathon-consumer.test.ts`)
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 9.1/9.2 | `test/adapters/queue/analysis-job-queue.test.ts` | Unit | N/A (new) | Written, failed (module not found) | 4/4 passed | success passthrough, rejected send, fixed message (no error text leaked), sync throw | None needed |
+| 9.3/9.4 | `test/index.queue.test.ts` | Integration (direct handler call, real `runHackathonJob`, fake ports) | Existing `test/http/*` suites (imports moved from default to named `app`) | Written, 21/21 failed (no `createQueueHandler`) | 21/21 passed | 9 malformed shapes, unknown version, terminal dup, held retry 60 s, transient retry 30 s, attempt 3 fails+acks, permanent ack, use-case throw, composition failure, batch independence, default export | None needed |
+| 9.5 | `test/composition.hackathon-consumer.test.ts` | Unit | N/A (new) | Written, 6/6 failed (no `buildHackathonConsumer`) | 6/6 passed | models wired, no PII_KEYRING needed, AI binding routing, two unset-model cases, unwired adapters | None needed |
+
+### Work Unit Evidence
+
+| Unit | Focused test command and result | Runtime harness | Rollback boundary |
+|------|---------------------------------|-----------------|-------------------|
+| 9.1/9.2 queue adapter | `npx vitest run test/adapters/queue` -> 4/4 passed | N/A: injected `send`, no real Queue binding until PR10 | revert `ae1194e` |
+| 9.5 composition | `npx vitest run test/composition.hackathon-consumer.test.ts` -> 6/6 passed | Runs inside the workers pool with the real D1 binding | revert `8445e22` |
+| 9.3/9.4 handler | `npx vitest run test/index.queue.test.ts` -> 21/21 passed | Default export `worker.queue` exercised in the workers pool | revert `f8fa49c` |
+
+Full-suite and typecheck evidence: `npx vitest run` -> 63 files, **600/600 passed**; `npm run typecheck` -> clean.
+
+### Files Changed
+
+| File | Action | What was done |
+|------|--------|---------------|
+| `src/adapters/queue/analysis-job-queue.ts` | Created | `createQueueAnalysisJobQueue` over an injected `send`; any failure -> `QueueSendFailedError("Queue.send failed")` |
+| `src/adapters/queue/analysis-job-message.ts` | Created | `parseAnalysisJobMessage`: shape validation, separate `unsupported-version` |
+| `src/index.ts` | Modified | `createQueueHandler`, `export const app`, default `{ fetch, queue }` |
+| `src/composition.ts` | Modified | `buildHackathonConsumer(env, adapters)` |
+| `src/env.ts` | Modified | `HackathonConsumerEnv` (AI, BROWSER, model vars) |
+| `test/adapters/queue/analysis-job-queue.test.ts`, `test/index.queue.test.ts`, `test/composition.hackathon-consumer.test.ts` | Created | tests above |
+| `test/http/{github-webhook,webhook-e2e,github-webhook-delivery-e2e}.test.ts` | Modified | import named `app` (default export is now the worker object) |
+| `openspec/changes/hackathon-analysis/tasks.md` | Modified | 9.1-9.5 marked `[x]` |
+
+### Deviations from Design
+
+- **`buildHackathonConsumer(env, adapters?)` takes the `ChatPublisher` and browser `launch` as injected adapters and does not create `new Api(BOT_TOKEN)`.** The Telegram `ChatPublisher` is task 10.1 and `@cloudflare/puppeteer` is task 10.4, so neither exists yet. Without `adapters` it throws `ConfigError`, so the handler retries instead of running half-wired. PR10 must build the publisher from `new Api(env.BOT_TOKEN)` and the puppeteer `launch`, and pass them in the default handler (`src/index.ts`: `buildHackathonConsumer(env)` -> `buildHackathonConsumer(env, {...})`). No consumer is configured in `wrangler.jsonc` until 10.4, so nothing is delivered before then.
+- **`HackathonConsumerEnv` is a separate interface** (not folded into `Env`) to avoid touching `env.ts`'s task 10.4 scope; PR10 merges it into `Env`.
+- **Named export `app`** added; the three HTTP e2e tests import it, since `export default` is now `{ fetch, queue }`.
+- **Unexpected failures (use-case throw, composition failure) retry with 30 s**, logged by error name (plus a ConfigError's fixed message). Bounded by the queue's `max_retries`.
+
+### Issues Found
+
+None. The pre-existing "response exceeded the byte cap" uncaught-exception log line from `safe-fetcher` tests is unchanged and does not fail the run.
+
+### Remaining Tasks (not in this batch)
+
+- [ ] Phase 10: Publisher, Commands, Env, Wrangler (PR10)
+- [ ] Phase 11: Operator Rollout (manual, not performed by apply)
+
+### Workload / PR Boundary
+
+- Mode: chained PR slice (stacked-to-main), size:exception expected
+- Current work unit: PR9
+- Boundary: from `main` at `a689171`; ends with the queue adapter, validated consumer handler and consumer composition in place.
+- Estimated review budget impact: authored changed lines vs `main` (`src` + `test`, before this docs commit): src 229, test 485 (714 total), over the 400-line guard.
+
+### Status
+
+5/5 Phase 9 tasks complete (37/56 cumulative). Ready for `sdd-verify` on this slice or for Phase 10.
