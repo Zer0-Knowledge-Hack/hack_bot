@@ -1,3 +1,5 @@
+import { GITHUB_ALERT_HEADERS, githubCopy } from "./copy";
+
 // Domain-only GitHub event model. The adapter mapper (adapters/github) is
 // the only place that reads raw webhook JSON — the domain never sees
 // payload shapes (design.md "Architecture Decisions", Event filtering).
@@ -58,10 +60,10 @@ const MESSAGE_MAX = 4096;
 export function formatGithubAlert(event: GithubEvent): string {
   const title = truncate(event.title, TITLE_MAX);
   const lines = [
-    `${event.repo} — ${event.kind} ${event.action}`,
+    `${event.repo} — ${GITHUB_ALERT_HEADERS[`${event.kind}:${event.action}`]}`,
     `#${event.number}: ${title}`,
-    event.reviewer !== undefined ? `Reviewer: ${event.reviewer}` : null,
-    `By: ${event.actor}`,
+    event.reviewer !== undefined ? `${githubCopy.reviewerLabel} ${event.reviewer}` : null,
+    `${githubCopy.byLabel} ${event.actor}`,
     event.url,
   ].filter((line): line is string => line !== null);
   return truncate(lines.join("\n"), MESSAGE_MAX);
