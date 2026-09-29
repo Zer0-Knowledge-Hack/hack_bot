@@ -516,6 +516,62 @@ describe("runHackathonJob", () => {
     expect(entry).not.toHaveProperty("httpStatus");
   });
 
+  it("logs per-attempt extraction diagnostics on invalid-output, with field names and reason codes only", async () => {
+    const deps = makeDeps();
+    const job = baseJob();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job } });
+    deps.staticFetcher = fakePageFetcher([{ text: "Page body SECRET-PAGE-TEXT ".repeat(60) }]);
+    const names = [
+      "name", "format", "location", "teamSize", "submissionDeadline", "startDate",
+      "endDate", "resultsDate", "prizes", "tracks", "eligibility",
+    ];
+    const badRaw = Object.fromEntries(
+      names.map((field, i) => [
+        field,
+        i < 6
+          ? {
+              value: field === "teamSize" ? 1 : "SECRET-VALUE",
+              snippet: "SECRET-SNIPPET not on the page",
+              confidence: 0.5,
+            }
+          : null,
+      ]),
+    );
+    deps.llmExtractor = fakeLlmExtractor([{ raw: badRaw }, { raw: badRaw }]);
+
+    await runHackathonJob(baseMsg(), 1, deps);
+
+    const entry = deps.logger.entries.find((e) => e.reason === "llm:invalid-output");
+    expect(entry?.attempts).toEqual([
+      {
+        model: "@cf/primary",
+        parsed: true,
+        rejectedCount: 6,
+        rejected: names.slice(0, 6).map((field) => ({ field, reason: "not-verbatim" })),
+      },
+      {
+        model: "@cf/fallback",
+        parsed: true,
+        rejectedCount: 6,
+        rejected: names.slice(0, 6).map((field) => ({ field, reason: "not-verbatim" })),
+      },
+    ]);
+    const serialized = JSON.stringify(deps.logger.entries);
+    expect(serialized).not.toContain("SECRET");
+    expect(serialized).not.toContain("example.com");
+  });
+
+  it("logs no attempts for a failure that is not an extraction failure", async () => {
+    const deps = makeDeps();
+    deps.analysisJobRepo = fakeAnalysisJobRepo({ claimResult: { kind: "claimed", job: baseJob() } });
+    deps.staticFetcher = fakePageFetcher([{ throws: new UnsafeUrlError("blocked", "private-ip") }]);
+
+    await runHackathonJob(baseMsg(), 1, deps);
+
+    const entry = deps.logger.entries.find((e) => e.reason === "unsafe-url:private-ip");
+    expect(entry).not.toHaveProperty("attempts");
+  });
+
   it("a lost claim (persistAnalysis returns false) posts nothing, never marks success, and acks (FIXV-001)", async () => {
     const deps = makeDeps();
     const job = baseJob();

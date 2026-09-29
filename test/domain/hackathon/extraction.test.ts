@@ -28,6 +28,7 @@ describe("validateExtraction", () => {
     expect(result).toEqual({
       ok: true,
       rejectedCount: 0,
+      rejections: [],
       fields: {
         name: { value: "Meridian 2026", snippet: "Meridian 2026", confidence: 0.9 },
         format: null,
@@ -410,6 +411,50 @@ describe("validateExtraction", () => {
       const padded = `word\n\n\n\n\n${" ".repeat(300)}next`;
       const ok = locationResult(padded, "word next");
       expect(ok.ok && ok.rejectedCount).toBe(0);
+    });
+  });
+  describe("rejection diagnostics", () => {
+    const NULLS = {
+      name: null,
+      format: null,
+      location: null,
+      teamSize: null,
+      submissionDeadline: null,
+      startDate: null,
+      endDate: null,
+      resultsDate: null,
+      prizes: null,
+      tracks: null,
+      eligibility: null,
+    };
+
+    it("reports each rejected field with its reason code", () => {
+      const page = "Meridian 2026 Prizes: many";
+      const result = validateExtraction(
+        {
+          ...NULLS,
+          name: { value: "M", snippet: "", confidence: 1 },
+          format: { value: "x", snippet: "y".repeat(201), confidence: 1 },
+          location: { value: "x", snippet: "not on the page", confidence: 1 },
+          prizes: { value: "p".repeat(501), snippet: "Prizes:", confidence: 1 },
+          tracks: { value: "ok", snippet: "Meridian 2026", confidence: 1 },
+        },
+        page,
+      );
+      expect(result.ok && result.rejections).toEqual([
+        { field: "name", reason: "empty-snippet" },
+        { field: "format", reason: "snippet-too-long" },
+        { field: "location", reason: "not-verbatim" },
+        { field: "prizes", reason: "value-too-long" },
+      ]);
+    });
+
+    it("reports no rejections when nothing was rejected", () => {
+      const result = validateExtraction(
+        { ...NULLS, name: { value: "M", snippet: "Meridian 2026", confidence: 1 } },
+        "Meridian 2026",
+      );
+      expect(result.ok && result.rejections).toEqual([]);
     });
   });
 });

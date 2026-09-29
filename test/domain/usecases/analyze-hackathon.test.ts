@@ -304,6 +304,42 @@ describe("analyzeHackathon: primary-then-fallback LLM call", () => {
     expect((thrown as ExtractionFailedError).kind).toBe("invalid-output");
   });
 
+  it("attaches per-attempt diagnostics (model, parsed, rejectedCount, field+reason) to the invalid-output error", async () => {
+    const deps = makeDeps();
+    const primary = rawWithRejectedCount(6);
+    // Fallback returns a shape-invalid response (unparseable for our schema).
+    deps.llmExtractor = fakeLlmExtractor([{ raw: primary }, { raw: "not an object" }]);
+
+    const thrown = (await analyzeHackathon(makeInput(), deps).catch(
+      (e: unknown) => e,
+    )) as ExtractionFailedError;
+
+    expect(thrown).toBeInstanceOf(ExtractionFailedError);
+    expect(thrown.attempts).toEqual([
+      {
+        model: "@cf/primary",
+        parsed: true,
+        rejectedCount: 6,
+        rejected: FIELD_ORDER.slice(0, 6).map((field) => ({ field, reason: "empty-snippet" })),
+      },
+      { model: "@cf/fallback", parsed: false, rejectedCount: 0, rejected: [] },
+    ]);
+  });
+
+  it("a timeout failure carries the primary attempt diagnostics only", async () => {
+    const deps = makeDeps();
+    deps.llmExtractor = fakeLlmExtractor([{ raw: rawWithRejectedCount(6) }]);
+    const input = makeInput(CLOCK_START + 10_000);
+
+    const thrown = (await analyzeHackathon(input, deps).catch(
+      (e: unknown) => e,
+    )) as ExtractionFailedError;
+
+    expect(thrown.kind).toBe("timeout");
+    expect(thrown.attempts).toHaveLength(1);
+    expect(thrown.attempts?.[0]).toMatchObject({ model: "@cf/primary", parsed: true, rejectedCount: 6 });
+  });
+
   it("a minority rejected (<=half of 11 fields) does not trigger the fallback (RELI-001)", async () => {
     const deps = makeDeps();
     const tracked = fakeLlmExtractor([{ raw: rawWithRejectedCount(2) }]);

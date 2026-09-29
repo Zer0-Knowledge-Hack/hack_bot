@@ -286,6 +286,9 @@ async function handleJobError(
     ...(err instanceof PageFetchFailedError && err.status !== undefined
       ? { httpStatus: err.status }
       : {}),
+    ...(err instanceof ExtractionFailedError && err.attempts !== undefined
+      ? { attempts: err.attempts }
+      : {}),
   });
   // Post then mark (design.md "Post then mark ... never silence"): a crash
   // after this point yields at most a duplicate failure reply on

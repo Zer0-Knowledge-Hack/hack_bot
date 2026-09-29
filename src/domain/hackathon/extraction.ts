@@ -36,8 +36,28 @@ export interface ExtractedFields {
 // returned as `null`. The use case layer uses it to decide whether the
 // fallback model should be tried or preferred (analyze-hackathon.ts
 // "more than half of its fields are invalid").
+// Why content validation nulled a field. Fixed codes only — safe to log
+// (never carries snippet or value text).
+export type RejectionReason =
+  | "empty-snippet"
+  | "snippet-too-long"
+  | "not-verbatim"
+  | "value-too-long";
+
+export interface FieldRejection {
+  field: string;
+  reason: RejectionReason;
+}
+
 export type ValidateExtractionResult =
-  | { ok: true; fields: ExtractedFields; rejectedCount: number }
+  | {
+      ok: true;
+      fields: ExtractedFields;
+      rejectedCount: number;
+      // One entry per rejected field, in schema order (rejections.length ===
+      // rejectedCount). Field NAMES and reason codes only.
+      rejections: FieldRejection[];
+    }
   | { ok: false; reason: "invalid-shape" };
 
 // spec llm-extraction: "Bounded Source Snippet Per Non-Null Field" — at
@@ -86,7 +106,7 @@ export function validateExtraction(
   // Normalized once per call, not per field (see normalizeWhitespace).
   const normalizedPage = normalizeWhitespace(pageText);
   const fields = {} as ExtractedFields;
-  let rejectedCount = 0;
+  const rejections: FieldRejection[] = [];
   for (const name of FIELD_NAMES) {
     if (!(name in record)) {
       return { ok: false, reason: "invalid-shape" };
@@ -115,11 +135,15 @@ export function validateExtraction(
     // The model supplied a non-null field, but content validation nulled
     // it (RELI-001) — distinct from a field the model itself returned as
     // null, which is never counted as rejected.
-    if (sanitized === null) rejectedCount += 1;
+    if (typeof sanitized === "string") {
+      rejections.push({ field: name, reason: sanitized });
+      (fields as unknown as Record<string, unknown>)[name] = null;
+      continue;
+    }
     (fields as unknown as Record<string, unknown>)[name] = sanitized;
   }
 
-  return { ok: true, fields, rejectedCount };
+  return { ok: true, fields, rejectedCount: rejections.length, rejections };
 }
 
 // Checks `value` against the declared type of the field (spec
@@ -158,13 +182,13 @@ function normalizeWhitespace(text: string): string {
 function sanitizeField(
   field: ExtractedField<unknown>,
   normalizedPage: string,
-): Field<unknown> {
+): Field<unknown> | RejectionReason {
   const snippet = normalizeWhitespace(field.snippet);
-  if (snippet.length === 0) return null;
-  if (snippet.length > SNIPPET_MAX) return null;
-  if (!normalizedPage.includes(snippet)) return null;
+  if (snippet.length === 0) return "empty-snippet";
+  if (snippet.length > SNIPPET_MAX) return "snippet-too-long";
+  if (!normalizedPage.includes(snippet)) return "not-verbatim";
   if (typeof field.value === "string" && field.value.length > VALUE_MAX) {
-    return null;
+    return "value-too-long";
   }
   return { ...field, snippet };
 }
