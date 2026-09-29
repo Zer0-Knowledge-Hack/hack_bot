@@ -18,7 +18,7 @@ The show, link and list use cases stay synchronous. The adapters are a static fe
 | Message | `{ v: 1, jobId, teamId, chatId, threadId, fetchUrl }`: ids plus the guarded fetch URL. No user id, username, page content or model output. Far below 128 KB | Only `jobId` (a failure reply is impossible when D1 is down on the final attempt). Full context (PII risk) |
 | Source of truth | The D1 `hackathon_analysis_jobs` row. The consumer uses the message fields only for a last-resort failure reply | Trusting the message (a duplicate could not be detected) |
 | Batch | `max_batch_size: 1`, `max_concurrency: 1` | Batches of N (one slow browser run delays its siblings, and one thrown error retries the whole batch). Default concurrency, or 2 (bursts on the shared AI and browser quotas; Free-plan Browser Rendering allows only 1 new browser every 20 s, so two consumers launching at once would hit a rate 429) |
-| Retries | Explicit `msg.ack()` / `msg.retry({ delaySeconds: 30 })`, `max_retries: 2`. Only transient errors are retried | Throwing from the handler (retries the whole batch without classification). High retry counts (they burn neurons and delay the reply) |
+| Retries | Explicit `msg.ack()` / `msg.retry({ delaySeconds: 30 })`, `max_retries: 5` (redeliveries at ~30/90/150/210/270 s so the last outlasts the 240 s claim lease, R4-001). Only transient errors are retried | Throwing from the handler (retries the whole batch without classification). High retry counts (they burn neurons and delay the reply) |
 | Dead-letter queue | None in v1. Terminal failures are recorded in the job row (`status='failed'`, `failure_reason`) and replied to the user | A DLQ (a second queue, plus a consumer or manual drain nobody runs; the D1 row already records the outcome) |
 | Cap and lease | The producer reserves one slot and sets the lease atomically (one `db.batch`). The consumer never touches `runs`, so a redelivery cannot double-count. No refund once the job has started | Counting in the consumer (a redelivery would double-count). Refunding failed runs (a failing URL could drain neurons) |
 | Ports | `PageFetcher` (static and rendered instances), `LlmExtractor`, `HackathonAnalysisRepo`, `AnalysisQuota`, `AnalysisJobRepo`, `AnalysisJobQueue`, `RepoMetadataSource`, `ChatPublisher`, plus the existing `Clock`, `IdGen` and `MembershipRepo` | Calling grammY or `env.QUEUE` from a use case (breaks the domain import rule) |
@@ -217,7 +217,7 @@ Operator steps:
    - `ai`
    - `browser`
    - `queues.producers [{ queue: "hackathon-analysis", binding: "HACKATHON_QUEUE" }]`
-   - `queues.consumers [{ queue: "hackathon-analysis", max_batch_size: 1, max_retries: 2, retry_delay: 30, max_concurrency: 1 }]`
+   - `queues.consumers [{ queue: "hackathon-analysis", max_batch_size: 1, max_retries: 5, retry_delay: 30, max_concurrency: 1 }]` (5 so the redelivery window outlasts the 240 s claim lease, R4-001)
 4. Apply the D1 migration remotely, then deploy.
 5. Give the bot the "Pin messages" right.
 6. Smoke-test in the general chat, then in a topic.
