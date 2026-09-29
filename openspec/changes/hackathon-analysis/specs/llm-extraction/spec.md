@@ -8,7 +8,7 @@ Turns a fetched page's reduced text into a strict, nullable-field hackathon reco
 
 ### Requirement: Strict Schema Output
 
-The system MUST request extraction against a fixed schema (format, team-size cap, dates, prizes, tracks, name) and MUST validate the model's response against that schema before it reaches the domain layer, rejecting any response that fails validation.
+The system MUST request extraction against a fixed schema (format, team-size cap, dates, prizes, tracks, name) and MUST validate the model's response against that schema before it reaches the domain layer. A response that is not a JSON object is rejected as a whole; a malformed field is rejected individually.
 
 #### Scenario: Well-formed response passes validation
 
@@ -18,10 +18,24 @@ The system MUST request extraction against a fixed schema (format, team-size cap
 
 #### Scenario: Malformed response is rejected
 
-- GIVEN the model returns a response that does not match the fixed schema (missing required shape, wrong types, or unparseable output)
+- GIVEN the model returns a response whose top level is not a plain JSON object (unparseable output, an array, a string, ...)
 - WHEN the adapter validates it
-- THEN the system MUST treat this as an extraction failure
+- THEN the system MUST treat this as an extraction failure (`invalid-shape`)
 - AND MUST NOT pass partial or malformed data to the domain layer
+
+#### Scenario: Malformed field is rejected individually
+
+- GIVEN the response is a JSON object but one field is malformed (a missing key, a field that is not an object, a wrong value type, a non-string snippet or a non-number confidence)
+- WHEN the adapter validates it
+- THEN only that field MUST be rejected with the reason `wrong-shape`, stored as null and counted in `rejectedCount`
+- AND the other fields MUST be validated normally
+- AND the response is usable only while no more than half of the fields are rejected (otherwise the fallback model runs)
+
+#### Scenario: A field the model reports as not found is null, not rejected
+
+- GIVEN the model returns a field object whose `value` is null (for example `{ "value": null, "snippet": null, "confidence": 0 }`)
+- WHEN the adapter validates it
+- THEN the field MUST be null and MUST NOT count as rejected, whatever its snippet or confidence hold
 
 ### Requirement: Null Over Guess for Every Field
 

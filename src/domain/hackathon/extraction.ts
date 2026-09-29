@@ -1,10 +1,11 @@
 // Strict schema validation for the LLM's extracted hackathon fields (spec
 // llm-extraction: "Strict Schema Output", "Null Over Guess for Every
 // Field", "Bounded Source Snippet Per Non-Null Field"). This is the ONLY
-// place a raw model response is trusted to become domain data — invalid
-// shape rejects the whole response (design.md "Validation"), while a
-// per-field problem (an unfindable or oversized snippet) demotes only that
-// field to null rather than failing the whole extraction.
+// place a raw model response is trusted to become domain data — a top-level
+// non-object rejects the whole response (design.md "Validation"), while a
+// per-field problem (a wrong-shape field, an unfindable or oversized
+// snippet) demotes only that field to null rather than failing the whole
+// extraction.
 
 // A field is either present with a bounded, verbatim-checkable snippet, or
 // entirely absent (null over guess).
@@ -36,13 +37,14 @@ export interface ExtractedFields {
 // returned as `null`. The use case layer uses it to decide whether the
 // fallback model should be tried or preferred (analyze-hackathon.ts
 // "more than half of its fields are invalid").
-// Why content validation nulled a field. Fixed codes only — safe to log
+// Why validation nulled a field. Fixed codes only — safe to log
 // (never carries snippet or value text).
 export type RejectionReason =
   | "empty-snippet"
   | "snippet-too-long"
   | "not-verbatim"
-  | "value-too-long";
+  | "value-too-long"
+  | "wrong-shape"; // missing key, non-object field, wrong value/snippet/confidence type
 
 export interface FieldRejection {
   field: string;
@@ -108,30 +110,17 @@ export function validateExtraction(
   const fields = {} as ExtractedFields;
   const rejections: FieldRejection[] = [];
   for (const name of FIELD_NAMES) {
-    if (!(name in record)) {
-      return { ok: false, reason: "invalid-shape" };
-    }
-    const rawField = record[name];
-    if (rawField === null) {
+    const shaped = shapeField(name, record[name]);
+    if (shaped.kind === "null") {
       fields[name] = null;
       continue;
     }
-    if (typeof rawField !== "object" || Array.isArray(rawField)) {
-      return { ok: false, reason: "invalid-shape" };
+    if (shaped.kind === "wrong-shape") {
+      rejections.push({ field: name, reason: "wrong-shape" });
+      fields[name] = null;
+      continue;
     }
-    const candidate = rawField as Record<string, unknown>;
-    if (
-      !("value" in candidate) ||
-      typeof candidate.snippet !== "string" ||
-      typeof candidate.confidence !== "number" ||
-      !hasValidFieldType(name, candidate.value)
-    ) {
-      return { ok: false, reason: "invalid-shape" };
-    }
-    const sanitized = sanitizeField(
-      { value: candidate.value, snippet: candidate.snippet, confidence: candidate.confidence },
-      normalizedPage,
-    );
+    const sanitized = sanitizeField(shaped.field, normalizedPage);
     // The model supplied a non-null field, but content validation nulled
     // it (RELI-001) — distinct from a field the model itself returned as
     // null, which is never counted as rejected.
@@ -146,10 +135,42 @@ export function validateExtraction(
   return { ok: true, fields, rejectedCount: rejections.length, rejections };
 }
 
-// Checks `value` against the declared type of the field (spec
-// llm-extraction: "Malformed response is rejected" — wrong types reject the
-// whole response, RELI-001/RESI-001). `teamSize` is the only numeric field;
-// every other field is a string.
+type ShapedField =
+  | { kind: "null" }
+  | { kind: "wrong-shape" }
+  | { kind: "field"; field: ExtractedField<unknown> };
+
+// Per-field shape check (spec llm-extraction: "Malformed field is rejected
+// individually"). Only a top-level non-object fails the whole response; a
+// problem with one field costs that field alone.
+//   - explicit `null` is the model saying "not found" -> null, not rejected;
+//   - an object whose `value` is null is the same statement in the shape GLM
+//     actually emits ({ value: null, snippet: null, confidence: 0 }), so it
+//     is a model-null whatever its snippet or confidence hold;
+//   - a MISSING key, a non-object, a wrong value type (`teamSize` is the
+//     only numeric field; every other field is a string), a non-string
+//     snippet or a non-number confidence is "wrong-shape": nulled and
+//     counted in rejectedCount. A missing key counts as rejected rather than
+//     null so a garbage object such as { "unrelated": true } cannot become a
+//     usable all-null success: null over guess is an explicit null.
+function shapeField(name: keyof ExtractedFields, rawField: unknown): ShapedField {
+  if (rawField === null) return { kind: "null" };
+  if (typeof rawField !== "object" || Array.isArray(rawField)) return { kind: "wrong-shape" };
+  const candidate = rawField as Record<string, unknown>;
+  if (candidate.value === null) return { kind: "null" };
+  if (
+    typeof candidate.snippet !== "string" ||
+    typeof candidate.confidence !== "number" ||
+    !hasValidFieldType(name, candidate.value)
+  ) {
+    return { kind: "wrong-shape" };
+  }
+  return {
+    kind: "field",
+    field: { value: candidate.value, snippet: candidate.snippet, confidence: candidate.confidence },
+  };
+}
+
 function hasValidFieldType(name: keyof ExtractedFields, value: unknown): boolean {
   if (name === "teamSize") {
     return typeof value === "number" && Number.isFinite(value);

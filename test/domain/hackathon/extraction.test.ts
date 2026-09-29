@@ -3,6 +3,20 @@ import { validateExtraction } from "../../../src/domain/hackathon/extraction";
 
 const pageText = "Meridian 2026 starts on 2026-03-01. Team size up to 4 people.";
 
+const ALL_NULL = {
+  name: null,
+  format: null,
+  location: null,
+  teamSize: null,
+  submissionDeadline: null,
+  startDate: null,
+  endDate: null,
+  resultsDate: null,
+  prizes: null,
+  tracks: null,
+  eligibility: null,
+};
+
 describe("validateExtraction", () => {
   it("accepts a well-formed response matching the fixed schema (spec llm-extraction: Well-formed response passes validation)", () => {
     const result = validateExtraction(
@@ -72,9 +86,11 @@ describe("validateExtraction", () => {
     expect(result.ok && result.fields.teamSize).toBeNull();
   });
 
-  it("rejects a response missing required shape (spec llm-extraction: Malformed response is rejected)", () => {
+  it("counts every missing key as a wrong-shape rejection instead of guessing (a bare { name: { value } } is not usable)", () => {
     const result = validateExtraction({ name: { value: "Meridian" } }, pageText);
-    expect(result).toEqual({ ok: false, reason: "invalid-shape" });
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.rejectedCount).toBe(11);
+    expect(result.ok && result.rejections[0]).toEqual({ field: "name", reason: "wrong-shape" });
   });
 
   it("rejects unparseable input", () => {
@@ -159,64 +175,37 @@ describe("validateExtraction", () => {
     });
   });
 
-  it("rejects a response where teamSize is a string instead of a number (RELI-001/RESI-001)", () => {
+  it("rejects only teamSize, as wrong-shape, when it is a string instead of a number (RELI-001/RESI-001)", () => {
     const result = validateExtraction(
       {
-        name: null,
-        format: null,
-        location: null,
+        ...ALL_NULL,
+        name: { value: "Meridian 2026", snippet: "Meridian 2026", confidence: 0.9 },
         teamSize: { value: "4", snippet: "Team size up to 4 people", confidence: 0.8 },
-        submissionDeadline: null,
-        startDate: null,
-        endDate: null,
-        resultsDate: null,
-        prizes: null,
-        tracks: null,
-        eligibility: null,
       },
       pageText,
     );
-    expect(result).toEqual({ ok: false, reason: "invalid-shape" });
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.rejections).toEqual([{ field: "teamSize", reason: "wrong-shape" }]);
+    expect(result.ok && result.rejectedCount).toBe(1);
+    expect(result.ok && result.fields.teamSize).toBeNull();
+    expect(result.ok && result.fields.name).not.toBeNull();
   });
 
-  it("rejects a response where name is a number instead of a string (RELI-001/RESI-001)", () => {
+  it("rejects only name, as wrong-shape, when it is a number instead of a string (RELI-001/RESI-001)", () => {
     const result = validateExtraction(
-      {
-        name: { value: 2026, snippet: "Meridian 2026", confidence: 0.9 },
-        format: null,
-        location: null,
-        teamSize: null,
-        submissionDeadline: null,
-        startDate: null,
-        endDate: null,
-        resultsDate: null,
-        prizes: null,
-        tracks: null,
-        eligibility: null,
-      },
+      { ...ALL_NULL, name: { value: 2026, snippet: "Meridian 2026", confidence: 0.9 } },
       pageText,
     );
-    expect(result).toEqual({ ok: false, reason: "invalid-shape" });
+    expect(result.ok && result.rejections).toEqual([{ field: "name", reason: "wrong-shape" }]);
+    expect(result.ok && result.fields.name).toBeNull();
   });
 
-  it("rejects a response where a field's value is undefined (RELI-001/RESI-001)", () => {
+  it("rejects only the field whose value is undefined (no value key at all) as wrong-shape (RELI-001/RESI-001)", () => {
     const result = validateExtraction(
-      {
-        name: { value: undefined, snippet: "Meridian 2026", confidence: 0.9 },
-        format: null,
-        location: null,
-        teamSize: null,
-        submissionDeadline: null,
-        startDate: null,
-        endDate: null,
-        resultsDate: null,
-        prizes: null,
-        tracks: null,
-        eligibility: null,
-      },
+      { ...ALL_NULL, name: { value: undefined, snippet: "Meridian 2026", confidence: 0.9 } },
       pageText,
     );
-    expect(result).toEqual({ ok: false, reason: "invalid-shape" });
+    expect(result.ok && result.rejections).toEqual([{ field: "name", reason: "wrong-shape" }]);
   });
 
   it("nulls a field whose snippet is empty (RISK-001: an empty snippet trivially 'matches' any page)", () => {
@@ -455,6 +444,130 @@ describe("validateExtraction", () => {
         "Meridian 2026",
       );
       expect(result.ok && result.rejections).toEqual([]);
+    });
+  });
+
+  // Production evidence: GLM returns a field it cannot find as
+  // { value: null, snippet: null, confidence: 0 } instead of null, which used
+  // to fail the WHOLE response as invalid-shape.
+  describe("per-field shape validation", () => {
+    it("treats GLM's { value: null, snippet: null, confidence: 0 } as a model-null field, not a rejection", () => {
+      const result = validateExtraction(
+        {
+          ...ALL_NULL,
+          name: { value: "Meridian 2026", snippet: "Meridian 2026", confidence: 0.9 },
+          prizes: { value: null, snippet: null, confidence: 0 },
+          tracks: { value: null, snippet: null, confidence: 0 },
+        },
+        pageText,
+      );
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.rejectedCount).toBe(0);
+      expect(result.ok && result.fields.prizes).toBeNull();
+      expect(result.ok && result.fields.tracks).toBeNull();
+      expect(result.ok && result.fields.name).not.toBeNull();
+    });
+
+    it("treats a null value as null whatever its snippet or confidence are", () => {
+      const result = validateExtraction(
+        {
+          ...ALL_NULL,
+          prizes: { value: null, snippet: "SOMETHING", confidence: 0.9 },
+          tracks: { value: null },
+          eligibility: { value: null, snippet: 42, confidence: "high" },
+        },
+        pageText,
+      );
+      expect(result.ok && result.rejectedCount).toBe(0);
+      expect(result.ok && result.fields.eligibility).toBeNull();
+    });
+
+    it("rejects an array value alone, as wrong-shape", () => {
+      const result = validateExtraction(
+        {
+          ...ALL_NULL,
+          prizes: { value: ["a", "b"], snippet: "Meridian 2026", confidence: 0.9 },
+          name: { value: "Meridian 2026", snippet: "Meridian 2026", confidence: 0.9 },
+        },
+        pageText,
+      );
+      expect(result.ok && result.rejections).toEqual([{ field: "prizes", reason: "wrong-shape" }]);
+      expect(result.ok && result.fields.name).not.toBeNull();
+    });
+
+    it.each([
+      ["a non-object field (string)", "Meridian 2026"],
+      ["a non-object field (array)", []],
+      ["a numeric field", 5],
+      ["an object with a non-string snippet", { value: "x", snippet: 3, confidence: 0.5 }],
+      ["an object with a missing snippet", { value: "x", confidence: 0.5 }],
+      ["an object with a non-number confidence", { value: "x", snippet: "Meridian 2026", confidence: "0.9" }],
+      ["an object with a missing confidence", { value: "x", snippet: "Meridian 2026" }],
+    ])("rejects %s individually as wrong-shape and nulls it", (_n, bad) => {
+      const result = validateExtraction({ ...ALL_NULL, location: bad }, pageText);
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.rejections).toEqual([{ field: "location", reason: "wrong-shape" }]);
+      expect(result.ok && result.fields.location).toBeNull();
+    });
+
+    it("rejects a non-finite teamSize number as wrong-shape", () => {
+      const result = validateExtraction(
+        { ...ALL_NULL, teamSize: { value: NaN, snippet: "Team size up to 4 people", confidence: 1 } },
+        pageText,
+      );
+      expect(result.ok && result.rejections).toEqual([{ field: "teamSize", reason: "wrong-shape" }]);
+    });
+
+    it("counts a missing key as wrong-shape (a missing key is not the model saying null)", () => {
+      const { eligibility: _drop, ...withoutEligibility } = ALL_NULL;
+      const result = validateExtraction(withoutEligibility, pageText);
+      expect(result.ok && result.rejections).toEqual([{ field: "eligibility", reason: "wrong-shape" }]);
+    });
+
+    it.each([
+      ["an array", []],
+      ["a nested array of objects", [{ name: null }]],
+      ["null", null],
+      ["a string", "text"],
+      ["a number", 7],
+    ])("returns invalid-shape for the whole response only when the top level is %s", (_n, raw) => {
+      expect(validateExtraction(raw, pageText)).toEqual({ ok: false, reason: "invalid-shape" });
+    });
+
+    it("keeps content checks running on well-shaped fields alongside wrong-shape ones", () => {
+      const result = validateExtraction(
+        {
+          ...ALL_NULL,
+          name: { value: "Meridian 2026", snippet: "not on the page", confidence: 0.9 },
+          teamSize: { value: "4", snippet: "Team size up to 4 people", confidence: 0.8 },
+        },
+        pageText,
+      );
+      expect(result.ok && result.rejections).toEqual([
+        { field: "name", reason: "not-verbatim" },
+        { field: "teamSize", reason: "wrong-shape" },
+      ]);
+    });
+
+    it("counts every wrong-shape field toward rejectedCount so the majority rule can fall back", () => {
+      const wrong = { value: ["x"], snippet: "Meridian 2026", confidence: 1 };
+      const result = validateExtraction(
+        {
+          name: wrong,
+          format: wrong,
+          location: wrong,
+          teamSize: wrong,
+          submissionDeadline: wrong,
+          startDate: wrong,
+          endDate: null,
+          resultsDate: null,
+          prizes: null,
+          tracks: null,
+          eligibility: null,
+        },
+        pageText,
+      );
+      expect(result.ok && result.rejectedCount).toBe(6); // > floor(11 / 2)
     });
   });
 });

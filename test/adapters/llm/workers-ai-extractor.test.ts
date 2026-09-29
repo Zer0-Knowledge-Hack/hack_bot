@@ -129,7 +129,8 @@ ${PAGE_END}` },
     const extractor = createWorkersAiExtractor({ run });
 
     const { value: result } = await extractor.extract(PAGE_TEXT, VALID_MODEL, neverAborts());
-    expect(validateExtraction(result, PAGE_TEXT)).toEqual({ ok: false, reason: "invalid-shape" });
+    const validated = validateExtraction(result, PAGE_TEXT);
+    expect(validated.ok && validated.rejectedCount).toBe(11); // every key missing: unusable
   });
 
   it("maps a quota-exhaustion error from run() to LlmQuotaExceededError", async () => {
@@ -468,7 +469,8 @@ describe("createWorkersAiExtractor tolerant extraction", () => {
   it("recovered garbage is still rejected by validateExtraction (untrusted content path unchanged)", async () => {
     const out = await extractContent('Sure: {"unrelated": true} bye');
     expect(out.value).toEqual({ unrelated: true });
-    expect(validateExtraction(out.value, PAGE_TEXT)).toEqual({ ok: false, reason: "invalid-shape" });
+    const validated = validateExtraction(out.value, PAGE_TEXT);
+    expect(validated.ok && validated.rejectedCount).toBe(11); // every key missing: unusable
   });
 
   it("a recovered object still cannot smuggle a snippet that is not on the page", async () => {
