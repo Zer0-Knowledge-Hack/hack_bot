@@ -3,6 +3,8 @@ import {
   analysisCopy,
   FETCH_FAILURE_PHRASES,
   FIELD_LABELS,
+  GITHUB_ALERT_HEADERS,
+  githubCopy,
   moreItems,
 } from "../../src/domain/copy";
 import {
@@ -22,7 +24,7 @@ import {
 // Guard for the Spanish-copy change: every bot-authored string reachable from
 // the catalogs must be Spanish (no English words from the denylist) and every
 // code map must be complete. Scope: the domain catalog and the full Telegram
-// adapter catalog (GitHub alert headers join in a later PR).
+// adapter catalog plus the GitHub alert headers.
 const ENGLISH_DENYLIST =
   /\b(the|you|your|only|could|please|run|usage|team|member|topic|linked|analysis|page|try)\b/i;
 
@@ -66,6 +68,8 @@ const CATALOGS: Array<[string, Catalog]> = [
   ["repoCopy", repoCopy as unknown as Catalog],
   ["pickerCopy", pickerCopy as unknown as Catalog],
   ["ROLE_LABELS", ROLE_LABELS as unknown as Catalog],
+  ["GITHUB_ALERT_HEADERS", GITHUB_ALERT_HEADERS as unknown as Catalog],
+  ["githubCopy", githubCopy as unknown as Catalog],
 ];
 
 describe("copy catalogs are Spanish", () => {
@@ -131,5 +135,22 @@ describe("copy catalogs are Spanish", () => {
     expect(commonCopy.membershipCheckFailed("datachannel")).toBe(
       "No se pudo verificar tu pertenencia al equipo. Vuelve a intentar /datachannel.",
     );
+  });
+
+  it("the GitHub header map covers all 8 kind:action keys with Spanish text", () => {
+    expect(Object.keys(GITHUB_ALERT_HEADERS).sort()).toEqual([
+      "issues:closed",
+      "issues:merged",
+      "issues:opened",
+      "issues:review_requested",
+      "pull_request:closed",
+      "pull_request:merged",
+      "pull_request:opened",
+      "pull_request:review_requested",
+    ]);
+    for (const [key, text] of Object.entries(GITHUB_ALERT_HEADERS)) {
+      expect(text.trim(), key).not.toBe("");
+    }
+    expect(githubCopy).toEqual({ reviewerLabel: "Revisor:", byLabel: "Por:" });
   });
 });

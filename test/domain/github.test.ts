@@ -128,7 +128,7 @@ describe("formatGithubAlert", () => {
     expect(text.length).toBeLessThanOrEqual(4096);
   });
 
-  it("includes a Reviewer line with the exact output when reviewer is set", () => {
+  it("includes a Revisor line with the exact output when reviewer is set", () => {
     const text = formatGithubAlert(
       makeEvent({
         kind: "pull_request",
@@ -138,29 +138,45 @@ describe("formatGithubAlert", () => {
     );
     expect(text).toBe(
       [
-        "octocat/hello-world — pull_request review_requested",
+        "octocat/hello-world — Revisión solicitada",
         "#42: Fix the thing",
-        "Reviewer: hubot",
-        "By: octocat",
+        "Revisor: hubot",
+        "Por: octocat",
         "https://github.com/octocat/hello-world/pull/42",
       ].join("\n"),
     );
   });
 
-  it("omits the Reviewer line entirely when reviewer is not set", () => {
+  it("omits the Revisor line entirely when reviewer is not set", () => {
     const text = formatGithubAlert(makeEvent({ action: "review_requested" }));
-    expect(text).not.toContain("Reviewer:");
+    expect(text).not.toContain("Revisor:");
   });
 
   it("formats a merged pull_request alert with the exact output", () => {
     const text = formatGithubAlert(makeEvent({ kind: "pull_request", action: "merged" }));
     expect(text).toBe(
       [
-        "octocat/hello-world — pull_request merged",
+        "octocat/hello-world — PR fusionado",
         "#42: Fix the thing",
-        "By: octocat",
+        "Por: octocat",
         "https://github.com/octocat/hello-world/pull/42",
       ].join("\n"),
     );
+  });
+
+  it.each([
+    ["pull_request", "opened", "PR abierto"],
+    ["pull_request", "closed", "PR cerrado"],
+    ["pull_request", "merged", "PR fusionado"],
+    ["pull_request", "review_requested", "Revisión solicitada"],
+    ["issues", "opened", "Issue abierto"],
+    ["issues", "closed", "Issue cerrado"],
+    ["issues", "merged", "Issue fusionado"],
+    ["issues", "review_requested", "Revisión solicitada"],
+  ] as const)("uses the Spanish header for %s:%s", (kind, action, header) => {
+    const text = formatGithubAlert(makeEvent({ kind, action }));
+    expect(text.split("\n")[0]).toBe(`octocat/hello-world — ${header}`);
+    expect(text).not.toMatch(/pull_request|issues|review_requested|Reviewer:|By:/);
+    expect(text.length).toBeLessThanOrEqual(4096);
   });
 });

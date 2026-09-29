@@ -51,13 +51,13 @@ No `npm run harness` needed: fetch, LLM and validation logic are unchanged; fetc
 
 ## Phase 3: GitHub Alerts (PR3)
 
-- [ ] 3.1 RED: `test/domain/github.test.ts` — header per combo (`pull_request`: PR abierto/PR cerrado/PR fusionado/Revisión solicitada; `issues`: Issue abierto/Issue cerrado/…), labels "Revisor:"/"Por:", no raw codes, ≤4096.
-- [ ] 3.2 RED: extend `test/copy/catalog-language.test.ts` to `GITHUB_ALERT_HEADERS` (all 8 keys non-empty).
-- [ ] 3.3 GREEN: `src/domain/copy.ts` — `Record<\`${GithubEventKind}:${GithubEventAction}\`,string>` with comment on unused `issues:merged`/`issues:review_requested`.
-- [ ] 3.4 GREEN: `src/domain/github.ts` uses header map and labels.
-- [ ] 3.5 Run `npm test` and `npm run typecheck`.
+- [x] 3.1 RED: `test/domain/github.test.ts` — header per combo (`pull_request`: PR abierto/PR cerrado/PR fusionado/Revisión solicitada; `issues`: Issue abierto/Issue cerrado/…), labels "Revisor:"/"Por:", no raw codes, ≤4096.
+- [x] 3.2 RED: extend `test/copy/catalog-language.test.ts` to `GITHUB_ALERT_HEADERS` (all 8 keys non-empty).
+- [x] 3.3 GREEN: `src/domain/copy.ts` — `Record<\`${GithubEventKind}:${GithubEventAction}\`,string>` with comment on unused `issues:merged`/`issues:review_requested`.
+- [x] 3.4 GREEN: `src/domain/github.ts` uses header map and labels.
+- [x] 3.5 Run `npm test` and `npm run typecheck`.
 
 ## Phase 4: Final Verification (after PR3)
 
-- [ ] 4.1 `rg` over `src/` (comments excluded) for former English fragments (e.g. "Only a team admin", "not a member", "Usage:", "Analyzing", "and \{?n\}? more", "Reviewer:", "topic") on all reply paths; expect none.
-- [ ] 4.2 Confirm `prompt.test.ts` unchanged; run `npm test` and `npm run typecheck`, both green.
+- [x] 4.1 `rg` over `src/` (comments excluded) for former English fragments (e.g. "Only a team admin", "not a member", "Usage:", "Analyzing", "and \{?n\}? more", "Reviewer:", "topic") on all reply paths; expect none.
+- [x] 4.2 Confirm `prompt.test.ts` unchanged; run `npm test` and `npm run typecheck`, both green.

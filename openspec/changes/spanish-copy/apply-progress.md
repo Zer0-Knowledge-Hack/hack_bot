@@ -94,6 +94,47 @@ RED run: 51 failed / 76 passed in `test/adapters/telegram`, plus 12 failed in `t
 - Leftover-English grep over Phase 2 reply paths: only domain exception messages (`NotFoundError`/`UnauthorizedError` args, never shown) and log event names remain.
 - Size: 6 files, +368 / -128 (src about 129 net lines changed in commands.ts/picker plus 87 catalog; rest tests).
 
+## Phase 3 (PR3): GitHub Alerts — COMPLETE (3.1-3.5)
+
+Branch: `feat/spanish-copy-github` (from `main` 2152a2d). Not pushed.
+
+### Commits
+
+| Hash | Message |
+|------|---------|
+| ecdbb3b | feat(copy): add Spanish GitHub alert header catalog |
+| ce8d7f6 | feat(copy): translate GitHub alerts to Spanish |
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1 | `test/domain/github.test.ts` | Unit | Full suite green before (71 files, 857 tests) | Exact Spanish output, "Revisor:"/"Por:", `it.each` over all 8 kind:action combos (no raw codes, <=4096); 10 failed | Passed | 8 combos + reviewer present/absent + merged exact output | None needed |
+| 3.2 | `test/copy/catalog-language.test.ts` | Unit | Same | `GITHUB_ALERT_HEADERS` and `githubCopy` added to catalogs, 8-key check; 3 failed | Passed | Denylist + non-empty + key set + labels | None needed |
+| 3.3 | `src/domain/copy.ts` | Unit | Same | Covered by 3.1/3.2 | Passed | Yes | None needed |
+| 3.4 | `src/domain/github.ts` | Unit | Same | Covered by 3.1 | Passed | Yes | None needed |
+| 3.5 | full suite | - | - | - | 71 files, 870 tests pass; `npm run typecheck` clean | - | - |
+
+### Work Unit Evidence
+
+| Evidence | Result |
+|---|---|
+| Focused test command | `npm test -- test/domain/github.test.ts test/copy`: RED 10 + 3 failed; GREEN after implementation. Full `npm test`: 870/870 |
+| Runtime harness | N/A: copy only |
+| Rollback boundary | `src/domain/github.ts` and the GitHub section of `src/domain/copy.ts` |
+
+### Deviations / notes
+
+- `test/adapters/github/event-mapper.test.ts` asserts mapped domain events (kind/action codes), never alert text, so it needs no Spanish assertion and was left unchanged.
+- `src/domain/copy.ts` imports `GithubEventKind`/`GithubEventAction` as types from `./github` while `github.ts` imports the catalog values: type-only, so no runtime cycle.
+- `githubCopy` (`reviewerLabel`, `byLabel`) added next to `GITHUB_ALERT_HEADERS`.
+- Size: src +28/-3 lines (2 files), tests +46/-9 (2 files).
+
+## Phase 4: Final Verification — COMPLETE (4.1-4.2)
+
+- 4.1 Leftover-English grep over `src/` (comments excluded) across every reply path (`ctx.reply`, `answerCallbackQuery`, `chatPublisher.post`, alert sender, `format*`): no user-visible English copy. Matches remaining are only (a) domain exception messages (`UnauthorizedError`/`NotFoundError`/`ConfigError` args), (b) log event names, (c) import paths containing "topic", (d) the intentional `/profile set` field keys. Verified (a) never reach users: `runCommand` replies only with `errorReplies[err.name]` (Spanish catalog strings) and logs `err.name`/declared reason; unrecognized errors are rethrown, and there is no `bot.catch` sending text. `err.message` is used only in logs (`ConfigError` reason) and internal regexes. HTTP bodies ("Unauthorized", "Internal Server Error", "ok") go to Telegram/GitHub servers, not chat users.
+- 4.2 `prompt.test.ts` unchanged (`git diff main` does not touch it). Full `npm test`: 71 files, 870 tests pass. `npm run typecheck` clean.
+
 ### Remaining
 
-Phase 3 (3.1-3.5), Phase 4 (4.1-4.2).
+None. All tasks (1.1-4.2) complete; next: sdd-verify.
