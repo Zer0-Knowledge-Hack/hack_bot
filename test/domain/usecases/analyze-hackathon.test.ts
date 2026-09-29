@@ -322,8 +322,55 @@ describe("analyzeHackathon: primary-then-fallback LLM call", () => {
         rejectedCount: 6,
         rejected: FIELD_ORDER.slice(0, 6).map((field) => ({ field, reason: "empty-snippet" })),
       },
-      { model: "@cf/fallback", parsed: false, rejectedCount: 0, rejected: [] },
+      // Parsing succeeded (a JSON value arrived) but the top level is not an
+      // object: parsed stays true and shape reports the validation failure.
+      { model: "@cf/fallback", parsed: true, shape: "invalid", rejectedCount: 0, rejected: [] },
     ]);
+  });
+
+  it("parsed means only that JSON parsing succeeded: a parsed non-object reports shape invalid, an unparseable text does not", async () => {
+    const deps = makeDeps();
+    deps.llmExtractor = fakeLlmExtractor([
+      { raw: [1, 2], meta: { finishReason: "stop", contentLength: 5, parseFailure: "non-object" } },
+      { raw: null, meta: { finishReason: "stop", contentLength: 9, parseFailure: "not-json" } },
+    ]);
+
+    const thrown = (await analyzeHackathon(makeInput(), deps).catch(
+      (e: unknown) => e,
+    )) as ExtractionFailedError;
+
+    expect(thrown.attempts?.[0]).toMatchObject({ parsed: true, shape: "invalid", parseFailure: "non-object" });
+    expect(thrown.attempts?.[1]).toMatchObject({ parsed: false, parseFailure: "not-json" });
+    expect(thrown.attempts?.[1]).not.toHaveProperty("shape");
+  });
+
+  it("a majority of wrong-shape fields falls back and is reported as wrong-shape rejections, not as parsed:false", async () => {
+    const deps = makeDeps();
+    const wrongShape: Record<string, unknown> = {};
+    for (const field of FIELD_ORDER) wrongShape[field] = { value: ["x"], snippet: "Meridian", confidence: 1 };
+    deps.llmExtractor = fakeLlmExtractor([{ raw: wrongShape }, { raw: wrongShape }]);
+
+    const thrown = (await analyzeHackathon(makeInput(), deps).catch(
+      (e: unknown) => e,
+    )) as ExtractionFailedError;
+
+    expect(thrown.kind).toBe("invalid-output");
+    expect(thrown.attempts?.[0]).toMatchObject({ parsed: true, rejectedCount: 11 });
+    expect(thrown.attempts?.[0]?.rejected[0]).toEqual({ field: "name", reason: "wrong-shape" });
+    expect(thrown.attempts?.[0]).not.toHaveProperty("shape");
+  });
+
+  it("GLM-style null field objects do not fail the response and do not trigger the fallback", async () => {
+    const deps = makeDeps();
+    const raw = validRaw("Meridian") as Record<string, unknown>;
+    raw.prizes = { value: null, snippet: null, confidence: 0 };
+    const tracked = fakeLlmExtractor([{ raw }]);
+    deps.llmExtractor = tracked;
+
+    const result = await analyzeHackathon(makeInput(), deps);
+
+    expect(tracked.calls).toHaveLength(1);
+    expect(result.fields.prizes).toBeNull();
   });
 
   it("copies the extractor's safe parse metadata into each attempt's diagnostics", async () => {

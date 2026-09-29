@@ -21,7 +21,7 @@ import type {
   HackathonAnalysisRepo,
   IdGen,
   LlmExtractor,
-  LlmOutputMeta,
+  LlmExtraction,
   PageFetcher,
   RepoTopicLinkRepo,
 } from "../ports";
@@ -219,11 +219,24 @@ function isUsable(
 function diagnosticsOf(
   model: string,
   result: ValidateExtractionResult,
-  meta: LlmOutputMeta | undefined,
+  out: LlmExtraction,
 ): ExtractionAttemptDiagnostics {
+  const { meta } = out;
+  // `parsed` means ONLY that JSON parsing succeeded. The extractor hands over
+  // `value: null` when the text did not parse; a parsed non-object (array,
+  // number, ...) keeps its value, or is a JSON `null` flagged "non-object".
+  const parsed = out.value !== null || meta?.parseFailure === "non-object";
   const base: ExtractionAttemptDiagnostics = result.ok
-    ? { model, parsed: true, rejectedCount: result.rejectedCount, rejected: result.rejections }
-    : { model, parsed: false, rejectedCount: 0, rejected: [] };
+    ? { model, parsed, rejectedCount: result.rejectedCount, rejected: result.rejections }
+    : {
+        model,
+        parsed,
+        // Only a parsed value can fail on shape; an unparseable text is
+        // reported by parseFailure alone.
+        ...(parsed ? { shape: "invalid" as const } : {}),
+        rejectedCount: 0,
+        rejected: [],
+      };
   return {
     ...base,
     ...(meta?.finishReason !== undefined ? { finishReason: meta.finishReason } : {}),
@@ -257,7 +270,7 @@ async function extractFields(
     throw new ExtractionFailedError(
       "Primary model output was unusable and too little time remains for the fallback",
       "timeout",
-      [diagnosticsOf(input.primaryModel, primary, primaryOut.meta)],
+      [diagnosticsOf(input.primaryModel, primary, primaryOut)],
     );
   }
 
@@ -278,8 +291,8 @@ async function extractFields(
     "Both the primary and fallback model produced too many invalid fields",
     "invalid-output",
     [
-      diagnosticsOf(input.primaryModel, primary, primaryOut.meta),
-      diagnosticsOf(input.fallbackModel, fallback, fallbackOut.meta),
+      diagnosticsOf(input.primaryModel, primary, primaryOut),
+      diagnosticsOf(input.fallbackModel, fallback, fallbackOut),
     ],
   );
 }

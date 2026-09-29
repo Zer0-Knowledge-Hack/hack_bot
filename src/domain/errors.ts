@@ -144,8 +144,13 @@ export const LLM_PARSE_FAILURE_CODES: readonly LlmParseFailureCode[] = [
 
 export interface ExtractionAttemptDiagnostics {
   model: string;
-  // false when the response failed schema validation as a whole.
+  // true ONLY when the model's text was parsed as JSON (possibly after
+  // tolerant recovery). It says nothing about whether the shape validated.
   parsed: boolean;
+  // "invalid" when JSON parsed but the top level failed validation as a
+  // whole (not a plain object). Absent otherwise; per-field shape problems
+  // show up in `rejected` with reason "wrong-shape" instead.
+  shape?: "invalid";
   rejectedCount: number;
   rejected: FieldRejection[];
   // Parse metadata (numbers and fixed codes only — never model content).
