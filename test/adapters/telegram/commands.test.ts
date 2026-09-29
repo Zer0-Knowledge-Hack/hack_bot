@@ -59,7 +59,13 @@ function makeBot(
   // Every raw sendMessage payload, so plain-text (no parse_mode) can be
   // asserted on the wire.
   const payloads: Array<Record<string, unknown>> = [];
+  // Text of every answerCallbackQuery alert shown to the user.
+  const alerts: string[] = [];
   bot.api.config.use((_prev, method, payload) => {
+    if (method === "answerCallbackQuery") {
+      const text = (payload as { text?: string }).text;
+      if (text !== undefined) alerts.push(text);
+    }
     if (method === "sendMessage") {
       const p = payload as { chat_id: number; text: string };
       payloads.push(payload as Record<string, unknown>);
@@ -104,7 +110,7 @@ function makeBot(
     logger: createSafeLogger(),
   };
   registerCommands(bot, deps);
-  return { bot, replies, payloads, deps };
+  return { bot, replies, payloads, alerts, deps };
 }
 
 let nextUpdateId = 1;
@@ -175,7 +181,7 @@ describe("registerCommands — /setup (team-registration spec)", () => {
 
     expect(deps.teamRepo.rows).toHaveLength(1);
     expect(deps.membershipRepo.rows[0]?.role).toBe("admin");
-    expect(replies[0]?.text).toMatch(/created/i);
+    expect(replies[0]?.text).toBe("Equipo creado. Eres el primer administrador.");
   });
 
   it("refuses when a team already exists for the chat", async () => {
@@ -183,7 +189,7 @@ describe("registerCommands — /setup (team-registration spec)", () => {
     await bot.handleUpdate(commandUpdate("setup", 10, 1));
     await bot.handleUpdate(commandUpdate("setup", 10, 1));
 
-    expect(replies[1]?.text).toMatch(/already/i);
+    expect(replies[1]?.text).toBe("Ya hay un equipo registrado en este chat.");
   });
 
   it("refuses when the caller is not a verified group admin", async () => {
@@ -191,7 +197,7 @@ describe("registerCommands — /setup (team-registration spec)", () => {
     await bot.handleUpdate(commandUpdate("setup", 20, 2));
 
     expect(deps.teamRepo.rows).toHaveLength(0);
-    expect(replies[0]?.text).toMatch(/admin/i);
+    expect(replies[0]?.text).toBe("Solo un administrador del grupo de Telegram puede ejecutar /setup.");
   });
 
   it("tells the caller to run /setup inside the group when run in a private chat (DM)", async () => {
@@ -203,8 +209,9 @@ describe("registerCommands — /setup (team-registration spec)", () => {
 
     expect(deps.teamRepo.rows).toHaveLength(0);
     expect(adminCheck).not.toHaveBeenCalled();
-    expect(replies[0]?.text).toMatch(/inside the group/i);
-    expect(replies[0]?.text).not.toMatch(/Only a Telegram group admin/i);
+    expect(replies[0]?.text).toBe(
+      "Ejecuta /setup dentro del grupo que quieres registrar como equipo, no en un chat privado.",
+    );
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ event: "setup-team", outcome: "refused", errorCode: "PrivateChat" }),
     );
@@ -226,8 +233,9 @@ describe("registerCommands — /setup (team-registration spec)", () => {
 
     expect(deps.teamRepo.rows).toHaveLength(0);
     expect(adminCheck).not.toHaveBeenCalled();
-    expect(replies[0]?.text).toMatch(/anonymous/i);
-    expect(replies[0]?.text).not.toMatch(/Only a Telegram group admin/i);
+    expect(replies[0]?.text).toBe(
+      'Estás publicando como administrador anónimo, así que no se puede verificar tu condición de administrador. Desactiva "Permanecer anónimo" en tus permisos de administrador y vuelve a ejecutar /setup.',
+    );
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ event: "setup-team", outcome: "refused", errorCode: "AnonymousAdmin" }),
     );
@@ -241,7 +249,7 @@ describe("registerCommands — /join (team-membership spec)", () => {
     await bot.handleUpdate(commandUpdate("join", 10, 3));
 
     expect(deps.membershipRepo.rows).toHaveLength(2);
-    expect(replies[1]?.text).toMatch(/joined/i);
+    expect(replies[1]?.text).toBe("Te uniste al equipo.");
   });
 
   it("refuses a duplicate join without creating a second membership", async () => {
@@ -250,14 +258,16 @@ describe("registerCommands — /join (team-membership spec)", () => {
     await bot.handleUpdate(commandUpdate("join", 10, 1));
 
     expect(deps.membershipRepo.rows).toHaveLength(1);
-    expect(replies[1]?.text).toMatch(/already/i);
+    expect(replies[1]?.text).toBe("Ya eres miembro de este equipo.");
   });
 
   it("refuses to join a chat with no registered team", async () => {
     const { bot, replies } = makeBot();
     await bot.handleUpdate(commandUpdate("join", 999, 5));
 
-    expect(replies[0]?.text).toMatch(/\/setup/);
+    expect(replies[0]?.text).toBe(
+      "No hay ningún equipo registrado en este chat. Pide a un administrador que ejecute /setup.",
+    );
   });
 });
 
@@ -268,7 +278,7 @@ describe("registerCommands — /datachannel (team-registration spec)", () => {
     await bot.handleUpdate(commandUpdate("datachannel", 10, 1, { threadId: 77 }));
 
     expect(deps.teamRepo.rows[0]?.dataTopicThreadId).toBe(77);
-    expect(replies[1]?.text).toMatch(/data channel/i);
+    expect(replies[1]?.text).toBe("Este tema es ahora el canal de datos del equipo.");
   });
 
   it("refuses when run outside a topic (general chat)", async () => {
@@ -277,7 +287,9 @@ describe("registerCommands — /datachannel (team-registration spec)", () => {
     await bot.handleUpdate(commandUpdate("datachannel", 10, 1));
 
     expect(deps.teamRepo.rows[0]?.dataTopicThreadId).toBeNull();
-    expect(replies[1]?.text).toMatch(/topic/i);
+    expect(replies[1]?.text).toBe(
+      "Ejecuta /datachannel dentro del tema que quieres usar como canal de datos del equipo.",
+    );
   });
 
   it("refuses a non-admin member", async () => {
@@ -287,7 +299,7 @@ describe("registerCommands — /datachannel (team-registration spec)", () => {
     await bot.handleUpdate(commandUpdate("datachannel", 10, 3, { threadId: 88 }));
 
     expect(deps.teamRepo.rows[0]?.dataTopicThreadId).toBeNull();
-    expect(replies[2]?.text).toMatch(/admin/i);
+    expect(replies[2]?.text).toBe("Solo un administrador del equipo puede asignar el canal de datos.");
   });
 
   // FIX-001: bindDataChannel also throws NotFoundError (actor membership
@@ -303,28 +315,31 @@ describe("registerCommands — /datachannel (team-registration spec)", () => {
 
     await bot.handleUpdate(commandUpdate("datachannel", 10, 1, { threadId: 77 }));
 
-    expect(replies[1]?.text).not.toMatch(/error/i);
-    expect(replies[1]?.text?.length ?? 0).toBeGreaterThan(0);
+    expect(replies[1]?.text).toBe(
+      "No se pudo verificar tu pertenencia al equipo. Vuelve a intentar /datachannel.",
+    );
   });
 });
 
 describe("registerCommands — DM team selection (team-membership spec)", () => {
   it("refuses a forged team callback and does not persist it", async () => {
-    const { bot, replies, deps } = makeBot();
+    const { bot, replies, alerts, deps } = makeBot();
     await bot.handleUpdate(callbackUpdate(50, 7, "sel:00000000-0000-0000-0000-000000000099"));
 
     expect(deps.dmSelectionRepo.rows).toHaveLength(0);
-    expect(replies[0]?.text).toMatch(/member/i);
+    expect(alerts).toEqual(["Ese equipo no está disponible para ti."]);
+    expect(replies[0]?.text).toBe("No eres miembro de ese equipo.");
   });
 
   it("stores a valid explicit selection after re-checking membership", async () => {
-    const { bot, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
     await bot.handleUpdate(commandUpdate("setup", 10, 1));
     const teamId = deps.teamRepo.rows[0]!.id;
 
     await bot.handleUpdate(callbackUpdate(50, 1, `sel:${teamId}`));
 
     expect(deps.dmSelectionRepo.rows).toMatchObject([{ telegramUserId: 1, teamId }]);
+    expect(replies.at(-1)?.text).toBe("Equipo seleccionado. Vuelve a ejecutar tu comando para continuar.");
   });
 
   it("rethrows an unexpected selection persistence failure to the webhook boundary", async () => {
@@ -384,7 +399,9 @@ describe("registerCommands — /profile data-channel gating", () => {
     await bot.handleUpdate(commandUpdate("datachannel", 10, 1, { threadId: 77 }));
     await bot.handleUpdate(commandUpdate("profile", 10, 1, { args: "show" }));
 
-    expect(replies[2]?.text).toMatch(/data channel/i);
+    expect(replies[2]?.text).toBe(
+      "Los datos de los miembros solo están disponibles en el canal de datos del equipo.",
+    );
     expect(deps.profileRepo.rows).toHaveLength(0);
   });
 
@@ -397,7 +414,7 @@ describe("registerCommands — /profile data-channel gating", () => {
     await bot.handleUpdate(commandUpdate("profile", 50, 1, { chatType: "private", args: "show" }));
 
     expect(replies[3]?.text).toContain("github_username: octocat");
-    expect(replies[4]?.text).toContain(`Team ${deps.teamRepo.rows[0]!.id}`);
+    expect(replies[4]?.text).toContain(`Equipo ${deps.teamRepo.rows[0]!.id}`);
   });
 });
 
@@ -410,10 +427,11 @@ describe("registerCommands — role commands", () => {
 
     await bot.handleUpdate(commandUpdate("promote", 10, 1, { args: targetId }));
     expect(deps.membershipRepo.rows.find((row) => row.id === targetId)?.role).toBe("admin");
+    expect(replies[2]?.text).toBe(`Rol del miembro cambiado a administrador para el equipo ${deps.teamRepo.rows[0]!.id}.`);
     await bot.handleUpdate(commandUpdate("demote", 10, 1, { args: targetId }));
 
     expect(deps.membershipRepo.rows.find((row) => row.id === targetId)?.role).toBe("member");
-    expect(replies[3]?.text).toMatch(/member/);
+    expect(replies[3]?.text).toBe(`Rol del miembro cambiado a miembro para el equipo ${deps.teamRepo.rows[0]!.id}.`);
   });
 });
 
@@ -433,11 +451,11 @@ describe("registerCommands — /profile show team directory (R1-001)", () => {
     await bot.handleUpdate(commandUpdate("profile", 10, 1, { threadId: 77, args: "show" }));
 
     const text = replies.at(-1)!.text;
-    expect(text).toContain(`Team ${deps.teamRepo.rows[0]!.id}`);
-    expect(text).toContain(`Member ${adminMembershipId}`);
-    expect(text).toContain("role: admin");
-    expect(text).toContain(`Member ${memberMembershipId}`);
-    expect(text).toContain("role: member");
+    expect(text).toContain(`Equipo ${deps.teamRepo.rows[0]!.id}`);
+    expect(text).toContain(`Miembro ${adminMembershipId}`);
+    expect(text).toContain("rol: administrador");
+    expect(text).toContain(`Miembro ${memberMembershipId}`);
+    expect(text).toContain("rol: miembro");
     expect(text).toContain("github_username: octocat");
   });
 
@@ -452,8 +470,8 @@ describe("registerCommands — /profile show team directory (R1-001)", () => {
     await bot.handleUpdate(commandUpdate("profile", 10, 1, { threadId: 77, args: `show ${memberMembershipId}` }));
 
     const text = replies.at(-1)!.text;
-    expect(text).toContain(`Member ${memberMembershipId}`);
-    expect(text).not.toContain(`Member ${adminMembershipId}`);
+    expect(text).toContain(`Miembro ${memberMembershipId}`);
+    expect(text).not.toContain(`Miembro ${adminMembershipId}`);
   });
 
   it("renders unreadable for a profile field that failed decryption", async () => {
@@ -474,7 +492,7 @@ describe("registerCommands — /profile show team directory (R1-001)", () => {
 
     await bot.handleUpdate(commandUpdate("profile", 10, 1, { threadId: 77, args: "show" }));
 
-    expect(replies.at(-1)!.text).toContain("full_name: unreadable");
+    expect(replies.at(-1)!.text).toContain("full_name: ilegible");
   });
 });
 
@@ -488,7 +506,7 @@ describe("registerCommands — no team registered for the chat (R3-002/R4-002)",
 
     await bot.handleUpdate(commandUpdate("profile", 999, 5, { args: "show" }));
 
-    expect(replies[0]?.text).toBe("No team is registered for this chat. Ask an admin to run /setup.");
+    expect(replies[0]?.text).toBe("No hay ningún equipo registrado en este chat. Pide a un administrador que ejecute /setup.");
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ event: "profile-team-resolution", outcome: "refused" }),
     );
@@ -500,7 +518,7 @@ describe("registerCommands — no team registered for the chat (R3-002/R4-002)",
 
     await bot.handleUpdate(commandUpdate("promote", 999, 5, { args: "some-id" }));
 
-    expect(replies[0]?.text).toBe("No team is registered for this chat. Ask an admin to run /setup.");
+    expect(replies[0]?.text).toBe("No hay ningún equipo registrado en este chat. Pide a un administrador que ejecute /setup.");
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ event: "promote-team-resolution", outcome: "refused" }),
     );
@@ -512,7 +530,7 @@ describe("registerCommands — no team registered for the chat (R3-002/R4-002)",
 
     await bot.handleUpdate(commandUpdate("demote", 999, 5, { args: "some-id" }));
 
-    expect(replies[0]?.text).toBe("No team is registered for this chat. Ask an admin to run /setup.");
+    expect(replies[0]?.text).toBe("No hay ningún equipo registrado en este chat. Pide a un administrador que ejecute /setup.");
     expect(logSpy).toHaveBeenCalledWith(
       expect.objectContaining({ event: "demote-team-resolution", outcome: "refused" }),
     );
@@ -547,7 +565,7 @@ describe("registerCommands — DM team picker for /profile, /promote, /demote (R
 
     await bot.handleUpdate(commandUpdate("profile", 50, 1, { chatType: "private", args: "show" }));
 
-    expect(replies.at(-1)?.text).toMatch(/choose which team/i);
+    expect(replies.at(-1)?.text).toBe("Elige a qué equipo se aplica este comando.");
   });
 
   it("shows the team picker for /promote when the caller has two or more memberships", async () => {
@@ -557,7 +575,7 @@ describe("registerCommands — DM team picker for /profile, /promote, /demote (R
 
     await bot.handleUpdate(commandUpdate("promote", 50, 1, { chatType: "private", args: "some-id" }));
 
-    expect(replies.at(-1)?.text).toMatch(/choose which team/i);
+    expect(replies.at(-1)?.text).toBe("Elige a qué equipo se aplica este comando.");
   });
 
   it("shows the team picker for /demote when the caller has two or more memberships", async () => {
@@ -567,7 +585,7 @@ describe("registerCommands — DM team picker for /profile, /promote, /demote (R
 
     await bot.handleUpdate(commandUpdate("demote", 50, 1, { chatType: "private", args: "some-id" }));
 
-    expect(replies.at(-1)?.text).toMatch(/choose which team/i);
+    expect(replies.at(-1)?.text).toBe("Elige a qué equipo se aplica este comando.");
   });
 
   it("uses a remembered DM selection within 15 minutes without prompting", async () => {
@@ -579,7 +597,7 @@ describe("registerCommands — DM team picker for /profile, /promote, /demote (R
 
     await bot.handleUpdate(commandUpdate("profile", 50, 1, { chatType: "private", args: "show" }));
 
-    expect(replies.at(-1)?.text).toContain(`Team ${teamId}`);
+    expect(replies.at(-1)?.text).toContain(`Equipo ${teamId}`);
   });
 
   it("re-triggers the picker once the remembered selection is older than 15 minutes", async () => {
@@ -592,7 +610,7 @@ describe("registerCommands — DM team picker for /profile, /promote, /demote (R
 
     await bot.handleUpdate(commandUpdate("profile", 50, 1, { chatType: "private", args: "show" }));
 
-    expect(replies.at(-1)?.text).toMatch(/choose which team/i);
+    expect(replies.at(-1)?.text).toBe("Elige a qué equipo se aplica este comando.");
   });
 
   it("re-triggers the picker when the remembered team membership was lost (caller still has 2+ other teams)", async () => {
@@ -614,7 +632,7 @@ describe("registerCommands — DM team picker for /profile, /promote, /demote (R
 
     await bot.handleUpdate(commandUpdate("profile", 50, 1, { chatType: "private", args: "show" }));
 
-    expect(replies.at(-1)?.text).toMatch(/choose which team/i);
+    expect(replies.at(-1)?.text).toBe("Elige a qué equipo se aplica este comando.");
   });
 });
 
@@ -682,7 +700,7 @@ describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
     expect(deps.repoTopicLinkRepo.rows).toMatchObject([
       { repoFullName: "owner/repo", threadId: 77 },
     ]);
-    expect(replies[1]?.text).toMatch(/linked/i);
+    expect(replies[1]?.text).toBe("Se vinculó owner/repo a este tema.");
   });
 
   it("accepts a pasted GitHub repo URL", async () => {
@@ -697,7 +715,7 @@ describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
     expect(deps.repoTopicLinkRepo.rows).toMatchObject([
       { repoFullName: "owner/repo", threadId: 77 },
     ]);
-    expect(replies[1]?.text).toMatch(/linked/i);
+    expect(replies[1]?.text).toBe("Se vinculó owner/repo a este tema.");
   });
 
   it("refuses an unclaimed org and stores no row", async () => {
@@ -707,7 +725,7 @@ describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
     await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
 
     expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
-    expect(replies[1]?.text).toMatch(/claimed/i);
+    expect(replies[1]?.text).toBe("La organización de este repositorio no está reclamada por tu equipo.");
   });
 
   it("refuses a non-admin member", async () => {
@@ -719,7 +737,7 @@ describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
     await bot.handleUpdate(commandUpdate("linkrepo", 10, 3, { threadId: 77, args: "owner/repo" }));
 
     expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
-    expect(replies[2]?.text).toMatch(/admin/i);
+    expect(replies[2]?.text).toBe("Solo un administrador del equipo puede vincular un repositorio.");
   });
 
   it("refuses when run outside a topic (general chat) and instructs the admin to run it inside the intended topic", async () => {
@@ -730,7 +748,9 @@ describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
     await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { args: "owner/repo" }));
 
     expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
-    expect(replies[1]?.text).toMatch(/topic/i);
+    expect(replies[1]?.text).toBe(
+      "Ejecuta /linkrepo dentro del tema al que quieres vincular el repositorio.",
+    );
   });
 
   it("refuses a malformed repo argument with a usage reply", async () => {
@@ -739,7 +759,7 @@ describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
 
     await bot.handleUpdate(commandUpdate("linkrepo", 10, 1, { threadId: 77, args: "not-a-repo" }));
 
-    expect(replies[1]?.text).toMatch(/usage/i);
+    expect(replies[1]?.text).toBe("Uso: /linkrepo <owner/repo o URL del repositorio de GitHub>");
   });
 
   it("re-linking an already-linked repo moves it and the reply names the previous topic", async () => {
@@ -754,7 +774,7 @@ describe("registerCommands — /linkrepo (repo-topic-links spec)", () => {
     // REL-001: pin the exact direction (previous topic -> new topic), not
     // just that both numbers appear somewhere in the reply.
     expect(replies[2]?.text).toBe(
-      "Moved owner/repo from topic 77 to topic 88. Topic 77 will no longer receive alerts for this repo.",
+      "Se movió owner/repo del tema 77 al tema 88. El tema 77 ya no recibirá alertas de este repositorio.",
     );
   });
 });
@@ -769,7 +789,7 @@ describe("registerCommands — /unlinkrepo (repo-topic-links spec)", () => {
     await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
 
     expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
-    expect(replies[2]?.text).toMatch(/unlinked/i);
+    expect(replies[2]?.text).toBe("Se desvinculó owner/repo de este tema.");
   });
 
   it("accepts a pasted GitHub repo URL", async () => {
@@ -783,7 +803,7 @@ describe("registerCommands — /unlinkrepo (repo-topic-links spec)", () => {
     );
 
     expect(deps.repoTopicLinkRepo.rows).toHaveLength(0);
-    expect(replies[2]?.text).toMatch(/unlinked/i);
+    expect(replies[2]?.text).toBe("Se desvinculó owner/repo de este tema.");
   });
 
   it("refuses a non-admin member", async () => {
@@ -796,7 +816,7 @@ describe("registerCommands — /unlinkrepo (repo-topic-links spec)", () => {
     await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 3, { threadId: 77, args: "owner/repo" }));
 
     expect(deps.repoTopicLinkRepo.rows).toHaveLength(1);
-    expect(replies[3]?.text).toMatch(/admin/i);
+    expect(replies[3]?.text).toBe("Solo un administrador del equipo puede desvincular un repositorio.");
   });
 
   it("refuses when run outside a topic (general chat)", async () => {
@@ -805,7 +825,9 @@ describe("registerCommands — /unlinkrepo (repo-topic-links spec)", () => {
 
     await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 1, { args: "owner/repo" }));
 
-    expect(replies[1]?.text).toMatch(/topic/i);
+    expect(replies[1]?.text).toBe(
+      "Ejecuta /unlinkrepo dentro del tema del que quieres desvincular el repositorio.",
+    );
   });
 });
 
@@ -831,7 +853,7 @@ describe("registerCommands — /repos (repo-topic-links spec)", () => {
 
     await bot.handleUpdate(commandUpdate("repos", 10, 999));
 
-    expect(replies[1]?.text).toMatch(/member/i);
+    expect(replies[1]?.text).toBe("No eres miembro de este equipo.");
   });
 
   it("excludes a link whose org claim was later removed", async () => {
@@ -853,7 +875,7 @@ describe("registerCommands — /repos (repo-topic-links spec)", () => {
 
     await bot.handleUpdate(commandUpdate("repos", 10, 1));
 
-    expect(replies.at(-1)?.text).toBe("No repos linked yet.");
+    expect(replies.at(-1)?.text).toBe("Todavía no hay repositorios vinculados.");
   });
 
   // RES-001: past Telegram's 4096-char limit, an unbounded reply would make
@@ -861,7 +883,7 @@ describe("registerCommands — /repos (repo-topic-links spec)", () => {
   // (it is not a domain error), and the route would answer 500 — which
   // Telegram retries forever, permanently breaking /repos for any team with
   // enough links. This team has 300 links, comfortably enough to exceed the
-  // limit with the "owner/repo-N -> topic 1" line format.
+  // limit with the "owner/repo-N -> tema 1" line format.
   it("caps the reply below Telegram's 4096-char limit and ends with a fixed summary line", async () => {
     const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
     await bot.handleUpdate(commandUpdate("setup", 10, 1));
@@ -884,7 +906,8 @@ describe("registerCommands — /repos (repo-topic-links spec)", () => {
     const text = replies.at(-1)!.text;
     expect(text.length).toBeLessThanOrEqual(4096);
     const includedLines = text.split("\n").filter((line) => line.startsWith("owner/repo-")).length;
-    expect(text.endsWith(`...and ${total - includedLines} more`)).toBe(true);
+    expect(text.endsWith(`…y ${total - includedLines} más`)).toBe(true);
+    expect(text).toMatch(/…y \d+ más$/);
     expect(includedLines).toBeLessThan(total);
     expect(includedLines).toBeGreaterThan(0);
   });
@@ -1313,5 +1336,99 @@ describe("registerCommands — /hackathon and /hackathons replies are plain text
       expect(payload).not.toHaveProperty("parse_mode");
       expect((payload.text as string).length).toBeLessThanOrEqual(4096);
     }
+  });
+});
+
+// Spanish copy for the remaining profile, role, unlink and picker replies.
+describe("registerCommands — remaining Spanish replies", () => {
+  it("/profile set replies with the Spanish confirmation and usage", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("profile", 10, 1, { args: "set full_name Ada" }));
+    await bot.handleUpdate(commandUpdate("profile", 10, 1, { args: "set nope x" }));
+    await bot.handleUpdate(commandUpdate("profile", 10, 1, { args: "wat" }));
+
+    expect(replies[1]?.text).toBe(`Perfil actualizado para el equipo ${deps.teamRepo.rows[0]!.id}.`);
+    expect(replies[2]?.text).toBe(
+      "Uso: /profile set <full_name|emails|social_links|github_username> <valor>",
+    );
+    expect(replies[3]?.text).toBe("Uso: /profile show [membership-id] o /profile set <campo> <valor>");
+  });
+
+  it("/profile show renders the empty-member and no-fields copy", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("datachannel", 10, 1, { threadId: 77 }));
+    await bot.handleUpdate(commandUpdate("profile", 10, 1, { threadId: 77, args: "show" }));
+    expect(replies.at(-1)?.text).toContain("No hay campos de perfil configurados.");
+
+    await bot.handleUpdate(commandUpdate("profile", 10, 1, { threadId: 77, args: "show missing-id" }));
+    expect(replies.at(-1)?.text).toBe(
+      `Equipo ${deps.teamRepo.rows[0]!.id}\nNo se encontró ningún miembro que coincida.`,
+    );
+  });
+
+  it("/profile show refuses a non-member and /profile set refuses a non-registered caller", async () => {
+    const { bot, replies } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("datachannel", 10, 1, { threadId: 77 }));
+    await bot.handleUpdate(commandUpdate("profile", 10, 9, { threadId: 77, args: "show" }));
+    await bot.handleUpdate(commandUpdate("profile", 10, 9, { args: "set full_name Ada" }));
+
+    expect(replies[2]?.text).toBe("No eres miembro de este equipo.");
+    expect(replies[3]?.text).toBe("No eres miembro de este equipo.");
+  });
+
+  it("/promote and /demote reply with Spanish usage and refusals", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("join", 10, 3));
+    const adminId = deps.membershipRepo.rows[0]!.id;
+    await bot.handleUpdate(commandUpdate("promote", 10, 1));
+    await bot.handleUpdate(commandUpdate("promote", 10, 1, { args: "missing-id" }));
+    await bot.handleUpdate(commandUpdate("demote", 10, 3, { args: adminId }));
+
+    expect(replies[2]?.text).toBe("Uso: /promote <membership-id>");
+    expect(replies[3]?.text).toBe("No se encontró al miembro en este equipo.");
+    expect(replies[4]?.text).toBe("Solo un administrador del equipo puede cambiar roles.");
+  });
+
+  it("/demote refuses to demote the last admin", async () => {
+    const { bot, replies, deps } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    const adminId = deps.membershipRepo.rows[0]!.id;
+    await bot.handleUpdate(commandUpdate("demote", 10, 1, { args: adminId }));
+
+    expect(replies[1]?.text).toBe("No se puede degradar al último administrador del equipo.");
+  });
+
+  it("/unlinkrepo reports a repo that was not linked and usage in Spanish", async () => {
+    const { bot, replies } = makeBot([{ chatId: 10, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 1, { threadId: 77, args: "owner/repo" }));
+    await bot.handleUpdate(commandUpdate("unlinkrepo", 10, 1, { threadId: 77, args: "not-a-repo" }));
+
+    expect(replies[1]?.text).toBe("owner/repo no estaba vinculado a ningún tema.");
+    expect(replies[2]?.text).toBe("Uso: /unlinkrepo <owner/repo o URL del repositorio de GitHub>");
+  });
+
+  it("/profile in a DM with no membership tells the caller to join a team first", async () => {
+    const { bot, replies } = makeBot();
+    await bot.handleUpdate(commandUpdate("profile", 50, 5, { chatType: "private", args: "show" }));
+
+    expect(replies[0]?.text).toBe("Primero únete a un equipo ejecutando /join en su grupo.");
+  });
+
+  it("the team picker labels each button 'Equipo {id}'", async () => {
+    const { bot, payloads, deps } = makeBot([{ chatId: 10, userId: 1 }, { chatId: 20, userId: 1 }]);
+    await bot.handleUpdate(commandUpdate("setup", 10, 1));
+    await bot.handleUpdate(commandUpdate("setup", 20, 1));
+    await bot.handleUpdate(commandUpdate("profile", 50, 1, { chatType: "private", args: "show" }));
+
+    const markup = payloads.at(-1)?.reply_markup as {
+      inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+    };
+    const buttons = markup.inline_keyboard.flat();
+    expect(buttons.map((b) => b.text)).toEqual(deps.teamRepo.rows.map((t) => `Equipo ${t.id}`));
   });
 });

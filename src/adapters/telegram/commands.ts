@@ -34,6 +34,19 @@ import { InlineKeyboard } from "grammy";
 import { isPrivateChat, registerTeamPicker } from "./team-picker";
 import { registerHackathonCommands } from "./hackathon-commands";
 import type { HackathonCommandDeps } from "./hackathon-commands";
+import {
+  commonCopy,
+  dataChannelCopy,
+  ROLE_LABELS,
+  joinCopy,
+  profileCopy,
+  repoCopy,
+  roleCopy,
+  setupCopy,
+  teamResolutionCopy,
+} from "./copy";
+import { REPLY_MAX } from "../../domain/hackathon/format";
+import { joinLinesWithinLimit } from "../../domain/text-limit";
 
 // grammY is a thin edge adapter only: every handler below extracts caller
 // location, calls exactly one domain use case (or port read for a simple
@@ -95,21 +108,21 @@ async function resolveCommandTeam(ctx: Parameters<typeof callerLocation>[0], dep
       const team = await deps.teamRepo.findByChatId(loc.chatId);
       if (!team) {
         deps.logger.log({ event, outcome: "refused", errorCode: "NoTeamForChat" });
-        await ctx.reply("No team is registered for this chat. Ask an admin to run /setup.");
+        await ctx.reply(commonCopy.noTeamForChat);
         return null;
       }
       return team.id;
     }
     const resolution = await resolveDmTeam({ telegramUserId: loc.userId }, deps);
     if (resolution.kind === "none") {
-      await ctx.reply("Join a team first by running /join in its group.");
+      await ctx.reply(teamResolutionCopy.joinFirst);
       return null;
     }
     if (resolution.kind === "needs-selection") {
       const memberships = await deps.membershipRepo.findByUser(loc.userId);
       const keyboard = new InlineKeyboard();
-      for (const membership of memberships) keyboard.text(`Team ${membership.teamId}`, `sel:${membership.teamId}`).row();
-      await ctx.reply("Choose which team this command applies to.", { reply_markup: keyboard });
+      for (const membership of memberships) keyboard.text(teamResolutionCopy.teamButton(membership.teamId), `sel:${membership.teamId}`).row();
+      await ctx.reply(teamResolutionCopy.choose, { reply_markup: keyboard });
       return null;
     }
     return resolution.teamId;
@@ -137,30 +150,30 @@ async function resolveActorMembership(teamId: TeamId, telegramUserId: number, de
 // owner (membership id, plus github_username/full_name when set) and role.
 
 function formatFieldLine(field: ProfileField): string {
-  return `${field.field}: ${field.unreadable ? "unreadable" : field.value}`;
+  return `${field.field}: ${field.unreadable ? profileCopy.unreadable : field.value}`;
 }
 
 function memberIdentity(membershipId: MembershipId, ownFields: ProfileField[]): string {
   const fullName = ownFields.find((f) => f.field === "full_name");
   const github = ownFields.find((f) => f.field === "github_username");
   const parts: string[] = [];
-  if (fullName) parts.push(fullName.unreadable ? "unreadable" : fullName.value);
-  if (github) parts.push(github.unreadable ? "unreadable" : `@${github.value}`);
+  if (fullName) parts.push(fullName.unreadable ? profileCopy.unreadable : fullName.value);
+  if (github) parts.push(github.unreadable ? profileCopy.unreadable : `@${github.value}`);
   return parts.length ? ` (${parts.join(", ")})` : "";
 }
 
 function formatMemberBlock(membership: Membership, fields: ProfileField[]): string {
   const own = fields.filter((f) => f.membershipId === membership.id);
-  const header = `Member ${membership.id}${memberIdentity(membership.id, own)} — role: ${membership.role}`;
+  const header = profileCopy.memberHeader(membership.id, memberIdentity(membership.id, own), ROLE_LABELS[membership.role]);
   const lines = own.map(formatFieldLine);
-  return [header, ...(lines.length ? lines : ["No profile fields set."])].join("\n");
+  return [header, ...(lines.length ? lines : [profileCopy.noFields])].join("\n");
 }
 
 function profileDirectoryReply(memberships: Membership[], fields: ProfileField[], teamId: TeamId): string {
   if (memberships.length === 0) {
-    return `Team ${teamId}\nNo matching member found.`;
+    return `${profileCopy.teamHeader(teamId)}\n${profileCopy.noMatch}`;
   }
-  return `Team ${teamId}\n${memberships.map((m) => formatMemberBlock(m, fields)).join("\n\n")}`;
+  return `${profileCopy.teamHeader(teamId)}\n${memberships.map((m) => formatMemberBlock(m, fields)).join("\n\n")}`;
 }
 
 // An anonymous group admin's message arrives with `sender_chat` set to the
@@ -177,25 +190,11 @@ function isAnonymousGroupAdmin(ctx: Context): boolean {
 // here would make ctx.reply throw, runCommand would rethrow it as an
 // unrecognized error (it is not a domain error), and the route would answer
 // 500, which Telegram retries forever, permanently breaking /repos for any
-// team with enough links. Below the limit, whole lines are kept; once a
-// line would push the reply over the limit, listing stops and a fixed
-// "...and N more" summary line replaces the rest.
-const REPOS_REPLY_MAX = 4096;
-
+// team with enough links. `joinLinesWithinLimit` keeps whole lines and ends
+// with a fixed "…y N más" summary line once the limit would be exceeded.
 function reposReply(links: Array<{ repoFullName: string; threadId: number }>): string {
-  if (links.length === 0) return "No repos linked yet.";
-  const allLines = links.map((l) => `${l.repoFullName} -> topic ${l.threadId}`);
-  const full = allLines.join("\n");
-  if (full.length <= REPOS_REPLY_MAX) return full;
-  for (let kept = allLines.length - 1; kept >= 0; kept--) {
-    const omitted = allLines.length - kept;
-    const head = allLines.slice(0, kept).join("\n");
-    const candidate = kept > 0 ? `${head}\n...and ${omitted} more` : `...and ${omitted} more`;
-    if (candidate.length <= REPOS_REPLY_MAX) return candidate;
-  }
-  // Pathological case: even the summary line alone (0 links listed) does
-  // not fit — defensively truncate rather than ever exceed the limit.
-  return `...and ${allLines.length} more`.slice(0, REPOS_REPLY_MAX);
+  const lines = links.map((l) => repoCopy.line(l.repoFullName, l.threadId));
+  return joinLinesWithinLimit(lines, REPLY_MAX, repoCopy.none);
 }
 
 // READ-001: the genuinely shared part of `/linkrepo` and `/unlinkrepo` —
@@ -209,7 +208,7 @@ async function resolveLinkCommandTarget(
   ctx: Context,
   deps: CommandDeps,
   command: string,
-  action: string,
+  action: "link" | "unlink",
   rawRepoArg: string,
 ): Promise<{ loc: CallerLocation; threadId: number; repo: RepoFullName } | null> {
   const loc = callerLocation(ctx);
@@ -222,13 +221,13 @@ async function resolveLinkCommandTarget(
   // null, the same refusal as /datachannel").
   if (loc.threadId === null) {
     deps.logger.log({ event: `${action}-repo-to-topic`, outcome: "refused", errorCode: "NoThread" });
-    await ctx.reply(`Run /${command} inside the topic you want to ${action}.`);
+    await ctx.reply(repoCopy.topicRequired[action]);
     return null;
   }
   const threadId = loc.threadId;
   const repo = parseRepoReference(rawRepoArg);
   if (!repo) {
-    await ctx.reply(`Usage: /${command} <owner/repo or GitHub repo URL>`);
+    await ctx.reply(repoCopy.usage(command));
     return null;
   }
   return { loc, threadId, repo };
@@ -247,14 +246,12 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
     // refusal.
     if (isPrivateChat(ctx)) {
       deps.logger.log({ event: "setup-team", outcome: "refused", errorCode: "PrivateChat" });
-      await ctx.reply("Run /setup inside the group you want to register as a team, not in a private chat.");
+      await ctx.reply(setupCopy.privateChat);
       return;
     }
     if (isAnonymousGroupAdmin(ctx)) {
       deps.logger.log({ event: "setup-team", outcome: "refused", errorCode: "AnonymousAdmin" });
-      await ctx.reply(
-        'You are posting as an anonymous admin, so your admin status cannot be verified. Turn off "Remain anonymous" in your admin rights and run /setup again.',
-      );
+      await ctx.reply(setupCopy.anonymousAdmin);
       return;
     }
     await runCommand(
@@ -266,14 +263,14 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         // deliberately left unrecognized, which rethrows to a 500) — see
         // command-outcome.ts.
         errorReplies: {
-          AlreadyExistsError: "A team is already registered for this chat.",
-          ChatAdminCheckFailedError: "Could not verify your admin status. Please try again.",
-          UnauthorizedError: "Only a Telegram group admin can run /setup.",
+          AlreadyExistsError: setupCopy.alreadyExists,
+          ChatAdminCheckFailedError: setupCopy.adminCheckFailed,
+          UnauthorizedError: setupCopy.notGroupAdmin,
         },
       },
       async () => {
         await setupTeam({ chatId: loc.chatId, callerTelegramUserId: loc.userId }, deps);
-        return { okReply: "Team created. You are the first admin." };
+        return { okReply: setupCopy.created };
       },
     );
   });
@@ -289,13 +286,13 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         // Every domain error joinTeam can throw MUST be listed here — see
         // command-outcome.ts.
         errorReplies: {
-          AlreadyExistsError: "You are already a member of this team.",
-          NotFoundError: "No team is registered for this chat. Ask an admin to run /setup.",
+          AlreadyExistsError: joinCopy.alreadyMember,
+          NotFoundError: commonCopy.noTeamForChat,
         },
       },
       async () => {
         await joinTeam({ chatId: loc.chatId, callerTelegramUserId: loc.userId }, deps);
-        return { okReply: "You joined the team." };
+        return { okReply: joinCopy.joined };
       },
     );
   });
@@ -305,9 +302,7 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
     if (!loc) return;
     if (loc.threadId === null) {
       deps.logger.log({ event: "bind-data-channel", outcome: "refused", errorCode: "NoThread" });
-      await ctx.reply(
-        "Run /datachannel inside the topic you want to use as the team's data channel.",
-      );
+      await ctx.reply(dataChannelCopy.topicRequired);
       return;
     }
     const threadId = loc.threadId;
@@ -324,8 +319,8 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         // branch and turned a real, recoverable refusal into a permanent
         // 500 that Telegram would retry forever.
         errorReplies: {
-          UnauthorizedError: "Only a team admin may bind the data channel.",
-          NotFoundError: "Could not verify your team membership. Please try /datachannel again.",
+          UnauthorizedError: dataChannelCopy.adminOnly,
+          NotFoundError: commonCopy.membershipCheckFailed("datachannel"),
         },
       },
       async () => {
@@ -351,7 +346,7 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
           deps,
         );
         return {
-          okReply: "This topic is now the team's data channel.",
+          okReply: dataChannelCopy.bound,
           teamId: resolved.team.id,
         };
       },
@@ -370,8 +365,8 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         {
           event: "read-profiles", logger: deps.logger, reply: (text) => ctx.reply(text),
           errorReplies: {
-            UnauthorizedError: "Member data is available only in the team's data channel.",
-            NotFoundError: "You are not a member of this team.",
+            UnauthorizedError: profileCopy.dataChannelOnly,
+            NotFoundError: commonCopy.notMember,
           },
         },
         async () => {
@@ -398,23 +393,23 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
       const field = args.shift();
       const value = args.join(" ");
       if (!field || !profileFields.has(field as ProfileFieldName) || !value) {
-        await ctx.reply("Usage: /profile set <full_name|emails|social_links|github_username> <value>");
+        await ctx.reply(profileCopy.setUsage);
         return;
       }
       await runCommand(
         {
           event: "update-profile", logger: deps.logger, reply: (text) => ctx.reply(text),
-          errorReplies: { UnauthorizedError: "You may only edit your own profile.", NotFoundError: "You are not a member of this team." },
+          errorReplies: { UnauthorizedError: profileCopy.ownOnly, NotFoundError: commonCopy.notMember },
         },
         async () => {
           const actor = await resolveActorMembership(teamId, loc.userId, deps);
           await updateProfileField({ teamId, actorMembershipId: actor.id, targetMembershipId: actor.id, field: field as ProfileFieldName, value, keyVersion: null }, deps);
-          return { okReply: `Profile updated for team ${teamId}.`, teamId };
+          return { okReply: profileCopy.updated(teamId), teamId };
         },
       );
       return;
     }
-    await ctx.reply("Usage: /profile show [membership-id] or /profile set <field> <value>");
+    await ctx.reply(profileCopy.usage);
   });
 
   for (const [command, newRole] of [["promote", "admin"], ["demote", "member"]] as const) {
@@ -425,18 +420,18 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
       if (!teamId) return;
       const targetMembershipId = ctx.match.trim() as MembershipId;
       if (!targetMembershipId) {
-        await ctx.reply(`Usage: /${command} <membership-id>`);
+        await ctx.reply(roleCopy.usage(command));
         return;
       }
       await runCommand(
         {
           event: `${command}-member`, logger: deps.logger, reply: (text) => ctx.reply(text),
-          errorReplies: { UnauthorizedError: "Only a team admin may change roles.", NotFoundError: "Member not found in this team.", LastAdminError: "The last team admin cannot be demoted." },
+          errorReplies: { UnauthorizedError: roleCopy.adminOnly, NotFoundError: roleCopy.notFound, LastAdminError: roleCopy.lastAdmin },
         },
         async () => {
           const actor = await resolveActorMembership(teamId, loc.userId, deps);
           await changeRole({ teamId, actorMembershipId: actor.id, targetMembershipId, newRole }, deps);
-          return { okReply: `Member role changed to ${newRole} for team ${teamId}.`, teamId };
+          return { okReply: roleCopy.changed(newRole, teamId), teamId };
         },
       );
     });
@@ -456,9 +451,9 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         // Every domain error linkRepoToTopic can throw MUST be listed here
         // — see command-outcome.ts.
         errorReplies: {
-          UnauthorizedError: "Only a team admin may link a repo.",
-          NotFoundError: "Could not verify your team membership. Please try /linkrepo again.",
-          OrgNotClaimedError: "This repo's org is not claimed by your team.",
+          UnauthorizedError: repoCopy.linkAdminOnly,
+          NotFoundError: commonCopy.membershipCheckFailed("linkrepo"),
+          OrgNotClaimedError: repoCopy.orgNotClaimed,
         },
       },
       async () => {
@@ -473,8 +468,8 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         // spec: repo-topic-links "One Topic Per Repo, Re-Link Moves It" —
         // the reply MUST name the previous topic, not just confirm success.
         const okReply = result.previousThreadId === null
-          ? `Linked ${repo} to this topic.`
-          : `Moved ${repo} from topic ${result.previousThreadId} to topic ${threadId}. Topic ${result.previousThreadId} will no longer receive alerts for this repo.`;
+          ? commonCopy.linkedHere(repo)
+          : repoCopy.moved(repo, result.previousThreadId, threadId);
         return { okReply, teamId: resolved.team.id };
       },
     );
@@ -498,8 +493,8 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         // Every domain error unlinkRepo can throw MUST be listed here —
         // see command-outcome.ts.
         errorReplies: {
-          UnauthorizedError: "Only a team admin may unlink a repo.",
-          NotFoundError: "Could not verify your team membership. Please try /unlinkrepo again.",
+          UnauthorizedError: repoCopy.unlinkAdminOnly,
+          NotFoundError: commonCopy.membershipCheckFailed("unlinkrepo"),
         },
       },
       async () => {
@@ -512,7 +507,7 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
           deps,
         );
         return {
-          okReply: removed ? `Unlinked ${repo} from this topic.` : `${repo} was not linked to any topic.`,
+          okReply: removed ? repoCopy.unlinked(repo) : repoCopy.notLinked(repo),
           teamId: resolved.team.id,
         };
       },
@@ -535,7 +530,7 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         logger: deps.logger,
         reply: (text) => ctx.reply(text),
         errorReplies: {
-          NotFoundError: "You are not a member of this team.",
+          NotFoundError: commonCopy.notMember,
         },
       },
       async () => {

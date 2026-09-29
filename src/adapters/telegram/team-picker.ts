@@ -3,6 +3,7 @@ import { UnauthorizedError } from "../../domain/errors";
 import { parseTeamId, TEAM_ID_PATTERN_SOURCE } from "../../domain/ids";
 import { selectDmTeam } from "../../domain/usecases/dm-team-selection";
 import type { Clock, DmSelectionRepo, Logger, MembershipRepo } from "../../domain/ports";
+import { pickerCopy } from "./copy";
 
 const SELECTION_PATTERN = new RegExp(`^sel:(${TEAM_ID_PATTERN_SOURCE})$`, "i");
 
@@ -67,13 +68,13 @@ export function registerTeamPicker(bot: Bot, deps: TeamPickerDeps): void {
         throw error;
       }
       deps.logger.log({ event: EVENT, outcome: "refused", errorCode: error.name });
-      await safeAnswerCallbackQuery(ctx, deps, "That team is not available to you.");
-      await safeReply(ctx, deps, "You are not a member of that team.");
+      await safeAnswerCallbackQuery(ctx, deps, pickerCopy.unavailableAlert);
+      await safeReply(ctx, deps, pickerCopy.notMember);
       return;
     }
 
     deps.logger.log({ event: EVENT, outcome: "ok" });
     await safeAnswerCallbackQuery(ctx, deps);
-    await safeReply(ctx, deps, "Team selected. Run your command again to continue.");
+    await safeReply(ctx, deps, pickerCopy.selected);
   });
 }

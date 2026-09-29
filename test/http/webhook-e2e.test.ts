@@ -73,7 +73,7 @@ describe("POST /telegram/webhook — end-to-end through real composition (REL-00
     expect(calls.some((c) => c.method === "getChatMember")).toBe(true);
     const sendMessageCall = calls.find((c) => c.method === "sendMessage");
     expect(sendMessageCall).toBeTruthy();
-    expect((sendMessageCall?.body as { text: string }).text).toMatch(/created/i);
+    expect((sendMessageCall?.body as { text: string }).text).toBe("Equipo creado. Eres el primer administrador.");
 
     const row = await env.DB.prepare(
       "SELECT * FROM teams WHERE telegram_chat_id = ?",
