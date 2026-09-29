@@ -73,7 +73,7 @@ export async function participateInHackathon(
 
   // 2. Verify an existing topic by doing the real action: post the analysis
   // into it. Telegram accepts a chat action for a deleted thread, so only a
-  // rejected post proves the topic is gone. Success and any ambiguous failure
+  // thread-gone post proves the topic is gone. Success and any ambiguous failure
   // both mean "keep it": never recreate on ambiguity.
   let expected: number | null = null;
   if (analysis.threadId !== null) {
@@ -153,9 +153,11 @@ export async function participateInHackathon(
   return { kind: "created", replyText: [confirmed, ...notes].join("\n") };
 }
 
-// Posts (and pins) the analysis in the linked topic. Only a 4xx rejection
-// (`rejected`, e.g. "message thread not found") is a positive deleted signal;
-// unavailable, rate-limited and any other failure leave the topic as unknown.
+// Posts (and pins) the analysis in the linked topic. Only `thread-gone` (the
+// adapter saw a 400 saying the thread does not exist) is a positive deleted
+// signal. `rejected` (closed topic, no rights, any other 4xx), unavailable,
+// rate-limited and any other failure leave the topic as unknown: a live topic
+// can produce them, and recreating would duplicate it.
 async function topicIsGone(
   input: ParticipateInHackathonInput,
   analysis: HackathonAnalysis,
@@ -169,7 +171,7 @@ async function topicIsGone(
     );
     return false;
   } catch (err) {
-    if (err instanceof PublishFailedError && err.failureClass === "rejected") return true;
+    if (err instanceof PublishFailedError && err.failureClass === "thread-gone") return true;
     logFailure(deps, input.teamId, "topic-check-failed", err);
     return false;
   }

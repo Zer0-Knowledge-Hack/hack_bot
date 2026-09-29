@@ -2,7 +2,7 @@ import type { Api } from "grammy";
 import { PublishFailedError } from "../../domain/errors";
 import type { ChatPublisher } from "../../domain/ports";
 import { participateButton } from "./copy";
-import { classifyTelegramFailure } from "./send-failure";
+import { classifyPublishFailure, classifyTelegramFailure } from "./send-failure";
 
 // Callback data for the participation button: `hp:<slug>`. Slugs are capped
 // at 40 chars, so it always fits Telegram's 64-byte limit. The team is never
@@ -59,7 +59,7 @@ export function createTelegramChatPublisher(api: Api): ChatPublisher {
         );
         return sent.message_id;
       } catch (err) {
-        throw new PublishFailedError("sendMessage failed", classifyTelegramFailure(err));
+        throw new PublishFailedError("sendMessage failed", classifyPublishFailure(err));
       }
     },
 

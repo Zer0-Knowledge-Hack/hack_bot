@@ -269,7 +269,8 @@ export interface HackathonAnalysisRepo {
   ): Promise<void>;
   // hackathon-participation (design.md decision 3): compare-and-set claim on
   // topic creation. Wins only when the row still holds `expectedThreadId`
-  // (null, or the stale id observed by the probe) and no live claim exists
+  // (null, or the stale id whose verifying post reported the thread gone) and
+  // no live claim exists
   // (`topic_claim_until <= now`); a win stamps `now + ttlMs`. Returns false
   // when the claim is lost.
   claimTopicCreation(

@@ -276,7 +276,10 @@ function classifyJobError(err: unknown): JobErrorClassification {
       reply: analysisCopy.notConfigured,
     };
   }
-  if (err instanceof PublishFailedError && err.failureClass === "rejected") {
+  if (
+    err instanceof PublishFailedError &&
+    (err.failureClass === "rejected" || err.failureClass === "thread-gone")
+  ) {
     return { transient: false, refund: false, reason: "publish:rejected", reply: null };
   }
   const name = err instanceof Error ? err.name : "unknown";

@@ -1,5 +1,5 @@
 import { GrammyError, HttpError } from "grammy";
-import type { AlertSendFailureClass } from "../../domain/errors";
+import type { AlertSendFailureClass, PublishFailureClass } from "../../domain/errors";
 
 // Classifies a failed Telegram Bot API call into a fixed, non-sensitive
 // bucket a caller can safely log or branch on. `GrammyError` is Telegram's
@@ -17,4 +17,18 @@ export function classifyTelegramFailure(err: unknown): AlertSendFailureClass {
   }
   if (err instanceof HttpError) return "telegram-unavailable";
   return "telegram-unavailable";
+}
+
+// Telegram's wording when a forum thread no longer exists.
+const THREAD_GONE_DESCRIPTION = /message thread not found|topic_id_invalid|topic_deleted/i;
+
+// Like `classifyTelegramFailure`, plus "thread-gone": a 400 whose description
+// says the forum thread does not exist. Every other 4xx (a closed topic, no
+// rights, ...) stays "rejected", because a LIVE topic can return those too.
+// Description matching stays here; the domain only sees the class.
+export function classifyPublishFailure(err: unknown): PublishFailureClass {
+  if (err instanceof GrammyError && err.error_code === 400 && THREAD_GONE_DESCRIPTION.test(err.description)) {
+    return "thread-gone";
+  }
+  return classifyTelegramFailure(err);
 }

@@ -100,7 +100,7 @@ const input = (over: Partial<{ callbackMessageId: number | null; slug: string; c
 function rejectPostsTo(deps: ReturnType<typeof setup>, deletedThreadId: number) {
   const realPost = deps.chatPublisher.post;
   deps.chatPublisher.post = async (chatId, threadId, text, options) => {
-    if (threadId === deletedThreadId) throw new PublishFailedError("sendMessage failed", "rejected");
+    if (threadId === deletedThreadId) throw new PublishFailedError("sendMessage failed", "thread-gone");
     return realPost(chatId, threadId, text, options);
   };
 }
@@ -204,12 +204,18 @@ describe("participateInHackathon: redelivery and live topics", () => {
     ]);
   });
 
-  it.each(["telegram-unavailable", "rate-limited"] as const)(
+  const failures: Array<[string, () => Error, string]> = [
+    ["rejected (closed topic / 403 on a live topic)", () => new PublishFailedError("sendMessage failed", "rejected"), "PublishFailedError"],
+    ["telegram-unavailable", () => new PublishFailedError("sendMessage failed", "telegram-unavailable"), "PublishFailedError"],
+    ["rate-limited", () => new PublishFailedError("sendMessage failed", "rate-limited"), "PublishFailedError"],
+    ["an unexpected non-PublishFailedError", () => new TypeError("boom"), "TypeError"],
+  ];
+  it.each(failures)(
     "keeps the link and does not recreate when the verifying post fails as %s",
-    async (failureClass) => {
+    async (_label, makeError, errorName) => {
       const deps = setup({ row: { threadId: 40, generalMessageId: 900 } });
       deps.chatPublisher.post = async () => {
-        throw new PublishFailedError("sendMessage failed", failureClass);
+        throw makeError();
       };
       const result = await participateInHackathon(input(), deps);
       expect(result).toEqual({ kind: "already", replyText: `Este hackathon ya tiene tema: ${LINK(40)}` });
@@ -217,6 +223,14 @@ describe("participateInHackathon: redelivery and live topics", () => {
       expect(deps.hackathonAnalysisRepo.claims.size).toBe(0);
       expect(row(deps).threadId).toBe(40);
       expect(deps.chatPublisher.cleared).toEqual([{ chatId: CHAT_ID, messageId: 900 }]);
+      expect(deps.logger.entries).toContainEqual(
+        expect.objectContaining({
+          event: "hackathon-participate",
+          outcome: "error",
+          reason: "topic-check-failed",
+          errorCode: errorName,
+        }),
+      );
     },
   );
 
