@@ -226,5 +226,5 @@ Rollback: redeploy the previous version and remove the bindings and the consumer
 
 ## Open Questions
 
-- [ ] The exact `@cf/...` catalog IDs and the context windows (at least 10k tokens) for GLM-5.3-Flash and DeepSeek V4 Flash. Verify them at apply time.
+- [x] Resolved (2026-09-28, tasks.md 11.4): primary `@cf/zai-org/glm-5.3-flash`, fallback `@cf/deepseek-ai/deepseek-v4-flash-0731`, both with a 1,310,720-token context window. Both return an OpenAI-style `choices[0].message.content` output (string or null), which `parseModelOutput` unwraps (including markdown code fences); `reasoning_content` is never used.
 - [x] Resolved: `max_concurrency: 1`. Cloudflare docs (checked 2026-09-26), Free plan: 3 concurrent browsers, but 1 new browser every 20 s. Team usage is low (5 runs per team per day), so serial processing costs little and avoids launch-rate 429s. Any browser 429 (daily quota or the rare launch-rate case) follows the same degrade path, with no browser retry, so the spec stays unchanged.

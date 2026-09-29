@@ -116,8 +116,8 @@ Chain strategy: stacked-to-main
 
 ## Phase 11: Operator Rollout (Manual — Not Performed by Apply)
 
-- [ ] 11.1 Run `npx wrangler queues create hackathon-analysis`.
+- [x] 11.1 Run `npx wrangler queues create hackathon-analysis`. (Queue created in Cloudflare on 2026-09-28.)
 - [ ] 11.2 Enable the Workers AI and Browser Rendering bindings for the Worker.
 - [ ] 11.3 Give the bot the "can pin messages" right in the target chat(s).
-- [ ] 11.4 Verify the exact `@cf/...` catalog IDs and context windows (≥10k tokens) for GLM-5.3-Flash and DeepSeek V4 Flash, and set them in `vars.HACKATHON_MODEL_PRIMARY`/`HACKATHON_MODEL_FALLBACK`.
+- [x] 11.4 Verify the exact `@cf/...` catalog IDs and context windows (>=10k tokens) for GLM-5.3-Flash and DeepSeek V4 Flash, and set them in `vars.HACKATHON_MODEL_PRIMARY`/`HACKATHON_MODEL_FALLBACK`. Verified 2026-09-28 with `wrangler ai models schema`: primary `@cf/zai-org/glm-5.3-flash` (context 1,310,720), fallback `@cf/deepseek-ai/deepseek-v4-flash-0731` (context 1,310,720). Both declare an OpenAI-style `choices[].message.content` output (string or null), not `{ response }`; `parseModelOutput` unwraps it.
 - [ ] 11.5 Apply the D1 migration remotely, deploy, smoke-test `/hackathon <url>` in general chat then in a topic.
