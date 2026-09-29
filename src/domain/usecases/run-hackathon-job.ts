@@ -132,6 +132,11 @@ async function runClaimedJob(
   }
 
   try {
+    // R4-001: unset models are a config failure classified below (reply,
+    // refund, markFailed, ack), not a transient error to retry.
+    if (!deps.primaryModel || !deps.fallbackModel) {
+      throw new ConfigError("HACKATHON_MODEL_PRIMARY and HACKATHON_MODEL_FALLBACK must be set");
+    }
     const deadlineAt = deps.clock.now() + ATTEMPT_BUDGET_MS;
     const analysis = await analyzeHackathon(
       {

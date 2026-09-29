@@ -2,7 +2,6 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stubTelegramApi } from "./support/telegram-stub";
 import { buildHackathonConsumer } from "../src/composition";
-import { ConfigError } from "../src/config-error";
 import { BrowserQuotaExceededError } from "../src/domain/errors";
 import type { Env } from "../src/env";
 import { fakeChatPublisher } from "./fakes";
@@ -92,13 +91,15 @@ describe("buildHackathonConsumer", () => {
   it.each([
     ["HACKATHON_MODEL_PRIMARY", { HACKATHON_MODEL_PRIMARY: "" }],
     ["HACKATHON_MODEL_FALLBACK", { HACKATHON_MODEL_FALLBACK: "  " }],
-  ])("fails closed with a ConfigError when %s is unset", (_name, overrides) => {
-    expect(() =>
-      buildHackathonConsumer(consumerEnv(overrides), {
-        chatPublisher: fakeChatPublisher(),
-        launchBrowser,
-      }),
-    ).toThrow(ConfigError);
+  ])("still builds (blank model passed through) when %s is unset (R4-001)", (name, overrides) => {
+    // The use case classifies the unset model as its own config failure, so
+    // composition must not throw and short-circuit that terminal path.
+    const deps = buildHackathonConsumer(consumerEnv(overrides), {
+      chatPublisher: fakeChatPublisher(),
+      launchBrowser,
+    });
+
+    expect(deps[name === "HACKATHON_MODEL_PRIMARY" ? "primaryModel" : "fallbackModel"]).toBe("");
   });
 
   // task 10.1/10.4 carry-over from PR9: with no injected adapters the

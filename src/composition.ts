@@ -147,17 +147,16 @@ export interface HackathonConsumerAdapters {
 // design.md "File Changes": no `Bot` and no `PII_KEYRING` on the consumer
 // path — a broken keyring must not stop analyses, and this path never
 // touches PII fields (mirrors `buildGithubRouter`: `new Api(BOT_TOKEN)`).
-// Fails closed with a ConfigError when the models are unset, so the queue
-// handler retries instead of running half-configured.
+// Unset models are NOT rejected here (R4-001): they are passed through blank
+// and `runHackathonJob` raises the ConfigError inside its own error handling,
+// so the job ends terminally (reply, refund, markFailed) instead of the queue
+// handler retrying a composition failure until the message is dropped.
 export function buildHackathonConsumer(
   env: Env,
   adapters: Partial<HackathonConsumerAdapters> = {},
 ): RunHackathonJobDeps {
-  const primaryModel = env.HACKATHON_MODEL_PRIMARY?.trim();
-  const fallbackModel = env.HACKATHON_MODEL_FALLBACK?.trim();
-  if (!primaryModel || !fallbackModel) {
-    throw new ConfigError("HACKATHON_MODEL_PRIMARY and HACKATHON_MODEL_FALLBACK must be set");
-  }
+  const primaryModel = env.HACKATHON_MODEL_PRIMARY?.trim() ?? "";
+  const fallbackModel = env.HACKATHON_MODEL_FALLBACK?.trim() ?? "";
 
   return {
     analysisJobRepo: createD1AnalysisJobRepo(env.DB, clock),

@@ -3,9 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import worker, { createQueueHandler } from "../src/index";
 import type { Env } from "../src/index";
 import { ConfigError } from "../src/config-error";
+import { buildHackathonConsumer } from "../src/composition";
+import { createD1AnalysisQuota } from "../src/adapters/d1/analysis-quota";
 import { PageFetchFailedError } from "../src/domain/errors";
 import { asTeamId } from "../src/domain/ids";
-import type { AnalysisJob, AnalysisJobMessage } from "../src/domain/entities";
+import type { AnalysisJob, AnalysisJobMessage, NewAnalysisJob } from "../src/domain/entities";
 import {
   TRANSIENT_RETRY_DELAY_S,
   type RunHackathonJobDeps,
@@ -109,6 +111,18 @@ function handlerFor(deps: RunHackathonJobDeps, logger = fakeLogger()) {
     return deps;
   }, logger);
   return { handler, logger, builds: () => builds };
+}
+
+function newQueuedJob(id: string, team: string, utcDay: string): NewAnalysisJob {
+  return {
+    id,
+    teamId: asTeamId(team),
+    chatId: 111,
+    threadId: null,
+    utcDay,
+    fetchUrl: "https://example.com/event",
+    createdAt: Date.now(),
+  };
 }
 
 const testEnv = env as unknown as Env;
@@ -349,6 +363,52 @@ describe("default export", () => {
     expect(msg.retries).toEqual([]);
     expect(msg.acked).toBe(1);
     expect(logs.join("\n")).not.toContain("ConfigError");
+  });
+
+  // R4-001: with the models unset (the shipped wrangler.jsonc state) the real
+  // composition must not throw before the use case runs; the use case's own
+  // config path replies, marks the job failed, refunds the slot and acks.
+  it.each([
+    [1, "both models empty", { HACKATHON_MODEL_PRIMARY: "", HACKATHON_MODEL_FALLBACK: "" }],
+    [2, "only the fallback blank", { HACKATHON_MODEL_PRIMARY: "@cf/vendor/p", HACKATHON_MODEL_FALLBACK: "  " }],
+  ])("ends terminally through the use case config path, case %i: %s (R4-001)", async (n, _label, models) => {
+    const teamKey = `team-r4-001-${n}`;
+    const jobKey = `job-r4-001-${n}`;
+    await env.DB.prepare("INSERT INTO teams (id, telegram_chat_id, created_at) VALUES (?, ?, ?)")
+      .bind(teamKey, 9000 + n, 0)
+      .run();
+    const day = "2026-01-01";
+    const job = newQueuedJob(jobKey, teamKey, day);
+    const quota = createD1AnalysisQuota(env.DB);
+    await quota.reserve({
+      team: job.teamId,
+      day,
+      cap: 5,
+      now: Date.now(),
+      leaseMs: 900_000,
+      job,
+    });
+    const publisher = fakeChatPublisher();
+    const handler = createQueueHandler((e) => buildHackathonConsumer(e, { chatPublisher: publisher }));
+    const msg = fakeMessage(validBody({ jobId: jobKey, teamId: job.teamId }));
+
+    await handler({ messages: [msg] }, { ...env, ...models } as unknown as Env);
+
+    expect(msg.retries).toEqual([]);
+    expect(msg.acked).toBe(1);
+    expect(publisher.posted.map((p) => p.text)).toEqual(["Hackathon analysis is not configured."]);
+    const row = await env.DB.prepare(
+      "SELECT status, failure_reason FROM hackathon_analysis_jobs WHERE id = ?",
+    )
+      .bind(jobKey)
+      .first<{ status: string; failure_reason: string }>();
+    expect(row).toEqual({ status: "failed", failure_reason: "config" });
+    const usage = await env.DB.prepare(
+      "SELECT runs, lease_until, lease_job_id FROM hackathon_analysis_usage WHERE team_id = ? AND utc_day = ?",
+    )
+      .bind(teamKey, day)
+      .first<{ runs: number; lease_until: number; lease_job_id: string | null }>();
+    expect(usage).toEqual({ runs: 0, lease_until: 0, lease_job_id: null });
   });
 
   it("acks a malformed message through the real default queue handler", async () => {
