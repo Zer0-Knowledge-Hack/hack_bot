@@ -22,7 +22,7 @@ The show, link and list use cases stay synchronous. The adapters are a static fe
 | Dead-letter queue | None in v1. Terminal failures are recorded in the job row (`status='failed'`, `failure_reason`) and replied to the user | A DLQ (a second queue, plus a consumer or manual drain nobody runs; the D1 row already records the outcome) |
 | Cap and lease | The producer reserves one slot and sets the lease atomically (one `db.batch`). The consumer never touches `runs`, so a redelivery cannot double-count. No refund once the job has started | Counting in the consumer (a redelivery would double-count). Refunding failed runs (a failing URL could drain neurons) |
 | Ports | `PageFetcher` (static and rendered instances), `LlmExtractor`, `HackathonAnalysisRepo`, `AnalysisQuota`, `AnalysisJobRepo`, `AnalysisJobQueue`, `RepoMetadataSource`, `ChatPublisher`, plus the existing `Clock`, `IdGen` and `MembershipRepo` | Calling grammY or `env.QUEUE` from a use case (breaks the domain import rule) |
-| Fallback policy | The domain decides: a static fetch first; below 800 chars of reduced text, the rendered fetch | An adapter heuristic (not testable in the domain) |
+| Fallback policy | The domain decides: a static fetch first; below 800 chars of reduced text, or when the static fetch fails with a bot-wall status (401/403/429/503), the rendered fetch | An adapter heuristic (not testable in the domain) |
 | Validation | The pure `validateExtraction`, called by the adapter. At most 2 model calls (primary, then fallback) | Unbounded repair loops |
 | Models | `vars.HACKATHON_MODEL_PRIMARY` = GLM-5.3-Flash (~155 neurons). `vars.HACKATHON_MODEL_FALLBACK` = DeepSeek V4 Flash (~440 neurons, a different vendor). Prompted "JSON only". IDs are validated with `^@(cf\|hf)/[A-Za-z0-9._/-]+$` | Kimi K2.6, QwQ-32B, Llama 3.3-70B (cost or quality). JSON Mode (forces other models). Hardcoded IDs |
 | Config errors | Lazy parsing in the hackathon deps factory. A `ConfigError` becomes the "not configured" refusal | Parsing in `buildBot` (a bad var would break every command) |
@@ -65,7 +65,7 @@ cmd ─ classify=url ─ assertSafeUrl ─ normalize ─ resolveGroupMembership 
 queue(batch)  (consumer, size 1)
 index.queue ─ buildHackathonConsumer(env) ─ runHackathonJob(msg)
  ├─ jobs.claim ─ terminal → ack │ held → retry(60 s) │ persisted → post only
- ├─ analyzeHackathon: static ─(<800)─ rendered ─(429)→ degraded ≥200 chars | PageTooThin
+ ├─ analyzeHackathon: static ─(<800 | 401/403/429/503)─ rendered ─(429)→ degraded ≥200 chars | PageTooThin
  │    llm primary ─(invalid)─ fallback → validate → repoLinks+metadata → suggest → persist+mark
  ├─ general chat: publisher.post(chat, null, text)
  │  topic: linkAnalysisToTopic (post, pin, moveLink, unpin old; best-effort)

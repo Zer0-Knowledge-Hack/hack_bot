@@ -70,6 +70,31 @@ The system MUST fall back to Browser Rendering when the visible text produced by
 - WHEN the analysis proceeds
 - THEN the system does not invoke Browser Rendering
 
+### Requirement: Browser Rendering Fallback on Bot-Walled Static Fetch
+
+Added after the production smoke test (task 11.5), where a Worker-egress fetch was rejected with a non-2xx status that a browser would likely pass. The system MUST fall back to Browser Rendering when the static fetch fails with an HTTP status that signals a bot wall (401, 403, 429 or 503), and MUST use that page's rendered text for extraction when the fallback succeeds. The system MUST NOT fall back for any other static failure: 404, 410 and other statuses, timeout, network error, content-type, redirects, an unsafe target, or the size cap. The non-2xx status MUST be logged as a bare number, never with the URL or the body.
+
+#### Scenario: Bot-wall status triggers the fallback
+
+- GIVEN the static fetch fails with HTTP status 403 (or 401, 429, 503)
+- WHEN the analysis proceeds
+- THEN the system invokes Browser Rendering for the same URL
+- AND uses the rendered text if the fallback succeeds
+
+#### Scenario: Not-found status does not trigger the fallback
+
+- GIVEN the static fetch fails with HTTP status 404 (or 410, or any other non-bot-wall failure)
+- WHEN the analysis proceeds
+- THEN the system does not invoke Browser Rendering
+- AND reports the static fetch failure
+
+#### Scenario: Browser fails after a bot-wall
+
+- GIVEN the static fetch failed with a bot-wall status
+- WHEN the rendered fetch fails
+- THEN the system reports the rendered failure
+- AND WHEN Browser Rendering responds with a quota-exhausted status (429), the system reports a fetch failure attributable to quota exhaustion (there is no static text to degrade to)
+
 ### Requirement: Browser Rendering Quota Exhaustion Degrades or Fails Based on Static Text Length
 
 When Browser Rendering responds with a quota-exhausted status (HTTP 429), the system MUST fall back to using the static fetch's text for extraction when that text has at least 200 characters, and MUST treat the exhaustion as a fetch failure distinct from a generic fetch error only when the static text has fewer than 200 characters. The system MUST NOT retry Browser Rendering within the same analysis job, including queue retries.
