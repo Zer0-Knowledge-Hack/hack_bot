@@ -19,3 +19,20 @@ export function classifyHackathonArgument(raw: string): HackathonArgument {
     SLUG_PATTERN.test(raw) && !raw.includes(".") && !raw.includes(":");
   return isSlugShaped ? { kind: "slug", value: raw } : { kind: "url", value: raw };
 }
+
+export type JoinArgument =
+  | { kind: "join"; slug: string }
+  | { kind: "join-usage" };
+
+// `/hackathon join <slug>` (hackathon-participation design.md decision 6).
+// Checked BEFORE the whitespace rule of the classic argument handling: a bare
+// `join`, a non-slug target or extra tokens all yield the usage line; any
+// other argument returns null so the existing rules apply unchanged.
+export function parseJoinArgument(raw: string): JoinArgument | null {
+  const match = /^join(?:\s+(.*))?$/su.exec(raw.trim());
+  if (!match) return null;
+  const rest = (match[1] ?? "").trim();
+  if (rest === "" || /\s/u.test(rest)) return { kind: "join-usage" };
+  const isSlug = SLUG_PATTERN.test(rest);
+  return isSlug ? { kind: "join", slug: rest } : { kind: "join-usage" };
+}
