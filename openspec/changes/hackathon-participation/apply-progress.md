@@ -134,3 +134,16 @@ Mode: Strict TDD. Base: main 934fd01 (PR1a and PR1b merged). Completed: Step 0 (
 - The `setGeneralMessageId` failure is logged as `hackathon-job` / `general-message-id-store-failed`. Consequence: the stored message's button is not cleared on join (the tapped message's own button still is).
 - The persisted repost site also stores the message id, so a repost after a crash replaces the stored id with the newest message.
 - The only new e2e coverage is the `hp:` callback; other prefixes were already ignored (only `sel:` and `hp:` handlers exist), so no routing code changed in `index.ts`.
+
+## Fix: existing-topic check by posting (branch `fix/participation-topic-check`)
+
+Production evidence: after the user deleted topic 262, `/hackathon join` still replied "Este hackathon ya tiene tema" (`hackathon-join outcome ok`). `ForumTopicManager.probe` used `sendChatAction`, and Telegram accepts a chat action for a deleted thread, so the check never detected the deletion.
+
+- `participateInHackathon` now verifies a linked topic by posting the analysis into it through `postAnalysisAndLinkTopic` (which also re-pins and refreshes `pinnedMessageId`).
+  - Post succeeds: the topic is live, reply `already(link)`.
+  - `PublishFailedError` with `failureClass === "rejected"`: the topic is deleted, then the existing claim, create, link, post/pin, confirm path runs.
+  - Any other failure (`telegram-unavailable`, `rate-limited`, unexpected errors): unknown, logged as `topic-check-failed`, reply `already(link)`, never recreate.
+- `probe`, `TopicProbe`, the adapter probe and its classifier, the fake probe and the adapter probe tests were removed (nothing else used them). The e2e `sendChatAction` stubs were dropped.
+- TDD: RED first (4 failing tests: live post, deleted via rejected post, unavailable and rate-limited without recreate, redelivery after recreation), then GREEN. Focused file 28/28, `npm run typecheck` clean, full suite 76 files, 1018/1018 (was 1027; the 10 probe tests were removed, 1 net new use-case test).
+- Known limit: a live re-check re-posts the analysis and re-pins it; the previous pinned message stays pinned (Telegram allows several pins).
+- Commits: `3e648d6` fix(participation) code and tests, `65c2fac` docs (design decision 2, spec scenario, proposal).
