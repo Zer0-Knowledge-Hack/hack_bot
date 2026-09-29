@@ -269,7 +269,8 @@ export interface HackathonAnalysisRepo {
   ): Promise<void>;
   // hackathon-participation (design.md decision 3): compare-and-set claim on
   // topic creation. Wins only when the row still holds `expectedThreadId`
-  // (null, or the stale id observed by the probe) and no live claim exists
+  // (null, or the stale id whose verifying post reported the thread gone) and
+  // no live claim exists
   // (`topic_claim_until <= now`); a win stamps `now + ttlMs`. Returns false
   // when the claim is lost.
   claimTopicCreation(
@@ -337,10 +338,7 @@ export interface RepoMetadataSource {
   fetchDescription(repo: RepoFullName): Promise<string | null>;
 }
 
-// hackathon-participation (design.md "Interfaces / Contracts"). `probe` never
-// throws; `unknown` (any ambiguous result) must be treated as live so a
-// topic is never recreated on ambiguity.
-export type TopicProbe = "live" | "deleted" | "unknown";
+// hackathon-participation (design.md "Interfaces / Contracts").
 export type TopicCreateFailure =
   | "no-rights"
   | "not-forum"
@@ -352,7 +350,6 @@ export type TopicCreateFailure =
 // `create` throws ForumTopicCreateError(failure).
 export interface ForumTopicManager {
   create(chatId: number, name: string): Promise<number>;
-  probe(chatId: number, threadId: number): Promise<TopicProbe>;
 }
 
 // Semantic post options (hackathon-participation design.md decision 1): the

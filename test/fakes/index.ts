@@ -47,7 +47,6 @@ import type {
   RepoTopicLinkRepo,
   TeamRepo,
   TopicCreateFailure,
-  TopicProbe,
 } from "../../src/domain/ports";
 import type { MemberId, MembershipId, TeamId } from "../../src/domain/ids";
 
@@ -585,23 +584,19 @@ export function fakeChatPublisher(
 
 // Scripted ForumTopicManager: each call consumes the next outcome (repeating
 // the last once exhausted); a default `create` yields sequential thread ids.
-// `calls` logs every create/probe so tests can assert "exactly one create".
+// `calls` logs every create so tests can assert "exactly one create".
 export type TopicCreateStep = { threadId: number } | { fails: TopicCreateFailure };
 
 export function fakeForumTopicManager(
-  opts: { create?: TopicCreateStep[]; probe?: TopicProbe[] } = {},
+  opts: { create?: TopicCreateStep[] } = {},
 ): ForumTopicManager & {
   created: Array<{ chatId: number; name: string }>;
-  probed: Array<{ chatId: number; threadId: number }>;
 } {
   const created: Array<{ chatId: number; name: string }> = [];
-  const probed: Array<{ chatId: number; threadId: number }> = [];
   let createIdx = 0;
-  let probeIdx = 0;
   let nextThreadId = 1000;
   return {
     created,
-    probed,
     create: async (chatId: number, name: string) => {
       created.push({ chatId, name });
       const script = opts.create;
@@ -611,13 +606,6 @@ export function fakeForumTopicManager(
         throw new ForumTopicCreateError("createForumTopic failed", step.fails);
       }
       return step ? step.threadId : nextThreadId++;
-    },
-    probe: async (chatId: number, threadId: number) => {
-      probed.push({ chatId, threadId });
-      const script = opts.probe;
-      const step = script && script.length > 0 ? script[Math.min(probeIdx, script.length - 1)] : undefined;
-      probeIdx += 1;
-      return step ?? "live";
     },
   };
 }

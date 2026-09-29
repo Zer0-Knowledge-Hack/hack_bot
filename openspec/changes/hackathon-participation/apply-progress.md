@@ -134,3 +134,28 @@ Mode: Strict TDD. Base: main 934fd01 (PR1a and PR1b merged). Completed: Step 0 (
 - The `setGeneralMessageId` failure is logged as `hackathon-job` / `general-message-id-store-failed`. Consequence: the stored message's button is not cleared on join (the tapped message's own button still is).
 - The persisted repost site also stores the message id, so a repost after a crash replaces the stored id with the newest message.
 - The only new e2e coverage is the `hp:` callback; other prefixes were already ignored (only `sel:` and `hp:` handlers exist), so no routing code changed in `index.ts`.
+
+## Fix: existing-topic check by posting (branch `fix/participation-topic-check`)
+
+Production evidence: after the user deleted topic 262, `/hackathon join` still replied "Este hackathon ya tiene tema" (`hackathon-join outcome ok`). `ForumTopicManager.probe` used `sendChatAction`, and Telegram accepts a chat action for a deleted thread, so the check never detected the deletion.
+
+- `participateInHackathon` now verifies a linked topic by posting the analysis into it through `postAnalysisAndLinkTopic` (which also re-pins and refreshes `pinnedMessageId`).
+  - Post succeeds: the topic is live, reply `already(link)`.
+  - `PublishFailedError` with `failureClass === "rejected"`: the topic is deleted, then the existing claim, create, link, post/pin, confirm path runs.
+  - Any other failure (`telegram-unavailable`, `rate-limited`, unexpected errors): unknown, logged as `topic-check-failed`, reply `already(link)`, never recreate.
+- `probe`, `TopicProbe`, the adapter probe and its classifier, the fake probe and the adapter probe tests were removed (nothing else used them). The e2e `sendChatAction` stubs were dropped.
+- TDD: RED first (4 failing tests: live post, deleted via rejected post, unavailable and rate-limited without recreate, redelivery after recreation), then GREEN. Focused file 28/28, `npm run typecheck` clean, full suite 76 files, 1018/1018 (was 1027; the 10 probe tests were removed, 1 net new use-case test).
+- Known limit: a live re-check re-posts the analysis and re-pins it; the previous pinned message stays pinned (Telegram allows several pins).
+- Commits: `3e648d6` fix(participation) code and tests, `65c2fac` docs (design decision 2, spec scenario, proposal).
+
+## Fix: recreate only on a thread-gone post (review R3-001..R3-004)
+
+Review found that treating any `rejected` post as "deleted" would recreate a LIVE topic that answers 400 TOPIC_CLOSED or 403, creating a duplicate and moving the link.
+
+- New `PublishFailureClass = AlertSendFailureClass | "thread-gone"` in `errors.ts`; `PublishFailedError` carries it. `AlertSendFailureClass` and `classifyTelegramFailure` are unchanged, so the alert sender behaves as before.
+- New `classifyPublishFailure` in `send-failure.ts`: a 400 whose description matches `/message thread not found|topic_id_invalid|topic_deleted/i` is `thread-gone`; everything else defers to `classifyTelegramFailure`. Only `ChatPublisher.post` uses it (pin, unpin and clearButtons keep `rejected`).
+- `participateInHackathon` recreates only on `thread-gone`. `rejected`, `unavailable`, `rate-limited` and unexpected errors log `topic-check-failed` and return `already(link)`.
+- `run-hackathon-job` treats `thread-gone` like `rejected` (`publish:rejected`, permanent), so a post to a deleted thread in the job path is not retried.
+- TDD: RED first (7 failing: 3 adapter thread-gone cases, the use-case rejected-no-recreate case and 3 recreate tests moved to thread-gone), then GREEN. Added adapter cases (400 thread not found, TOPIC_ID_INVALID, TOPIC_DELETED to thread-gone; TOPIC_CLOSED, 403 and a 403 with thread wording to rejected; pin stays rejected) and use-case cases (rejected, unexpected TypeError, with the topic-check-failed log asserted).
+- R3-003 and R3-004: proposal, design and spec now describe the post-based check and its residual risk (a different Telegram description would not recreate: the safe side, checked by the smoke test); the `claimTopicCreation` comment no longer mentions probe.
+- Full suite 76 files, 1027/1027; `npm run typecheck` clean.

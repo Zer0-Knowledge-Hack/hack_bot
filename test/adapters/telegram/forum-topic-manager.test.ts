@@ -5,10 +5,8 @@ import type { TopicCreateFailure } from "../../../src/domain/ports";
 import { createTelegramForumTopicManager } from "../../../src/adapters/telegram/forum-topic-manager";
 import { stubTelegramApi } from "../../support/telegram-stub";
 
-// hackathon-participation design.md decision 2 + "Interfaces / Contracts":
-// `create` classifies a failed createForumTopic into a fixed failure code;
-// `probe` maps sendChatAction(typing, message_thread_id) to live / deleted /
-// unknown and never throws (an ambiguous result is treated as live).
+// hackathon-participation design.md "Interfaces / Contracts":
+// `create` classifies a failed createForumTopic into a fixed failure code.
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -101,58 +99,5 @@ describe("createTelegramForumTopicManager.create", () => {
 
     expect(signal).toBeInstanceOf(AbortSignal);
     expect(signal?.aborted).toBe(false);
-  });
-});
-
-describe("createTelegramForumTopicManager.probe", () => {
-  it("returns live when sendChatAction succeeds, using typing with message_thread_id", async () => {
-    const calls = stubTelegramApi((method) => (method === "sendChatAction" ? true : undefined));
-
-    const result = await makeManager().probe(-1001234, 4321);
-
-    expect(result).toBe("live");
-    expect(calls.find((c) => c.method === "sendChatAction")?.body).toMatchObject({
-      chat_id: -1001234,
-      action: "typing",
-      message_thread_id: 4321,
-    });
-  });
-
-  const deleted = [
-    "Bad Request: message thread not found",
-    "Bad Request: TOPIC_ID_INVALID",
-    "Bad Request: TOPIC_DELETED",
-    "bad request: Message Thread Not Found",
-  ];
-  for (const description of deleted) {
-    it(`returns deleted for a 400 "${description}"`, async () => {
-      stubTelegramApi(() => fail(400, description));
-
-      expect(await makeManager().probe(-1001234, 4321)).toBe("deleted");
-    });
-  }
-
-  const ambiguous: Array<[string, unknown]> = [
-    ["another 400", fail(400, "Bad Request: chat not found")],
-    ["a 403", fail(403, "Forbidden: bot is not a member of the supergroup chat")],
-    ["a 429", fail(429, "Too Many Requests: retry after 5")],
-    ["a 502", fail(502, "Bad Gateway")],
-    // The same deleted-topic text on a non-400 must not count as a positive signal.
-    ["a non-400 with a deleted-looking description", fail(403, "message thread not found")],
-  ];
-  for (const [label, response] of ambiguous) {
-    it(`returns unknown (treated as live) for ${label}`, async () => {
-      stubTelegramApi(() => response);
-
-      expect(await makeManager().probe(-1001234, 4321)).toBe("unknown");
-    });
-  }
-
-  it("returns unknown on a network failure or timeout and never throws", async () => {
-    vi.stubGlobal("fetch", async () => {
-      throw new Error("network down");
-    });
-
-    await expect(makeManager().probe(-1001234, 4321)).resolves.toBe("unknown");
   });
 });

@@ -178,6 +178,40 @@ describe("createTelegramChatPublisher.pin / unpin", () => {
   });
 });
 
+// R3-001: only a 400 whose description says the thread is gone is
+// "thread-gone" (the deleted-topic signal). Every other 4xx, including a
+// closed topic or missing rights on a LIVE topic, stays "rejected".
+describe("createTelegramChatPublisher.post thread-gone classification", () => {
+  const cases = [
+    ["400 message thread not found", 400, "Bad Request: message thread not found", "thread-gone"],
+    ["400 TOPIC_ID_INVALID", 400, "Bad Request: TOPIC_ID_INVALID", "thread-gone"],
+    ["400 TOPIC_DELETED", 400, "Bad Request: TOPIC_DELETED", "thread-gone"],
+    ["400 TOPIC_CLOSED (live, closed topic)", 400, "Bad Request: TOPIC_CLOSED", "rejected"],
+    ["403 not enough rights to send", 403, "Forbidden: not enough rights to send text messages to the chat", "rejected"],
+    ["403 with thread-not-found wording", 403, "Forbidden: message thread not found", "rejected"],
+  ] as const;
+
+  for (const [label, code, description, failureClass] of cases) {
+    it(`${label} becomes PublishFailedError(${failureClass}) without leaking the description`, async () => {
+      stubTelegramApi(() => ({ ok: false, error_code: code, description }));
+
+      const err = await makePublisher().post(555, 42, "hello").catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(PublishFailedError);
+      expect((err as PublishFailedError).failureClass).toBe(failureClass);
+      expect((err as PublishFailedError).message).not.toContain(description);
+    });
+  }
+
+  it("pin keeps a 400 thread-not-found as rejected (only post signals a gone thread)", async () => {
+    stubTelegramApi(() => ({ ok: false, error_code: 400, description: "Bad Request: message thread not found" }));
+
+    const err = await makePublisher().pin(555, 77).catch((e: unknown) => e);
+
+    expect((err as PublishFailedError).failureClass).toBe("rejected");
+  });
+});
+
 describe("createTelegramChatPublisher failures", () => {
   const operations = [
     ["post", (p: ReturnType<typeof makePublisher>) => p.post(555, 42, "hello")],
@@ -187,7 +221,7 @@ describe("createTelegramChatPublisher failures", () => {
 
   const failures = [
     ["a 429", { ok: false, error_code: 429, description: "Too Many Requests: retry after 5" }, "rate-limited"],
-    ["a 400 (e.g. topic deleted)", { ok: false, error_code: 400, description: "Bad Request: message thread not found" }, "rejected"],
+    ["a 400 (e.g. chat not found)", { ok: false, error_code: 400, description: "Bad Request: chat not found" }, "rejected"],
     ["a 403 (bot lacks pin rights)", { ok: false, error_code: 403, description: "Forbidden: not enough rights to pin a message" }, "rejected"],
     ["a 5xx", { ok: false, error_code: 502, description: "Bad Gateway" }, "telegram-unavailable"],
   ] as const;

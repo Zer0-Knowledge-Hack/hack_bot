@@ -17,7 +17,8 @@ After a General-chat analysis, the team decides whether to join. Today an admin 
   - the result stays within 1–128 characters.
 - Idempotency:
   - if the analysis has a live topic, create nothing and reply with the topic link;
-  - if the link is stale (the topic was deleted), a lightweight probe detects it, the stale link is dropped, and the topic is recreated.
+  - if the link is stale (the topic was deleted), posting the analysis into it detects it (only a 400 that says the thread does not exist counts), the stale link is dropped, and the topic is recreated;
+  - any other failure of that post (closed topic, missing rights, 5xx, 429) is inconclusive: nothing is recreated and the link is kept.
 - On success:
   - post "✅ Participating in <name> → <link>" in General;
   - remove the button from the original message;
@@ -50,7 +51,7 @@ After a General-chat analysis, the team decides whether to join. Today an admin 
 ## Approach
 
 This follows the exploration's recommendation, D+A.
-- A new ISP port, `ForumTopicManager`, provides create and probe, with rejections classified.
+- A new ISP port, `ForumTopicManager`, provides create, with rejections classified. The existing-topic check reuses `ChatPublisher.post`, whose adapter reports a distinct `thread-gone` failure class.
 - `ChatPublisher.post` gets an optional inline keyboard, plus a way to remove it.
 - `callerLocation` gets a `callback_query` variant.
 - Once the topic exists, link it immediately and never rethrow. Partial failures reply with a recovery hint.
@@ -75,7 +76,8 @@ Fetch, LLM and validation are untouched, so `npm run harness` is not required.
 | Redelivery creates a second topic | Med | Link right after creating; no rethrow after that |
 | Concurrent taps | Low | Claim migration, or accept the race (design) |
 | Bot lacks topic rights | Med | Operator reply; nothing persisted |
-| The probe misreads a live topic as deleted | Low | Probe mechanism validated in the design |
+| The check recreates a live topic | Low | Only a 400 whose description matches "message thread not found", `TOPIC_ID_INVALID` or `TOPIC_DELETED` is `thread-gone`; a closed topic or missing rights stay `rejected` and never recreate |
+| A deleted topic is not recreated because Telegram words the error differently | Low | Safe side: the link is kept and `already` is returned; the Telegram smoke test verifies the wording |
 
 ## Rollback Plan
 
@@ -104,7 +106,7 @@ About 350–500 lines, delivered as 2 chained PRs:
 ## Open questions (for design)
 
 1. A claim migration versus accepting the concurrent-tap race.
-2. The mechanism for the stale-topic probe.
+2. The mechanism for the stale-topic check.
 3. How the button is removed after a `/hackathon join`, when the General message id is unknown.
 
 ## Proposal question round

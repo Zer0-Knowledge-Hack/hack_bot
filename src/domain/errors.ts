@@ -204,10 +204,16 @@ export class AnalysisNotFoundError extends DomainError {}
 // PublishFailedError(AlertSendFailureClass)"). Mirrors AlertSendFailedError
 // exactly — same three non-sensitive failure classes, same "still a
 // permanent-for-this-request failure" contract.
-export class PublishFailedError extends DomainError {
-  readonly failureClass: AlertSendFailureClass;
+//
+// `PublishFailureClass` adds "thread-gone": Telegram said the target forum
+// thread does not exist (only `post` reports it). Any other 4xx, including a
+// closed topic or missing rights on a live topic, stays "rejected".
+export type PublishFailureClass = AlertSendFailureClass | "thread-gone";
 
-  constructor(message: string, failureClass: AlertSendFailureClass) {
+export class PublishFailedError extends DomainError {
+  readonly failureClass: PublishFailureClass;
+
+  constructor(message: string, failureClass: PublishFailureClass) {
     super(message);
     this.failureClass = failureClass;
   }
