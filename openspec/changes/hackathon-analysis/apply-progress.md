@@ -1109,3 +1109,133 @@ None. The pre-existing "response exceeded the byte cap" uncaught-exception log l
 ### Status
 
 5/5 Phase 9 tasks complete (37/56 cumulative). Ready for `sdd-verify` on this slice or for Phase 10.
+
+## Phase 10 (PR10: Publisher, Commands, Env, Wrangler) — branch `feat/hackathon-publisher-commands`
+
+### Scope of this batch
+
+Tasks 10.1-10.4 plus the four PR9 carry-overs (production `queue` wiring, `HackathonConsumerEnv` merge, R2-001, Workers AI quota-heuristic check). Branched from `main` at `ef37782`. Phase 11 (operator rollout) is untouched and not performed by apply: no queue was created, and no deploy or remote wrangler command was run.
+
+### Completed Tasks
+
+- [x] 10.1 RED/GREEN: `src/adapters/telegram/chat-publisher.ts` (+ shared `send-failure.ts`)
+- [x] 10.2 RED: `test/adapters/telegram/commands.test.ts` (+ `test/http/hackathon-command-e2e.test.ts`)
+- [x] 10.3 GREEN: `src/adapters/telegram/hackathon-commands.ts` registered from `commands.ts`; `command-outcome.ts` reason passthrough
+- [x] 10.4 `src/env.ts`, `wrangler.jsonc`, `package.json` (`@cloudflare/puppeteer` 1.4.0, exact) + `src/adapters/browser/puppeteer-launch.ts` and the production wiring in `src/composition.ts`
+
+### Commits (oldest first)
+
+| Hash | Message | Covers |
+|---|---|---|
+| `f662c70` | fix(hackathon-queue): share the transient retry delay constant (R2-001) | carry-over 3 |
+| `d6c4452` | fix(hackathon-llm): recognize the documented Workers AI daily-allocation error as quota exhaustion | carry-over 4 |
+| `111e93d` | refactor(telegram): share send-failure classification between adapters | prep for 10.1 |
+| `094c36f` | feat(hackathon-telegram): add chat publisher for post, pin and unpin | 10.1 |
+| `b0efce8` | feat(telegram): let recognized command refusals log a fixed reason | 10.3 (`command-outcome.ts`) |
+| `18f5e83` | feat(hackathon-usecases): add showTopicAnalysis and expose link notes for command acks | 10.3 support |
+| `1a13c3c` | feat(hackathon-config): add AI, browser and queue bindings and merge the consumer env into Env | 10.4, carry-over 2 |
+| `3397fc2` | feat(hackathon-commands): add /hackathon and /hackathons and wire the producer into the bot | 10.2, 10.3 |
+| `d1236bc` | feat(hackathon-browser): add the @cloudflare/puppeteer launch adapter mapping 429 to a quota error | 10.4, carry-over 1 |
+| `a0e5b28` | test(hackathon-browser): exercise the launch adapter against a fake binding instead of a module mock | test fix for `d1236bc` |
+| `8f2c785` | feat(hackathon-queue): wire the real Telegram publisher and puppeteer launch into the queue consumer | carry-over 1 |
+
+### TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| R2-001 | `test/index.queue.test.ts` | Integration (direct handler call) | 21/21 | New test importing the not-yet-exported `TRANSIENT_RETRY_DELAY_S`: `expected undefined to be 30` | 22/22 (+ run-hackathon-job 15/15) | Constant value asserted and the delivered `delaySeconds` asserted against it | None needed |
+| Quota heuristic | `test/adapters/llm/workers-ai-extractor.test.ts` | Unit | 17/17 | 2 new cases with the documented 3036 text/code failed (reported as `model-error`) | 19/19 | Documented message, bare code, and a negative case (5007 stays `model-error`) | Regex hoisted to a named constant |
+| Send-failure share | `test/adapters/telegram/alert-sender.test.ts` | Unit | 6/6 | N/A — behavior-preserving extraction (approval tests = the existing 6) | 6/6 | ➖ existing suite | Extracted `classifyTelegramFailure` |
+| 10.1 | `test/adapters/telegram/chat-publisher.test.ts` | Unit (grammY stub) | N/A (new) | `Cannot find module '.../chat-publisher'` | 19/19 after two fixes (`unpinChatMessage` takes `(chat_id, message_id, other, signal)`; grammY's shim `AbortSignal` type needs a cast) | post general/topic, link previews off, abort signal, pin, unpin, 3 operations x 4 failure classes + network | None needed |
+| 10.3 reason | `test/adapters/telegram/command-outcome.test.ts` | Unit | 83/83 in `test/adapters/telegram` | 2 of 3 failed (no `errorReasons`) | 3/3 | static reason, derived reason, none declared | None needed |
+| 10.3 support | `test/domain/usecases/link-analysis-to-topic.test.ts`, `show-topic-analysis.test.ts` | Unit | 8/8 | 4 of 8 failed with the source reverted (no `notes`); new file `Cannot find module` | 8/8, 3/3 | empty topic, replaced, moved, pin failed; linked / not linked / non-member | None needed |
+| 10.2/10.3 | `test/adapters/telegram/commands.test.ts` | Integration (real grammY `Bot`, stubbed API) | 58/58 existing | 33 of 91 failed (no handlers) | 91/91 | 33 new cases: fresh admin/topic/non-admin/non-member, 3 unsafe URLs, too-long URL, busy, cap, enqueue failure, log privacy, slug member/admin-topic/replaced/pin-failed/non-admin-topic/admin-general/dotted, no-arg linked/unlinked/general/multi-word, DM refusal, infra rethrow, list/empty/truncated/foreign team/non-member, plain-text sweep | None needed |
+| 10.3 wiring | `test/http/hackathon-command-e2e.test.ts` | Integration (Hono route + `buildBot` + real D1 + real queue adapter) | N/A (new) | 3/3 failed (`TypeError`: deps not wired in `buildBot`) | 3/3 | queued job + real lease refusal, enqueue failure refunds the real usage row, unknown slug / empty list | None needed |
+| 10.4 launch | `test/adapters/browser/puppeteer-launch.test.ts` | Unit (real package, fake binding) | N/A (new) | `Cannot find module` | 4 cases pass | daily-limit 429, rate-limit 429, 500 passthrough, non-429 with a number-like message | Replaced the initial `vi.mock` (unreliable, see Issues) |
+| Consumer wiring | `test/composition.hackathon-consumer.test.ts`, `test/index.queue.test.ts` | Unit + Integration | 6/6, 22/22 | default publisher/launch tests failed; production-handler test failed with the old composition (ConfigError retry) | 8/8, 23/23 | default publisher (BOT_TOKEN, no PII_KEYRING), default launch through the real package, injected override, wired production handler | None needed |
+
+Config-only files (`wrangler.jsonc`, `env.ts` types, `vitest.config.ts`): triangulation skipped — purely structural, no branching. Verified by `npm run cf-typegen`, `tsc`, the suite and `npx wrangler deploy --dry-run` (bindings and bundle listed correctly, 1039.84 KiB / gzip 209.84 KiB).
+
+#### Test Summary
+- **Baseline at start (main)**: 63 files, 600 tests
+- **After PR10**: 68 files, **672/672 passed**; `npm run typecheck` clean
+- **New tests**: 72 net
+- **Layers used**: Unit, Integration
+
+### Work Unit Evidence
+
+| Work unit | Focused test command and result | Runtime harness | Rollback boundary |
+|---|---|---|---|
+| R2-001 | `npx vitest run test/index.queue.test.ts test/domain/usecases/run-hackathon-job.test.ts` -> 37/37 | Handler called directly | revert `f662c70` |
+| Quota heuristic | `npx vitest run test/adapters/llm` -> 27/27 | N/A: injected `run` | revert `d6c4452` |
+| 10.1 publisher | `npx vitest run test/adapters/telegram/chat-publisher.test.ts test/adapters/telegram/alert-sender.test.ts` -> 25/25 | `stubTelegramApi` over global `fetch` | revert `094c36f`, `111e93d` |
+| 10.2/10.3 commands | `npx vitest run test/adapters/telegram test/http/hackathon-command-e2e.test.ts test/domain/usecases` -> all pass | Real Hono route + `buildBot` + real D1 (workers pool) | revert `b0efce8`, `18f5e83`, `3397fc2` |
+| 10.4 config | `npm run cf-typegen`, `npm run typecheck`, `npx wrangler deploy --dry-run` | Dry-run bundle lists AI, BROWSER, HACKATHON_QUEUE, model vars | revert `1a13c3c` |
+| 10.4 wiring | `npx vitest run test/adapters/browser test/composition.hackathon-consumer.test.ts test/index.queue.test.ts` -> 55/55 | Production `worker.queue` with the real D1 claim | revert `d1236bc`, `a0e5b28`, `8f2c785` |
+
+Full suite: `npm test` -> 68 files, **672 passed**; `npm run typecheck` -> clean. `worker-configuration.d.ts` regenerated with `npm run cf-typegen` (generated, not authored).
+
+### Files Changed
+
+| File | Action | What was done |
+|------|--------|---------------|
+| `src/adapters/telegram/chat-publisher.ts` | Created | `createTelegramChatPublisher(api)`: `sendMessage` (thread omitted for the general chat, previews off, no `parse_mode`), `pinChatMessage` (silent), `unpinChatMessage`; every call bounded by a 10 s abort signal; failures -> `PublishFailedError` with a fixed message and the shared class |
+| `src/adapters/telegram/send-failure.ts` | Created | `classifyTelegramFailure`, extracted from the alert sender |
+| `src/adapters/telegram/alert-sender.ts` | Modified | uses the shared classifier |
+| `src/adapters/telegram/hackathon-commands.ts` | Created | `/hackathon` (no arg, slug, URL) and `/hackathons`, both group-scoped |
+| `src/adapters/telegram/commands.ts` | Modified | `CommandDeps extends HackathonCommandDeps`; registers the hackathon commands |
+| `src/adapters/telegram/command-outcome.ts` | Modified | optional `errorReasons` (static string or function) logged as `reason` on recognized refusals |
+| `src/domain/usecases/show-topic-analysis.ts` | Created | no-argument topic show |
+| `src/domain/usecases/link-analysis-to-topic.ts` | Modified | result gains `notes: string[]` |
+| `src/domain/usecases/run-hackathon-job.ts`, `src/index.ts` | Modified | one exported `TRANSIENT_RETRY_DELAY_S` (R2-001) |
+| `src/adapters/llm/workers-ai-extractor.ts` | Modified | quota pattern also matches the documented 3036 text/code |
+| `src/adapters/browser/puppeteer-launch.ts` | Created | production `launch`; a 429 acquire failure -> `BrowserQuotaExceededError` |
+| `src/adapters/queue/analysis-job-queue.ts` | Modified | `QueueSender.send` returns `Promise<unknown>` (the real binding resolves with a response) |
+| `src/composition.ts` | Modified | `buildBot` wires the producer side; `buildHackathonConsumer(env, adapters?)` defaults to the real publisher (`new Api(BOT_TOKEN)`) and puppeteer launch |
+| `src/env.ts` | Modified | `HackathonConsumerEnv` merged into `Env` (`AI`, `BROWSER`, `HACKATHON_QUEUE`, model vars) |
+| `wrangler.jsonc` | Modified | `ai`, `browser`, `queues.producers`/`consumers` (`max_batch_size 1`, `max_retries 2`, `retry_delay 30`, `max_concurrency 1`), empty model vars |
+| `vitest.config.ts` | Modified | `remoteBindings: false` (see Issues) |
+| `package.json`, `package-lock.json`, `worker-configuration.d.ts` | Modified | dependency and regenerated types |
+| tests | Created/Modified | see the evidence table |
+| `openspec/changes/hackathon-analysis/tasks.md` | Modified | 10.1-10.4 marked `[x]` |
+
+### Deviations from Design
+
+- **`/hackathon` and `/hackathons` are group-only.** In a private chat they reply "Run this command inside your team's group chat." Fresh results are posted back into the originating chat or topic and linking needs a topic, so the DM team picker adds nothing; the spec never mentions DM use. `/repos` still supports DM.
+- **`linkAnalysisToTopic` gained `notes: string[]` and there is a new `showTopicAnalysis` use case.** Neither is in tasks.md. The link use case already posts (and pins) the analysis through the publisher, so acknowledging with its `replyText` would send the analysis twice; the command acks with the notes only ("Linked <slug> to this topic." when there are none). The no-argument show needed a membership-gated read that does not belong in the adapter.
+- **`command-outcome.ts` `errorReasons` accepts a string or a function.** The design only says "`reason` passthrough"; a function is needed so `UnsafeUrlError` logs `unsafe-url:<guard code>` without putting a URL in a log.
+- **`HACKATHON_MODEL_PRIMARY`/`FALLBACK` are empty strings in `wrangler.jsonc`.** The design names "GLM-5.3-Flash" and "DeepSeek V4 Flash", but the Workers AI catalog page (checked 2026-09-28) lists `glm-4.7-flash`, `glm-5.2`, `deepseek-v4-flash-0731`, `deepseek-v4-pro-0813` and no GLM-5.3. Guessing IDs would fail at runtime; task 11.4 (operator) owns them. While empty, an analysis fails closed with "Hackathon analysis is not configured" and the slot is refunded.
+- **A browser 429 at `launch` is mapped in `puppeteer-launch.ts`, not (only) at `goto`.** PR7's fetcher only checks the `goto` status; the Browser Run docs say the daily-limit and rate-limit 429s are returned by the acquire request, i.e. `launch` rejects. Without this mapping the documented degrade path would never fire and a daily-limit failure would be retried as a transient error.
+- **The `producers`/`consumers`/`ai`/`browser` bindings are committed although the queue does not exist yet.** See Risks in the return summary.
+- No other deviations.
+
+### Workers AI quota heuristic (carry-over 4)
+
+Checked against the repo's generated types and the official docs (developers.cloudflare.com/workers-ai/platform/errors, last updated 2026-09-17):
+- Repo types: `InferenceUpstreamError` and `AiInternalError` are declared as empty `extends Error` — no `code`/`status` field, so a message match is the only available signal.
+- Docs: `3036` (HTTP 429) "You have used up your daily free allocation of 10,000 neurons..." and `3040` (HTTP 429) "Capacity temporarily exceeded, please try again."
+- Finding: the old pattern `/quota|capacity|429|rate.?limit/i` matched 3040 but **missed 3036** — the real daily-neuron exhaustion — which would have surfaced as `model-error` instead of `llm:quota`. Fixed with clear evidence (`d6c4452`): added `daily free allocation` and the codes `3036`/`3040`.
+- Not changed: 3040 is transient capacity, not a daily quota, but the existing behavior (report as quota, no retry) and its test were kept because the spec only distinguishes a "quota-exhaustion response" from schema failures. Worth a product decision if capacity blips should be retried instead.
+
+### Issues Found
+
+- **`vi.mock("@cloudflare/puppeteer")` is unreliable** once the main worker imports the package (it shares the test isolate): the first version of the launch test passed, then failed as soon as `composition.ts` imported the launch adapter. Fixed by running the real package against a fake binding (`a0e5b28`).
+- **Adding `ai`/`browser` bindings made `vitest-pool-workers` open a remote-proxy session** (it needs a Cloudflare login and would break CI's `verify` job). `vitest.config.ts` now sets `remoteBindings: false`; the AI binding still prints a harmless warning.
+- **Security audit:** `@cloudflare/puppeteer` brings `@puppeteer/browsers` -> `extract-zip` (3 high advisories, GHSA-jmr9-qjv8-65gv, GHSA-7pqw-9j4j-h8q3). Those packages only download/unzip browsers in Node and are not used by the Workers runtime; `npm audit --omit=dev` now reports 3 high (the 5 pre-existing advisories are dev-only). `npm audit fix --force` would downgrade to a broken 0.0.11 — not applied.
+- The pre-existing "response exceeded the byte cap" uncaught-exception log line from `safe-fetcher` tests is unchanged.
+- A launch failure that is not a 429 propagates as a plain error and is retried as transient (up to 3 attempts); there is no dedicated "browser unavailable" classification.
+
+### Remaining Tasks (not in this batch)
+
+- [ ] Phase 11: Operator Rollout (manual, not performed by apply)
+
+### Workload / PR Boundary
+
+- Mode: chained PR slice (stacked-to-main), size:exception expected (earlier PRs shipped that way with approval)
+- Current work unit: PR10
+- Boundary: from `main` at `ef37782`; ends with the publisher, commands, merged `Env`, wrangler bindings, `@cloudflare/puppeteer` launch and the fully wired production `queue` handler in place, 10.1-10.4 marked `[x]`.
+- Authored changed lines vs `main` (excluding `package-lock.json` and generated `worker-configuration.d.ts`, before this docs commit): **src 587** (515 added, 72 deleted), **test 1086** (1073 added, 13 deleted), **config 36** (`wrangler.jsonc` 30, `vitest.config.ts` 5, `package.json` 1) — about 1709 in total, well over the 400-line guard and over the ~350 forecast. Roughly 60 percent is test code; `hackathon-commands.ts` (258 lines) and `commands.test.ts` (+~340 lines) dominate. Reported as-is; the maintainer decides between `size:exception` and splitting (the natural seam is publisher + carry-over fixes vs commands vs env/wrangler/launch wiring).
+
+### Status
+
+4/4 Phase 10 tasks complete (41/56 cumulative; Phase 11's 5 manual tasks remain). Ready for `sdd-verify`. **Do not merge to `main` before the queue exists**: merging triggers a CI deploy that runs `wrangler d1 migrations apply --remote` and then `wrangler deploy`.
