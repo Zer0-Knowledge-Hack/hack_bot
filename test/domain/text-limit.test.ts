@@ -11,11 +11,11 @@ describe("joinLinesWithinLimit", () => {
     expect(joinLinesWithinLimit([], 4096, "Nothing yet.")).toBe("Nothing yet.");
   });
 
-  it("truncates and appends an '...and N more' note when over the limit (spec: Listing exceeds the limit)", () => {
+  it("truncates and appends a '…y N más' note when over the limit (spec: Listing exceeds the limit)", () => {
     const lines = Array.from({ length: 50 }, (_, i) => `line-${i}`.repeat(20));
     const result = joinLinesWithinLimit(lines, 200);
     expect(result.length).toBeLessThanOrEqual(200);
-    expect(result).toMatch(/\.\.\.and \d+ more$/);
+    expect(result).toMatch(/…y \d+ más$/);
   });
 
   it("never exceeds the limit even in the pathological case where no line fits", () => {

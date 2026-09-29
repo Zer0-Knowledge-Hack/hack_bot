@@ -38,6 +38,44 @@ describe("formatAnalysis", () => {
     expect(text).toContain("2026-03-01");
   });
 
+  it("labels every field in Spanish, keeping order and page values verbatim", () => {
+    const field = (value: string) => ({ value, snippet: value, confidence: 0.9 });
+    const text = formatAnalysis({
+      slug: "meridian",
+      fields: {
+        name: field("Meridian 2026"),
+        format: field("Online"),
+        location: field("Lima"),
+        teamSize: { value: 4, snippet: "4", confidence: 0.9 },
+        submissionDeadline: field("2026-03-01"),
+        startDate: field("2026-02-01"),
+        endDate: field("2026-02-28"),
+        resultsDate: field("2026-03-15"),
+        prizes: field("USD 1000"),
+        tracks: field("AI"),
+        eligibility: field("Open"),
+      },
+      suggestions: ["octocat/meridian-starter", "acme/kit"],
+    });
+    expect(text).toBe(
+      [
+        "Slug: meridian",
+        "Nombre: Meridian 2026",
+        "Formato: Online",
+        "Ubicación: Lima",
+        "Tamaño del equipo: 4",
+        "Fecha límite de entrega: 2026-03-01",
+        "Fecha de inicio: 2026-02-01",
+        "Fecha de fin: 2026-02-28",
+        "Fecha de resultados: 2026-03-15",
+        "Premios: USD 1000",
+        "Categorías: AI",
+        "Requisitos: Open",
+        "Repositorios sugeridos: octocat/meridian-starter, acme/kit",
+      ].join("\n"),
+    );
+  });
+
   it("omits a null field from the reply", () => {
     const text = formatAnalysis({ slug: "meridian", fields: emptyFields(), suggestions: [] });
     expect(text).not.toContain("null");
@@ -78,7 +116,20 @@ describe("formatHackathonsList", () => {
     expect(text).toContain("orbit");
   });
 
-  it("truncates and appends an '...and N more' note past 4096 characters (spec: Listing exceeds the limit)", () => {
+  it("renders Spanish markers for linked, unlinked and missing values", () => {
+    const text = formatHackathonsList([
+      { slug: "meridian", name: "Meridian 2026", deadline: "2026-03-01", linked: true },
+      { slug: "orbit", name: null, deadline: null, linked: false },
+    ]);
+    expect(text).toBe(
+      [
+        "meridian — Meridian 2026 — 2026-03-01 — vinculado",
+        "orbit — (sin nombre) — sin fecha límite — no vinculado",
+      ].join("\n"),
+    );
+  });
+
+  it("truncates and appends a '…y N más' note past 4096 characters (spec: Listing exceeds the limit)", () => {
     const entries = Array.from({ length: 200 }, (_, i) => ({
       slug: `hackathon-${i}`,
       name: `Hackathon Number ${i}`.repeat(3),
@@ -87,10 +138,10 @@ describe("formatHackathonsList", () => {
     }));
     const text = formatHackathonsList(entries);
     expect(text.length).toBeLessThanOrEqual(4096);
-    expect(text).toMatch(/\.\.\.and \d+ more$/);
+    expect(text).toMatch(/…y \d+ más$/);
   });
 
   it("returns a fixed message when there are no analyses", () => {
-    expect(formatHackathonsList([])).toBe("No hackathons analyzed yet.");
+    expect(formatHackathonsList([])).toBe("Todavía no se ha analizado ningún hackathon.");
   });
 });

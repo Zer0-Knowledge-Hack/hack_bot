@@ -1,3 +1,4 @@
+import { analysisCopy, FIELD_LABELS } from "../copy";
 import type { ExtractedFields } from "./extraction";
 import { joinLinesWithinLimit } from "../text-limit";
 
@@ -7,20 +8,6 @@ import { joinLinesWithinLimit } from "../text-limit";
 // no `parse_mode` — formatting is plain lines, never markdown/HTML.
 export const REPLY_MAX = 4096;
 
-const FIELD_LABELS: Record<keyof ExtractedFields, string> = {
-  name: "Name",
-  format: "Format",
-  location: "Location",
-  teamSize: "Team size",
-  submissionDeadline: "Submission deadline",
-  startDate: "Start date",
-  endDate: "End date",
-  resultsDate: "Results date",
-  prizes: "Prizes",
-  tracks: "Tracks",
-  eligibility: "Eligibility",
-};
-
 export interface FormatAnalysisInput {
   slug: string;
   fields: ExtractedFields;
@@ -28,7 +15,7 @@ export interface FormatAnalysisInput {
 }
 
 export function formatAnalysis(input: FormatAnalysisInput): string {
-  const lines = [`Slug: ${input.slug}`];
+  const lines = [`${analysisCopy.slugLabel}: ${input.slug}`];
   for (const [key, label] of Object.entries(FIELD_LABELS) as Array<
     [keyof ExtractedFields, string]
   >) {
@@ -36,7 +23,7 @@ export function formatAnalysis(input: FormatAnalysisInput): string {
     if (field !== null) lines.push(`${label}: ${field.value}`);
   }
   if (input.suggestions.length > 0) {
-    lines.push(`Suggested repos: ${input.suggestions.join(", ")}`);
+    lines.push(`${analysisCopy.suggestedReposLabel}: ${input.suggestions.join(", ")}`);
   }
   return truncate(lines.join("\n"), REPLY_MAX);
 }
@@ -48,16 +35,14 @@ export interface HackathonListEntry {
   linked: boolean;
 }
 
-const NO_ANALYSES_MESSAGE = "No hackathons analyzed yet.";
-
 export function formatHackathonsList(entries: HackathonListEntry[]): string {
   const lines = entries.map((entry) => {
-    const name = entry.name ?? "(unnamed)";
-    const deadline = entry.deadline ?? "no deadline found";
-    const linked = entry.linked ? "linked" : "not linked";
+    const name = entry.name ?? analysisCopy.unnamed;
+    const deadline = entry.deadline ?? analysisCopy.noDeadline;
+    const linked = entry.linked ? analysisCopy.linked : analysisCopy.notLinked;
     return `${entry.slug} — ${name} — ${deadline} — ${linked}`;
   });
-  return joinLinesWithinLimit(lines, REPLY_MAX, NO_ANALYSES_MESSAGE);
+  return joinLinesWithinLimit(lines, REPLY_MAX, analysisCopy.noAnalyses);
 }
 
 export function truncate(text: string, max: number): string {
