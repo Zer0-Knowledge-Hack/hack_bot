@@ -5,12 +5,24 @@ import {
   FIELD_LABELS,
   moreItems,
 } from "../../src/domain/copy";
-import { commonCopy, hackathonCopy } from "../../src/adapters/telegram/copy";
+import {
+  commonCopy,
+  dataChannelCopy,
+  hackathonCopy,
+  joinCopy,
+  pickerCopy,
+  profileCopy,
+  repoCopy,
+  ROLE_LABELS,
+  roleCopy,
+  setupCopy,
+  teamResolutionCopy,
+} from "../../src/adapters/telegram/copy";
 
 // Guard for the Spanish-copy change: every bot-authored string reachable from
 // the catalogs must be Spanish (no English words from the denylist) and every
-// code map must be complete. Scope grows per PR (domain catalog + hackathon
-// adapter entries here).
+// code map must be complete. Scope: the domain catalog and the full Telegram
+// adapter catalog (GitHub alert headers join in a later PR).
 const ENGLISH_DENYLIST =
   /\b(the|you|your|only|could|please|run|usage|team|member|topic|linked|analysis|page|try)\b/i;
 
@@ -45,6 +57,15 @@ const CATALOGS: Array<[string, Catalog]> = [
   ["FETCH_FAILURE_PHRASES", FETCH_FAILURE_PHRASES as unknown as Catalog],
   ["commonCopy", commonCopy as unknown as Catalog],
   ["hackathonCopy", hackathonCopy as unknown as Catalog],
+  ["teamResolutionCopy", teamResolutionCopy as unknown as Catalog],
+  ["setupCopy", setupCopy as unknown as Catalog],
+  ["joinCopy", joinCopy as unknown as Catalog],
+  ["dataChannelCopy", dataChannelCopy as unknown as Catalog],
+  ["profileCopy", profileCopy as unknown as Catalog],
+  ["roleCopy", roleCopy as unknown as Catalog],
+  ["repoCopy", repoCopy as unknown as Catalog],
+  ["pickerCopy", pickerCopy as unknown as Catalog],
+  ["ROLE_LABELS", ROLE_LABELS as unknown as Catalog],
 ];
 
 describe("copy catalogs are Spanish", () => {
@@ -91,5 +112,24 @@ describe("copy catalogs are Spanish", () => {
       "tracks",
       "eligibility",
     ]);
+  });
+
+  it("the role map covers every role with a distinct Spanish label", () => {
+    expect(ROLE_LABELS).toEqual({ admin: "administrador", member: "miembro" });
+  });
+
+  it("the link/unlink maps cover both actions with distinct phrases", () => {
+    expect(Object.keys(repoCopy.topicRequired).sort()).toEqual(["link", "unlink"]);
+    expect(new Set(Object.values(repoCopy.topicRequired)).size).toBe(2);
+    expect(repoCopy.usage("linkrepo")).toBe("Uso: /linkrepo <owner/repo o URL del repositorio de GitHub>");
+  });
+
+  it("the shared no-team and membership-check phrases are Spanish", () => {
+    expect(commonCopy.noTeamForChat).toBe(
+      "No hay ningún equipo registrado en este chat. Pide a un administrador que ejecute /setup.",
+    );
+    expect(commonCopy.membershipCheckFailed("datachannel")).toBe(
+      "No se pudo verificar tu pertenencia al equipo. Vuelve a intentar /datachannel.",
+    );
   });
 });
