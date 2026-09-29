@@ -11,3 +11,20 @@ export interface Env {
   // src/adapters/github/signature.ts).
   GITHUB_WEBHOOK_SECRET: string;
 }
+
+// Bindings and vars the hackathon queue consumer needs (design.md "File
+// Changes": `AI`, `BROWSER`, model vars). Declared here as their own type
+// so the consumer composition is typed today; PR10 (task 10.4) folds these
+// into `Env` together with the `wrangler.jsonc` bindings.
+export interface HackathonConsumerEnv extends Env {
+  AI: {
+    run(
+      model: string,
+      inputs: Record<string, unknown>,
+      options?: { signal?: AbortSignal },
+    ): Promise<unknown>;
+  };
+  BROWSER: unknown;
+  HACKATHON_MODEL_PRIMARY: string;
+  HACKATHON_MODEL_FALLBACK: string;
+}
