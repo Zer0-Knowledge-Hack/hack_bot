@@ -1,6 +1,6 @@
 # Apply Progress: hackathon-participation
 
-Completed so far: Phase 1 (1.1-1.12), Phase 2 (2.1-2.11) and Phase 3 (3.1-3.10). Phase 4 (operator steps and final verification) pending.
+Completed so far: Phase 1 (1.1-1.12), Phase 2 (2.1-2.11), Phase 3 (3.1-3.10), and operator setup 4.1 (migration 0004 applied remotely, deployed, and Manage Topics granted). Phase 4 smoke test and final verification remain pending.
 
 ## Batch 1 — Phase 1 Infrastructure (PR1a) — branch `feat/participation-infra`
 
@@ -141,7 +141,7 @@ Production evidence: after the user deleted topic 262, `/hackathon join` still r
 
 - `participateInHackathon` now verifies a linked topic by posting the analysis into it through `postAnalysisAndLinkTopic` (which also re-pins and refreshes `pinnedMessageId`).
   - Post succeeds: the topic is live, reply `already(link)`.
-  - `PublishFailedError` with `failureClass === "rejected"`: the topic is deleted, then the existing claim, create, link, post/pin, confirm path runs.
+  - `PublishFailedError` with `failureClass === "rejected"`: the topic is deleted, then the existing claim, create, link, post, best-effort pin attempt, confirm path runs.
   - Any other failure (`telegram-unavailable`, `rate-limited`, unexpected errors): unknown, logged as `topic-check-failed`, reply `already(link)`, never recreate.
 - `probe`, `TopicProbe`, the adapter probe and its classifier, the fake probe and the adapter probe tests were removed (nothing else used them). The e2e `sendChatAction` stubs were dropped.
 - TDD: RED first (4 failing tests: live post, deleted via rejected post, unavailable and rate-limited without recreate, redelivery after recreation), then GREEN. Focused file 28/28, `npm run typecheck` clean, full suite 76 files, 1018/1018 (was 1027; the 10 probe tests were removed, 1 net new use-case test).
@@ -160,6 +160,10 @@ Review found that treating any `rejected` post as "deleted" would recreate a LIV
 - R3-003 and R3-004: proposal, design and spec now describe the post-based check and its residual risk (a different Telegram description would not recreate: the safe side, checked by the smoke test); the `claimTopicCreation` comment no longer mentions probe.
 - Full suite 76 files, 1027/1027; `npm run typecheck` clean.
 
+## Scope clarification: pinning deferred
+
+The implemented post-and-pin path is preserved. Pinning remains best-effort and unresolved for acceptance purposes; it is explicitly deferred to future work and is not a blocker for completing this change. The remaining operator smoke test MUST exclude pin validation.
+
 ## Fix: trophy as the topic icon, paced fresh-topic flow
 
 - Production showed the topic named "🏆 BNB Hack: ..." with the generic icon. The 🏆 is now the topic icon and the name is plain.
@@ -167,4 +171,26 @@ Review found that treating any `rejected` post as "deleted" would recreate a LIV
 - `topicNameFor(name, slug, iconApplied)` in the domain: plain name when the icon applies, `🏆 ` prefix (128-unit cap including it) otherwise. The use case passes both variants; the General confirmation uses the plain name.
 - Pacing: the use case waits `TOPIC_POST_DELAY_MS` (1500 ms) after the link is saved, and `postAnalysisAndLinkTopic` accepts an optional `pinDelayMs` (`PIN_DELAY_MS`, 1000 ms) between post and pin. Evidence: topic 306 was created, the post (307) pinned at once, `pinChatMessage` returned ok, yet nothing was pinned. Only the fresh-topic path passes delays. `Sleep` is an injected dependency (`setTimeout` in `composition.ts`, `fakeSleep` in tests).
 - TDD: RED tests first for the domain name variants, the adapter (found, not found, fetch failure, cache once, refetch after rejection, no hint), the use case (names, confirmation, create -> sleep -> post -> sleep -> pin order, no sleep on the live-topic path) and `postAnalysisAndLinkTopic` (delay only when requested). The e2e stub now serves the icon list.
-- Known limit: the delay is a mitigation for a Telegram race whose cause is unconfirmed; the pin failure note still covers a pin that errors.
+- Known limit: the delay is a mitigation for a Telegram race whose cause is unconfirmed; the pin failure note still covers a pin that errors; pin validation is deferred and is not an acceptance blocker.
+
+## Operator Smoke Evidence — Task 4.2
+
+Production observations: an admin tap on “✅ Participamos” removed the button, created a working General topic link, and posted the analysis in that topic. `/hackathon join <slug>` returned the same working link and reposted the analysis. After explicit topic deletion, `/hackathon join meta-vr-start-developer-competition-2026` recreated the topic at a new link ending `/328`, posted the analysis, and announced participation in General. A non-admin attempt created nothing and showed the refusal alert/message. Joining an analysis created before the participation button existed also worked. Pin behavior was intentionally excluded and remains deferred.
+
+## Final Verification — Task 4.3
+
+| Command | Result | Counts / timing |
+|---|---|---|
+| `npm test` | PASS (exit 0) | 76 test files passed; 1,044 tests passed; Vitest duration 131.74s (transform 81.40s, setup 984.82s, import 38.68s, tests 21.88s, environment 24ms) |
+| `npm run typecheck` | PASS (exit 0) | `tsc --noEmit` completed in 2.184s |
+| `git diff --check` | PASS (exit 0) | No whitespace errors |
+
+### Final Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npm test` — exit 0; 76/76 files and 1,044/1,044 tests passed. |
+| Runtime harness | N/A: final verification exercises the full suite; the preserved operator smoke evidence above covers the Telegram runtime path. |
+| Rollback boundary | Documentation-only final-verification update: task 4.3 checkbox and this evidence section. |
+
+Pinning remains explicitly deferred and was not used as an acceptance condition. All previous operator smoke evidence is preserved above.

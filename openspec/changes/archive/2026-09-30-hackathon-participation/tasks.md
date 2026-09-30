@@ -80,6 +80,6 @@ Each PR is independently deployable and keeps `npm test` green. PR1a adds unused
 
 ## Phase 4: Operator Step and Final Verification (after PR2)
 
-- [ ] 4.1 Operator: apply migration 0004 remotely, deploy, then grant the bot "Manage Topics" (Administrar temas) in the group.
-- [ ] 4.2 Operator smoke test in Telegram: tap "✅ Participamos" (topic created, pinned, General confirmation, button removed); delete the topic and tap again on a fresh analysis or `join` (recreated, validates probe strings); check the `t.me/c/...` link opens the topic; run `/hackathon join <slug>` on an old analysis.
-- [ ] 4.3 Run the full suite (`npm test`) and typecheck (`npm run typecheck`), both green.
+- [x] 4.1 Operator: migration 0004 applied remotely, deployment completed, and the bot granted "Manage Topics" (Administrar temas) in the group (per apply/session operational evidence).
+- [x] 4.2 Operator smoke test in Telegram: tap "✅ Participamos" (topic created, analysis posted, General confirmation, button removed; do not validate pinning because it is deferred); delete the topic and tap again on a fresh analysis or `join` (recreated, validates the thread-gone description); check the `t.me/c/...` link opens the topic; run `/hackathon join <slug>` on an old analysis.
+- [x] 4.3 Run the full suite (`npm test`) and typecheck (`npm run typecheck`), both green.

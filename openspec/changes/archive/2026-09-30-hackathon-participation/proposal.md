@@ -2,7 +2,7 @@
 
 ## Intent
 
-After a General-chat analysis, the team decides whether to join. Today an admin has to create the forum topic by hand and then run `/hackathon <slug>` inside it. This change turns that decision into one admin action: the bot creates the topic, links the analysis, and pins it. It costs 0 neurons and uses the Workers Free plan only. Roadmap change 4.
+After a General-chat analysis, the team decides whether to join. Today an admin has to create the forum topic by hand and then run `/hackathon <slug>` inside it. This change turns that decision into one admin action: the bot creates the topic and links the analysis. The implementation retains a best-effort pin attempt, but pinning is explicitly deferred and is not an acceptance criterion or completion blocker. It costs 0 neurons and uses the Workers Free plan only. Roadmap change 4.
 
 ## Scope
 
@@ -22,7 +22,7 @@ After a General-chat analysis, the team decides whether to join. Today an admin 
 - On success:
   - post "✅ Participating in <name> → <link>" in General;
   - remove the button from the original message;
-  - post and pin the analysis in the topic through the existing link+pin flow.
+  - post the analysis in the topic through the existing link+pin flow; the existing best-effort pin attempt is preserved, but pin validation is deferred to a future change.
 - Missing `can_manage_topics`, or a chat that is not a forum, gets an explicit operator reply and persists nothing.
 - The General analysis post keeps its message id so the button can be attached and later removed.
 - Replies are in English and plain text.
@@ -90,7 +90,7 @@ Redeploy the previous Worker. Old buttons then do nothing, and topics that were 
 
 ## Success Criteria
 
-- [ ] An admin tap creates one topic, links and pins the analysis, posts the confirmation, and removes the button
+- [ ] An admin tap creates one topic, links and posts the analysis, posts the confirmation, and removes the button; pinning is explicitly deferred and not required for acceptance
 - [ ] A non-admin gets the alert and nothing changes
 - [ ] A live topic gets a link reply; a deleted topic is recreated
 - [ ] A webhook redelivery never creates a second topic

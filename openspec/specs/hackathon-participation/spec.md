@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Lets a team admin confirm, in one action, that the team participates in an analyzed hackathon: the bot creates a forum topic, links and pins the analysis there, and announces it in General. Bot copy is Spanish per `bot-copy`; extracted values stay verbatim.
+Lets a team admin confirm, in one action, that the team participates in an analyzed hackathon: the bot creates a forum topic, links and posts the analysis there, and announces it in General. The implementation MAY attempt to pin the post best-effort, but pinning is deferred and is not an acceptance criterion or completion blocker. Bot copy is Spanish per `bot-copy`; extracted values stay verbatim.
 
 ## Requirements
 
@@ -14,7 +14,7 @@ The system MUST let an admin confirm participation by tapping the "✅ Participa
 
 - GIVEN an analysis `meridian` without a topic and the caller is a team admin
 - WHEN they tap "✅ Participamos" (`hp:meridian`)
-- THEN a topic is created, linked and pinned as specified below
+- THEN a topic is created and linked as specified below, and the analysis is posted there; any pin attempt is best-effort and deferred
 
 #### Scenario: Admin uses the command for an old analysis
 
@@ -106,7 +106,7 @@ The system MUST detect a linked topic that no longer exists by posting the analy
 
 - GIVEN `meridian` is linked to a topic deleted in Telegram
 - WHEN an admin confirms participation
-- THEN the stale link is dropped and a new topic is created, linked and pinned
+- THEN the stale link is dropped and a new topic is created, linked and the analysis is posted
 - AND General shows the confirmation with the new link
 
 #### Scenario: Topic check is inconclusive
@@ -133,9 +133,9 @@ The system MUST guarantee at most one topic per analysis under webhook redeliver
 - THEN exactly one topic exists for the analysis
 - AND the other tap receives "Este hackathon ya tiene tema: <link>" or a neutral no-op
 
-### Requirement: Confirmation, Pin and Button Removal
+### Requirement: Confirmation, Posting and Button Removal
 
-After creating a topic the system MUST post "✅ Participamos en <name> → <link>" in General, remove the button from the analysis message, and post and pin the analysis in the new topic. `<name>` is the sanitized hackathon name. Removing the button MUST be best-effort.
+After creating a topic the system MUST post "✅ Participamos en <name> → <link>" in General, remove the button from the analysis message, and post the analysis in the new topic. `<name>` is the sanitized hackathon name. Removing the button MUST be best-effort. The implementation MAY attempt to pin the analysis, but pinning is deferred to future work and MUST NOT block completion or acceptance.
 
 #### Scenario: Successful confirmation
 
@@ -143,14 +143,16 @@ After creating a topic the system MUST post "✅ Participamos en <name> → <lin
 - WHEN the topic is created
 - THEN General receives "✅ Participamos en Meridian Hack 2026 → <link>"
 - AND the button is removed from the analysis message
-- AND the analysis is posted and pinned in the topic
+- AND the analysis is posted in the topic
+- AND any pin attempt is non-blocking and outside acceptance
 
-#### Scenario: Pin failure
+#### Scenario: Pin attempt fails
 
 - GIVEN the bot lacks "Pin Messages"
 - WHEN participation is confirmed
-- THEN the analysis is posted unpinned and the link persists
-- AND the reply states "No se pudo fijar el mensaje; se publicó sin fijar."
+- THEN the analysis is posted and the link persists regardless of the pin outcome
+- AND the existing best-effort result MAY state "No se pudo fijar el mensaje; se publicó sin fijar."
+- AND pin success or failure is deferred from acceptance and MUST NOT block completion
 
 ### Requirement: Missing Rights or Non-Forum Chat
 
@@ -205,6 +207,6 @@ The system MUST keep the created topic and its link when a later step fails, MUS
 
 #### Scenario: Confirmation or button removal fails
 
-- GIVEN the topic was created, linked and pinned
+- GIVEN the topic was created, linked and the analysis was posted
 - WHEN the General confirmation or the button removal fails
 - THEN the topic and link remain and no second topic is created
