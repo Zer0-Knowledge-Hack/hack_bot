@@ -71,8 +71,8 @@ Each PR independently keeps `npm test` green. Migration 0005 is additive.
 
 ## Phase 4: Operator Step and Final Verification (after PR3)
 
-- [ ] 4.1 Operator: apply migration 0005 remotely; set `NL_MODEL_PRIMARY` to the chosen Workers AI model id; deploy.
-- [ ] 4.1a Operator note (accepted risk): confirm rows may hold short-lived plaintext profile values in D1 for ≤10 minutes; do not lengthen TTL, dump `slots_json` in logs/observability, or retain consumed rows for debugging with PII.
-- [ ] 4.2 Operator smoke: `@bot ayuda` in General and a topic (using the live `BOT_INFO.username`, not a hard-coded name); reply-to-bot read; one mutate confirm via button and via `sí`; profile NL in General refused / in data channel ok without echoing value; DM not handled as NL; spot-check slash commands.
-- [ ] 4.3 Run full `npm test` and `npm run typecheck`, both green.
-- [ ] 4.4 If classifier prompt changed since last harness run, re-run NL harness and attach evidence before verify/archive.
+- [x] 4.1 Operator: apply migration 0005 remotely; set `NL_MODEL_PRIMARY` to the chosen Workers AI model id; deploy.
+- [x] 4.1a Operator note (accepted risk): confirm rows may hold short-lived plaintext profile values in D1 for ≤10 minutes; do not lengthen TTL, dump `slots_json` in logs/observability, or retain consumed rows for debugging with PII.
+- [x] 4.2 Operator smoke: `@bot ayuda` in General and a topic (using the live `BOT_INFO.username`, not a hard-coded name); reply-to-bot read; one mutate confirm via button and via `sí`; profile NL in General refused / in data channel ok without echoing value; DM not handled as NL; spot-check slash commands.
+- [x] 4.3 Run full `npm test` and `npm run typecheck`, both green.
+- [x] 4.4 If classifier prompt changed since last harness run, re-run NL harness and attach evidence before verify/archive.
