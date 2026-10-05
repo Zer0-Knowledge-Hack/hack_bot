@@ -127,3 +127,26 @@ export const participateCopy = {
   createUncertain:
     "No se pudo confirmar si se creó el tema. Revisa la lista de temas antes de volver a intentarlo.",
 };
+
+// natural-language-text replies (design.md "Copy Table").
+export const nlCopy = {
+  help:
+    "Podés hablarme en el grupo @mencionándome o respondiendo a un mensaje mío (en el chat general o en un tema). Pedime «ayuda» para ver este texto. Los comandos con / siguen funcionando (por ejemplo /hackathons).",
+  unknown:
+    "No te entendí. Pedime «ayuda» para ver cómo hablarme, o usá un comando con /.",
+  notConfigured:
+    "El lenguaje natural no está configurado todavía. Usá los comandos con /.",
+  classifyFailed:
+    "No pude interpretar eso ahora. Probá de nuevo en un momento, o usá un comando con /.",
+  quota:
+    "Llegamos al límite diario de mensajes en lenguaje natural para este equipo. Mañana se reinicia (UTC), o usá un comando con /.",
+  mutateDeferred:
+    "Esa acción todavía necesita confirmación (próximamente). Por ahora usá el comando con / correspondiente.",
+  clarifySlug: "¿De qué hackathon? Decime el slug (o mirá /hackathons).",
+  clarifyTopic:
+    "Esa consulta aplica dentro de un tema con un hackathon vinculado. Entrá al tema y pedímelo de nuevo.",
+  noTopicAnalysis:
+    "Este tema no tiene un hackathon vinculado. Pedí la lista con «hackathons» o usá /hackathons.",
+  noAnalysis: hackathonCopy.noAnalysis,
+  dataChannelOnly: profileCopy.dataChannelOnly,
+};

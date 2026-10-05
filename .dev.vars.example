@@ -9,3 +9,5 @@ GITHUB_WEBHOOK_SECRET=REPLACE_WITH_RANDOM_SECRET
 PII_KEYRING={"active":1,"keys":{"1":"REPLACE_WITH_BASE64_32B_KEY"}}
 # grammY botInfo JSON, avoids a getMe call per request (see docs/key-backup.md)
 BOT_INFO={}
+# Optional override; wrangler.jsonc vars already set NL_MODEL_PRIMARY for local/deploy.
+# NL_MODEL_PRIMARY=@cf/zai-org/glm-4.7-flash

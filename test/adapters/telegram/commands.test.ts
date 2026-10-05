@@ -17,14 +17,17 @@ import {
   fakeGithubOrgClaimRepo,
   fakeHackathonAnalysisRepo,
   fakeIdGen,
+  fakeIntentClassifier,
   fakeMemberRepo,
   fakeForumTopicManager,
   fakeSleep,
   fakeMembershipRepo,
+  fakeNlClassifyQuota,
   fakeProfileRepo,
   fakeRepoTopicLinkRepo,
   fakeTeamRepo,
 } from "../../fakes";
+import { asMemberId, asMembershipId, asTeamId } from "../../../src/domain/ids";
 
 // Same technique as test/runtime-assumptions/grammy-api-stub.test.ts: a
 // real grammY `Bot`, outbound Telegram API calls intercepted with a
@@ -120,6 +123,9 @@ function makeBot(
     clock: fakeClock(),
     idGen: fakeIdGen(),
     logger: createSafeLogger(),
+    nlClassifyQuota: fakeNlClassifyQuota(),
+    intentClassifier: fakeIntentClassifier(),
+    nlModelPrimary: "@cf/test/nl-model",
   };
   registerCommands(bot, deps);
   return { bot, replies, payloads, alerts, answers, deps };
@@ -207,6 +213,128 @@ describe("registerCommands — routing (telegram-webhook spec)", () => {
   it("ignores an update that is not a recognized command", async () => {
     const { bot, replies } = makeBot();
     await bot.handleUpdate(textUpdate(1, 1));
+    expect(replies).toHaveLength(0);
+  });
+});
+
+describe("registerCommands — NL text (natural-language-text PR2)", () => {
+  function seedNlMember(
+    deps: ReturnType<typeof makeBot>["deps"],
+    chatId: number,
+    userId: number,
+  ) {
+    const teamId = asTeamId(`team-${chatId}`);
+    deps.teamRepo.rows.push({
+      id: teamId,
+      chatId,
+      dataTopicThreadId: null,
+      createdAt: 0,
+    });
+    const memberId = asMemberId(`u-${userId}`);
+    deps.memberRepo.rows.push({ id: memberId, telegramUserId: userId, createdAt: 0 });
+    deps.membershipRepo.rows.push({
+      id: asMembershipId(`m-${userId}`),
+      teamId,
+      memberId,
+      role: "member",
+      joinedAt: 0,
+    });
+  }
+
+  function mentionUpdate(
+    chatId: number,
+    userId: number,
+    text: string,
+    opts: { threadId?: number; chatType?: "private" | "supergroup" } = {},
+  ): Update {
+    return {
+      update_id: nextUpdateId++,
+      message: {
+        message_id: nextUpdateId,
+        date: 0,
+        chat: { id: chatId, type: opts.chatType ?? "supergroup", title: "Test group" } as never,
+        from: { id: userId, is_bot: false, first_name: "User" },
+        text,
+        ...(opts.threadId !== undefined ? { message_thread_id: opts.threadId } : {}),
+      },
+    } as Update;
+  }
+
+  function replyToBotUpdate(
+    chatId: number,
+    userId: number,
+    text: string,
+    opts: { threadId?: number } = {},
+  ): Update {
+    return {
+      update_id: nextUpdateId++,
+      message: {
+        message_id: nextUpdateId,
+        date: 0,
+        chat: { id: chatId, type: "supergroup", title: "Test group" } as never,
+        from: { id: userId, is_bot: false, first_name: "User" },
+        text,
+        reply_to_message: {
+          message_id: 10,
+          date: 0,
+          chat: { id: chatId, type: "supergroup", title: "Test group" },
+          from: { id: 1, is_bot: true, first_name: "TestBot", username: "test_bot" },
+          text: "prev",
+        },
+        ...(opts.threadId !== undefined ? { message_thread_id: opts.threadId } : {}),
+      },
+    } as unknown as Update;
+  }
+
+  it("replies with help when @mentioned with ayuda in General", async () => {
+    const { bot, replies, deps } = makeBot();
+    seedNlMember(deps, 10, 20);
+    await bot.handleUpdate(mentionUpdate(10, 20, "@test_bot ayuda"));
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.text).toContain("mencionándome");
+    expect(replies[0]?.text).toContain("/hackathons");
+  });
+
+  it("replies with unknown for an eligible non-help mention", async () => {
+    const { bot, replies, deps } = makeBot();
+    seedNlMember(deps, 10, 20);
+    await bot.handleUpdate(mentionUpdate(10, 20, "@test_bot listá los hackathons"));
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.text).toContain("No te entendí");
+  });
+
+  it("handles a reply to the bot inside a topic", async () => {
+    const { bot, replies, deps } = makeBot();
+    seedNlMember(deps, 10, 20);
+    await bot.handleUpdate(replyToBotUpdate(10, 20, "ayuda", { threadId: 99 }));
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.text).toContain("mencionándome");
+  });
+
+  it("ignores plain text without mention or reply-to-bot", async () => {
+    const { bot, replies, deps } = makeBot();
+    seedNlMember(deps, 10, 20);
+    await bot.handleUpdate(mentionUpdate(10, 20, "qué hackathons hay"));
+    expect(replies).toHaveLength(0);
+  });
+
+  it("ignores DM mentions", async () => {
+    const { bot, replies, deps } = makeBot();
+    seedNlMember(deps, 10, 20);
+    await bot.handleUpdate(mentionUpdate(10, 20, "@test_bot ayuda", { chatType: "private" }));
+    expect(replies).toHaveLength(0);
+  });
+
+  it("does not classify slash commands as NL", async () => {
+    const { bot, replies } = makeBot();
+    await bot.handleUpdate(commandUpdate("hackathons", 10, 20));
+    expect(replies.every((r) => !r.text.includes("mencionándome"))).toBe(true);
+    expect(replies.every((r) => !r.text.includes("No te entendí"))).toBe(true);
+  });
+
+  it("ignores eligible mention when no team is registered", async () => {
+    const { bot, replies } = makeBot();
+    await bot.handleUpdate(mentionUpdate(10, 20, "@test_bot ayuda"));
     expect(replies).toHaveLength(0);
   });
 });

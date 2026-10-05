@@ -31,4 +31,7 @@ export interface Env {
   // (validated by the extractor; empty means "not configured").
   HACKATHON_MODEL_PRIMARY: string;
   HACKATHON_MODEL_FALLBACK: string;
+  // Workers AI catalog ID for NL intent classification (natural-language-text).
+  // Blank/unset ⇒ NL path replies "not configured"; slash commands unaffected.
+  NL_MODEL_PRIMARY: string;
 }

@@ -20,9 +20,11 @@ import type {
   DmSelectionRepo,
   GithubOrgClaimRepo,
   IdGen,
+  IntentClassifier,
   Logger,
   MemberRepo,
   MembershipRepo,
+  NlClassifyQuota,
   ProfileRepo,
   RepoTopicLinkRepo,
   TeamRepo,
@@ -32,6 +34,7 @@ import type { CallerLocation } from "./context";
 import { runCommand } from "./command-outcome";
 import { InlineKeyboard } from "grammy";
 import { isPrivateChat, registerTeamPicker } from "./team-picker";
+import { registerNaturalLanguage } from "./natural-language";
 import { registerHackathonCommands } from "./hackathon-commands";
 import type { HackathonCommandDeps } from "./hackathon-commands";
 import {
@@ -78,6 +81,9 @@ export interface CommandDeps extends HackathonCommandDeps {
   clock: Clock;
   idGen: IdGen;
   logger: Logger;
+  nlClassifyQuota: NlClassifyQuota;
+  intentClassifier: IntentClassifier;
+  nlModelPrimary: string;
 }
 
 const profileFields = new Set<ProfileFieldName>([
@@ -540,4 +546,7 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
       },
     );
   });
+
+  // After slash commands so command handlers win; NL only sees leftover text.
+  registerNaturalLanguage(bot, deps);
 }

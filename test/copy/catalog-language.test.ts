@@ -16,6 +16,7 @@ import {
   participateButton,
   participateCopy,
   pickerCopy,
+  nlCopy,
   profileCopy,
   repoCopy,
   ROLE_LABELS,
@@ -76,6 +77,7 @@ const CATALOGS: Array<[string, Catalog]> = [
   ["participationCopy", participationCopy as unknown as Catalog],
   ["participateCopy", participateCopy as unknown as Catalog],
   ["participateButton", { participateButton } as unknown as Catalog],
+  ["nlCopy", nlCopy as unknown as Catalog],
 ];
 
 describe("copy catalogs are Spanish", () => {

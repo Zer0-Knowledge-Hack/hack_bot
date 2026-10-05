@@ -63,6 +63,9 @@
     // reserved daily slot is refunded.
     "HACKATHON_MODEL_PRIMARY": "@cf/zai-org/glm-4.7-flash",
     "HACKATHON_MODEL_FALLBACK": "@cf/qwen/qwen3-30b-a3b-fp8",
+    // Same Free-plan catalog family as hackathon primary until classifier
+    // harness evidence suggests a different id (apply-progress Phase 2).
+    "NL_MODEL_PRIMARY": "@cf/zai-org/glm-4.7-flash",
     "BOT_INFO": "{\"id\":8808165755,\"is_bot\":true,\"first_name\":\"Hack Bot\",\"username\":\"hackZK_bot\",\"can_join_groups\":true,\"can_read_all_group_messages\":false,\"supports_inline_queries\":false,\"can_connect_to_business\":false,\"has_main_web_app\":false}"
   }
 }
