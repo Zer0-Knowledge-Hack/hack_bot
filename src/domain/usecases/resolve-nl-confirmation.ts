@@ -4,6 +4,7 @@ import {
   type NlConfirmation,
   type NlMutateIntentId,
 } from "../nl/confirmation";
+import { confirmSummaryFor, type NlConfirmSummaries } from "../nl/confirm-summary";
 import { matchConfirmLexicon } from "../nl/lexicon";
 import type { NlSlots } from "../nl/intents";
 import type {
@@ -55,6 +56,7 @@ export interface ResolveNlConfirmationDeps extends ExecuteNlMutationDeps {
 
 export type ResolveNlConfirmationResult =
   | { kind: "ignore" }
+  | { kind: "done" }
   | { kind: "reply"; text: string };
 
 const EVENT = "nl-confirm";
@@ -99,6 +101,11 @@ export async function resolveNlConfirmation(
       reason: `cancel:${pending.intent}`,
     });
     return { kind: "reply", text: deps.copy.cancelled };
+  }
+
+  // A pick row must be resolved via nl:p before Confirm/sí.
+  if ((pending.slots.pickSlugs?.length ?? 0) > 0 && !pending.slots.slug) {
+    return { kind: "reply", text: deps.copy.busy };
   }
 
   const consumed = await deps.nlConfirmationRepo.tryConsume(pending.id, now);
@@ -259,6 +266,152 @@ export async function createNlConfirmation(
   return { kind: "done" };
 }
 
+export interface CreateNlDisambiguationInput {
+  teamId: TeamId;
+  chatId: number;
+  threadId: number | null;
+  actorMembershipId: MembershipId;
+  intent: NlMutateIntentId;
+  // Ordered slugs shown as buttons (labels parallel).
+  pickSlugs: string[];
+  labels: string[];
+  promptText: string;
+}
+
+// Posts a multi-choice keyboard; picking one upgrades the row into a normal
+// confirm (see resolveNlPick).
+export async function createNlDisambiguation(
+  input: CreateNlDisambiguationInput,
+  deps: CreateNlConfirmationDeps,
+): Promise<CreateNlConfirmationResult> {
+  if (input.pickSlugs.length === 0 || input.pickSlugs.length !== input.labels.length) {
+    return { kind: "reply", text: "No pude armar las opciones. Probá de nuevo." };
+  }
+  const now = deps.clock.now();
+  const id = deps.idGen.newId();
+  let messageId: number;
+  try {
+    messageId = await deps.chatPublisher.post(input.chatId, input.threadId, input.promptText, {
+      nlPick: { confirmId: id, labels: input.labels },
+    });
+  } catch (err) {
+    const errorCode = err instanceof Error ? err.name : "UnknownError";
+    deps.logger.log({
+      event: "nl-pick-create",
+      outcome: "error",
+      errorCode,
+      teamId: input.teamId,
+      reason: "post-failed",
+    });
+    return { kind: "reply", text: "No pude enviar las opciones. Probá de nuevo." };
+  }
+
+  await deps.nlConfirmationRepo.create({
+    id,
+    teamId: input.teamId,
+    chatId: input.chatId,
+    threadId: input.threadId,
+    actorMembershipId: input.actorMembershipId,
+    intent: input.intent,
+    slots: { pickSlugs: input.pickSlugs },
+    confirmMessageId: messageId,
+    expiresAt: now + NL_CONFIRM_TTL_MS,
+    consumedAt: null,
+    createdAt: now,
+  });
+
+  deps.logger.log({
+    event: "nl-pick-create",
+    outcome: "ok",
+    teamId: input.teamId,
+    reason: input.intent,
+  });
+  return { kind: "done" };
+}
+
+export interface ResolveNlPickInput {
+  chatId: number;
+  callerTelegramUserId: number;
+  confirmationId: string;
+  pickIndex: number;
+  callbackMessageId: number | null;
+}
+
+export type ResolveNlPickDeps = ResolveNlConfirmationDeps & {
+  confirmPrompt: (summary: string) => string;
+  confirmSummaries: NlConfirmSummaries;
+};
+
+// Turns a pending pick into a Confirm/Cancel challenge for the chosen slug.
+export async function resolveNlPick(
+  input: ResolveNlPickInput,
+  deps: ResolveNlPickDeps,
+): Promise<ResolveNlConfirmationResult> {
+  const pending = await deps.nlConfirmationRepo.findById(input.confirmationId);
+  if (!pending || pending.chatId !== input.chatId) {
+    return { kind: "reply", text: deps.copy.busy };
+  }
+  const now = deps.clock.now();
+  if (pending.consumedAt !== null || pending.expiresAt <= now) {
+    return { kind: "reply", text: deps.copy.busy };
+  }
+
+  const member = await deps.memberRepo.findByTelegramUserId(input.callerTelegramUserId);
+  if (!member) return { kind: "reply", text: deps.copy.notMember };
+  const callerMembership = await deps.membershipRepo.getByMember(pending.teamId, member.id);
+  if (!callerMembership) return { kind: "reply", text: deps.copy.notMember };
+  if (callerMembership.id !== pending.actorMembershipId) {
+    return { kind: "reply", text: deps.copy.wrongActor };
+  }
+
+  const pickSlugs = pending.slots.pickSlugs ?? [];
+  const slug = pickSlugs[input.pickIndex];
+  if (!slug) return { kind: "reply", text: deps.copy.busy };
+
+  const nextSlots: NlSlots = { slug };
+  const summary = confirmSummaryFor(pending.intent, nextSlots, deps.confirmSummaries);
+  if (!summary) return { kind: "reply", text: deps.copy.busy };
+
+  await deps.nlConfirmationRepo.updateSlots(pending.id, nextSlots);
+
+  const confirmText = deps.confirmPrompt(summary);
+  const messageId = pending.confirmMessageId ?? input.callbackMessageId;
+  if (messageId !== null) {
+    try {
+      await deps.chatPublisher.editMessage(pending.chatId, messageId, confirmText, {
+        nlConfirmId: pending.id,
+      });
+    } catch {
+      try {
+        await deps.chatPublisher.clearButtons(pending.chatId, messageId);
+      } catch {
+        /* ignore */
+      }
+      return createNlConfirmation(
+        {
+          teamId: pending.teamId,
+          chatId: pending.chatId,
+          threadId: pending.threadId,
+          actorMembershipId: pending.actorMembershipId,
+          intent: pending.intent,
+          slots: nextSlots,
+          confirmText,
+        },
+        deps,
+      );
+    }
+  }
+
+  deps.logger.log({
+    event: "nl-pick",
+    outcome: "ok",
+    teamId: pending.teamId,
+    reason: pending.intent,
+  });
+  return { kind: "done" };
+}
+
 export function lexiconActionForText(text: string): "yes" | "cancel" | null {
   return matchConfirmLexicon(text);
 }
+

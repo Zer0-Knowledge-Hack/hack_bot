@@ -41,6 +41,11 @@ const COPY: NlCopyBag = {
   clarifyTopic: nlCopy.clarifyTopic,
   noTopicAnalysis: nlCopy.noTopicAnalysis,
   noAnalysis: nlCopy.noAnalysis,
+  hackathonNotLinked: nlCopy.hackathonNotLinked,
+  unlinkWrongTopic: nlCopy.unlinkWrongTopic,
+  unlinkWrongTopicMany: nlCopy.unlinkWrongTopicMany,
+  pickUnlink: nlCopy.pickUnlink,
+  noLinkedMatch: nlCopy.noLinkedMatch,
   dataChannelOnly: profileCopy.dataChannelOnly,
   profileDataChannelOnly: nlConfirmCopy.profileDataChannelOnly,
   clarifyMembership: nlConfirmCopy.clarifyMembership,
@@ -110,12 +115,13 @@ function makeDeps(
   const nlConfirmationRepo = fakeNlConfirmationRepo();
   const intentClassifier = fakeIntentClassifier(overrides.intent);
   const chatPublisher = fakeChatPublisher();
+  const hackathonAnalysisRepo = fakeHackathonAnalysisRepo();
   const deps: HandleNaturalLanguageDeps = {
     teamRepo,
     memberRepo,
     membershipRepo,
     profileRepo: fakeProfileRepo(),
-    hackathonAnalysisRepo: fakeHackathonAnalysisRepo(),
+    hackathonAnalysisRepo,
     repoTopicLinkRepo: fakeRepoTopicLinkRepo(),
     githubOrgClaimRepo: fakeGithubOrgClaimRepo(),
     analysisQuota: fakeAnalysisQuota(),
@@ -139,7 +145,7 @@ function makeDeps(
   };
   return {
     deps,
-    repos: { teamRepo, memberRepo, membershipRepo },
+    repos: { teamRepo, memberRepo, membershipRepo, hackathonAnalysisRepo },
     nlClassifyQuota,
     nlConfirmationRepo,
     intentClassifier,
@@ -506,5 +512,238 @@ describe("handleNaturalLanguage", () => {
     expect(nlConfirmationRepo.rows[0]?.intent).toBe("demote_member");
     expect(nlConfirmationRepo.rows[0]?.slots.membershipId).toBe("mem-admin2");
     expect(chatPublisher.posted[0]?.text).toContain("miembro");
+  });
+
+  it("unlink_hackathon_topic resolves slug from the current topic link", async () => {
+    const { deps, repos, nlConfirmationRepo, chatPublisher } = makeDeps({
+      intent: async () => ({
+        intent: "unlink_hackathon_topic",
+        confidence: 0.92,
+        slots: {},
+      }),
+    });
+    seedMemberTeam(repos);
+    repos.hackathonAnalysisRepo.rows.push({
+      id: "a-meta",
+      teamId: asTeamId("team-nl"),
+      slug: "meta-vr",
+      sourceUrl: "https://example.com/meta",
+      normalizedUrl: "https://example.com/meta",
+      fields: {
+        name: { value: "Meta", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: 77,
+      pinnedMessageId: 9,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: 77,
+        callerTelegramUserId: 20,
+        classifiedText: "desvincula esta hackathon",
+      },
+      deps,
+    );
+
+    expect(nlConfirmationRepo.rows).toHaveLength(1);
+    expect(nlConfirmationRepo.rows[0]?.intent).toBe("unlink_hackathon_topic");
+    expect(nlConfirmationRepo.rows[0]?.slots.slug).toBe("meta-vr");
+    expect(chatPublisher.posted[0]?.text).toContain("meta-vr");
+  });
+
+  it("unlink_hackathon_topic clarifies when the topic has no linked analysis", async () => {
+    const { deps, repos, nlConfirmationRepo } = makeDeps({
+      intent: async () => ({
+        intent: "unlink_hackathon_topic",
+        confidence: 0.9,
+        slots: {},
+      }),
+    });
+    seedMemberTeam(repos);
+
+    expect(
+      await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: 77,
+          callerTelegramUserId: 20,
+          classifiedText: "desvincula esta",
+        },
+        deps,
+      ),
+    ).toEqual({ kind: "reply", text: COPY.noTopicAnalysis });
+    expect(nlConfirmationRepo.rows).toHaveLength(0);
+  });
+
+  it("unlink_hackathon_topic hints the linked slug when this topic has none", async () => {
+    const { deps, repos, nlConfirmationRepo, chatPublisher } = makeDeps({
+      intent: async () => ({
+        intent: "unlink_hackathon_topic",
+        confidence: 0.9,
+        slots: {},
+      }),
+    });
+    seedMemberTeam(repos);
+    repos.hackathonAnalysisRepo.rows.push({
+      id: "a-bnb",
+      teamId: asTeamId("team-nl"),
+      slug: "bnb-linked",
+      sourceUrl: "https://example.com/bnb",
+      normalizedUrl: "https://example.com/bnb",
+      fields: {
+        name: { value: "BNB", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: 99,
+      pinnedMessageId: 1,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    // Bare "esta" with exactly one team-linked analysis → confirm that one.
+    await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: 77,
+        callerTelegramUserId: 20,
+        classifiedText: "desvincula esta hackathon",
+      },
+      deps,
+    );
+    expect(nlConfirmationRepo.rows).toHaveLength(1);
+    expect(nlConfirmationRepo.rows[0]?.slots.slug).toBe("bnb-linked");
+    expect(chatPublisher.posted[0]?.text).toContain("bnb-linked");
+  });
+
+  it("unlink_hackathon_topic accepts an explicit linked slug from another topic", async () => {
+    const { deps, repos, nlConfirmationRepo } = makeDeps({
+      intent: async () => ({
+        intent: "unlink_hackathon_topic",
+        confidence: 0.9,
+        slots: { slug: "bnb-linked" },
+      }),
+    });
+    seedMemberTeam(repos);
+    repos.hackathonAnalysisRepo.rows.push({
+      id: "a-bnb",
+      teamId: asTeamId("team-nl"),
+      slug: "bnb-linked",
+      sourceUrl: "https://example.com/bnb",
+      normalizedUrl: "https://example.com/bnb",
+      fields: {
+        name: { value: "BNB", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: 99,
+      pinnedMessageId: 1,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: 77,
+        callerTelegramUserId: 20,
+        classifiedText: "desvincula bnb-linked",
+      },
+      deps,
+    );
+    expect(nlConfirmationRepo.rows[0]?.slots.slug).toBe("bnb-linked");
+  });
+
+  it("unlink_hackathon_topic offers pick buttons when several names match", async () => {
+    const { deps, repos, nlConfirmationRepo, chatPublisher } = makeDeps({
+      intent: async () => ({
+        intent: "unlink_hackathon_topic",
+        confidence: 0.9,
+        slots: { targetName: "BNB" },
+      }),
+    });
+    seedMemberTeam(repos);
+    for (const [id, slug, name, threadId] of [
+      ["a1", "bnb-online", "BNB Hack Online", 11],
+      ["a2", "bnb-tokenized", "BNB Hack Tokenized", 12],
+    ] as const) {
+      repos.hackathonAnalysisRepo.rows.push({
+        id,
+        teamId: asTeamId("team-nl"),
+        slug,
+        sourceUrl: `https://example.com/${slug}`,
+        normalizedUrl: `https://example.com/${slug}`,
+        fields: {
+          name: { value: name, snippet: "", confidence: 0.9 },
+          format: null,
+          location: null,
+          teamSize: null,
+          submissionDeadline: null,
+          startDate: null,
+          endDate: null,
+          resultsDate: null,
+          prizes: null,
+          tracks: null,
+          eligibility: null,
+        },
+        suggestedRepos: [],
+        threadId,
+        pinnedMessageId: 1,
+        generalMessageId: null,
+        createdAt: 0,
+        updatedAt: 0,
+      });
+    }
+
+    const result = await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "desvincula la hackathon de BNB",
+      },
+      deps,
+    );
+    expect(result).toEqual({ kind: "done" });
+    expect(nlConfirmationRepo.rows[0]?.slots.pickSlugs).toEqual(["bnb-online", "bnb-tokenized"]);
+    expect(chatPublisher.postOptions[0]?.nlPick?.labels).toEqual([
+      "BNB Hack Online",
+      "BNB Hack Tokenized",
+    ]);
   });
 });

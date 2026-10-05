@@ -15,7 +15,7 @@ import type { RepoFullName } from "./github";
 import type { MemberId, MembershipId, TeamId } from "./ids";
 import type { Role } from "./entities";
 import type { ExtractionAttemptDiagnostics, LlmParseFailureCode } from "./errors";
-import type { IntentClassifierInput, IntentResult } from "./nl/intents";
+import type { IntentClassifierInput, IntentResult, NlSlots } from "./nl/intents";
 import type { NlConfirmation } from "./nl/confirmation";
 
 // Every tenant-scoped method takes TeamId as its first parameter. This is a
@@ -272,6 +272,8 @@ export interface HackathonAnalysisRepo {
     threadId: number,
     pinnedMessageId: number | null,
   ): Promise<void>;
+  // Clears the topic link on one analysis (unlink hackathon from topic).
+  clearTopicLink(teamId: TeamId, analysisId: string): Promise<void>;
   // hackathon-participation (design.md decision 3): compare-and-set claim on
   // topic creation. Wins only when the row still holds `expectedThreadId`
   // (null, or the stale id whose verifying post reported the thread gone) and
@@ -358,6 +360,8 @@ export interface NlConfirmationRepo {
   ): Promise<NlConfirmation | null>;
   tryConsume(id: string, now: number): Promise<boolean>;
   cancel(id: string, now: number): Promise<boolean>;
+  // Replace slots on a still-pending confirmation (disambiguation → confirm).
+  updateSlots(id: string, slots: NlSlots): Promise<void>;
 }
 
 // Public GitHub repo metadata used to enrich a suggested repo (design.md
@@ -388,6 +392,9 @@ export interface TopicCreateOptions {
 
 export interface ForumTopicManager {
   create(chatId: number, name: string, options?: TopicCreateOptions): Promise<number>;
+  // Best-effort close/reopen of an existing forum topic (same thread id).
+  close(chatId: number, threadId: number): Promise<void>;
+  reopen(chatId: number, threadId: number): Promise<void>;
 }
 
 // Semantic post options (hackathon-participation design.md decision 1): the
@@ -398,6 +405,8 @@ export interface ForumTopicManager {
 export interface PostOptions {
   participateSlug?: string;
   nlConfirmId?: string;
+  // Disambiguation buttons: `nl:p:<id>:<index>` (≤64 bytes with UUID id).
+  nlPick?: { confirmId: string; labels: string[] };
 }
 
 // design.md "Interfaces / Contracts". `post` returns the new message id
@@ -410,6 +419,12 @@ export interface ChatPublisher {
     text: string,
     options?: PostOptions,
   ): Promise<number>;
+  editMessage(
+    chatId: number,
+    messageId: number,
+    text: string,
+    options?: PostOptions,
+  ): Promise<void>;
   pin(chatId: number, messageId: number): Promise<void>;
   unpin(chatId: number, messageId: number): Promise<void>;
   // Removes the inline keyboard from a message (throws PublishFailedError).

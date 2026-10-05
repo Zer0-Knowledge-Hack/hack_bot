@@ -12,6 +12,8 @@ export const PARTICIPATE_CALLBACK_PREFIX = "hp:";
 // NL mutate confirmation buttons: `nl:ok:<uuid>` / `nl:no:<uuid>` (≤64 bytes).
 export const NL_CONFIRM_OK_PREFIX = "nl:ok:";
 export const NL_CONFIRM_NO_PREFIX = "nl:no:";
+// NL disambiguation pick: `nl:p:<uuid>:<index>`.
+export const NL_PICK_PREFIX = "nl:p:";
 
 // design.md "Time budget": Telegram publish 10 s. grammY has no default
 // timeout, so each call carries its own abort signal; a timeout surfaces as
@@ -25,6 +27,12 @@ type GrammySignal = Parameters<Api["getMe"]>[0];
 const publishSignal = (): GrammySignal =>
   AbortSignal.timeout(PUBLISH_TIMEOUT_MS) as unknown as GrammySignal;
 
+function truncateLabel(label: string, max = 40): string {
+  const trimmed = label.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max - 1)}…`;
+}
+
 function replyMarkupFor(options: PostOptions | undefined):
   | { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }
   | undefined {
@@ -37,6 +45,17 @@ function replyMarkupFor(options: PostOptions | undefined):
           { text: nlConfirmButtons.cancel, callback_data: `${NL_CONFIRM_NO_PREFIX}${id}` },
         ],
       ],
+    };
+  }
+  if (options?.nlPick !== undefined) {
+    const { confirmId, labels } = options.nlPick;
+    return {
+      inline_keyboard: labels.slice(0, 8).map((label, index) => [
+        {
+          text: truncateLabel(label),
+          callback_data: `${NL_PICK_PREFIX}${confirmId}:${index}`,
+        },
+      ]),
     };
   }
   if (options?.participateSlug !== undefined) {
@@ -103,6 +122,24 @@ export function createTelegramChatPublisher(api: Api): ChatPublisher {
         await api.editMessageReplyMarkup(chatId, messageId, undefined, publishSignal());
       } catch (err) {
         throw new PublishFailedError("editMessageReplyMarkup failed", classifyTelegramFailure(err));
+      }
+    },
+
+    async editMessage(chatId, messageId, text, options) {
+      try {
+        const markup = replyMarkupFor(options);
+        await api.editMessageText(
+          chatId,
+          messageId,
+          text,
+          {
+            link_preview_options: { is_disabled: true },
+            ...(markup !== undefined ? { reply_markup: markup } : {}),
+          },
+          publishSignal(),
+        );
+      } catch (err) {
+        throw new PublishFailedError("editMessageText failed", classifyTelegramFailure(err));
       }
     },
 

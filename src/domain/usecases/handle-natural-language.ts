@@ -41,10 +41,15 @@ import { listRepoLinks } from "./list-repo-links";
 import { readProfiles } from "./read-profiles";
 import {
   createNlConfirmation,
+  createNlDisambiguation,
   resolveNlConfirmation,
   type ResolveNlConfirmationCopy,
   type ResolveNlConfirmationDeps,
 } from "./resolve-nl-confirmation";
+import {
+  analysisToMatchCandidate,
+  matchHackathons,
+} from "../nl/hackathon-match";
 import { showAnalysis } from "./show-analysis";
 import { showTopicAnalysis } from "./show-topic-analysis";
 
@@ -59,6 +64,11 @@ export interface NlCopyBag {
   clarifyTopic: string;
   noTopicAnalysis: string;
   noAnalysis: string;
+  hackathonNotLinked: (slug: string) => string;
+  unlinkWrongTopic: (slug: string) => string;
+  unlinkWrongTopicMany: (slugs: string) => string;
+  pickUnlink: string;
+  noLinkedMatch: (query: string) => string;
   dataChannelOnly: string;
   profileDataChannelOnly: string;
   clarifyMembership: string;
@@ -216,6 +226,7 @@ export async function handleNaturalLanguage(
     callerTelegramUserId: input.callerTelegramUserId,
     inDataChannel,
     replyFromUserId: input.replyFromUserId ?? null,
+    replyToMessageId: input.replyToMessageId ?? null,
   }, deps);
 }
 
@@ -257,6 +268,7 @@ interface DispatchCtx {
   callerTelegramUserId: number;
   inDataChannel: boolean;
   replyFromUserId: number | null;
+  replyToMessageId: number | null;
 }
 
 async function dispatchIntent(
@@ -317,6 +329,21 @@ async function dispatchMutate(
   if (resolvedSlots.kind === "clarify") {
     return { kind: "reply", text: resolvedSlots.text };
   }
+  if (resolvedSlots.kind === "pick") {
+    return createNlDisambiguation(
+      {
+        teamId: ctx.teamId,
+        chatId: ctx.chatId,
+        threadId: ctx.threadId,
+        actorMembershipId: ctx.actorMembershipId,
+        intent,
+        pickSlugs: resolvedSlots.pickSlugs,
+        labels: resolvedSlots.labels,
+        promptText: deps.copy.pickUnlink,
+      },
+      deps,
+    );
+  }
 
   const summary = confirmSummaryFor(intent, resolvedSlots.slots, deps.copy.confirmSummaries);
   if (!summary) {
@@ -340,6 +367,7 @@ async function dispatchMutate(
 
 type ResolveSlotsResult =
   | { kind: "ok"; slots: NlSlots }
+  | { kind: "pick"; pickSlugs: string[]; labels: string[] }
   | { kind: "clarify"; text: string };
 
 async function resolveMutateSlots(
@@ -385,10 +413,83 @@ async function resolveMutateSlots(
     case "unlink_repo":
       if (!slots.repo) return { kind: "clarify", text: deps.copy.clarifyRepo };
       return { kind: "ok", slots };
-    case "link_hackathon_topic":
+    case "link_hackathon_topic": {
       if (ctx.threadId === null) return { kind: "clarify", text: deps.copy.clarifyThread };
-      if (!slots.slug) return { kind: "clarify", text: deps.copy.clarifySlug };
-      return { kind: "ok", slots };
+      if (slots.slug) return { kind: "ok", slots };
+      const already = await deps.hackathonAnalysisRepo.findByThreadId(ctx.teamId, ctx.threadId);
+      if (already) return { kind: "ok", slots: { ...slots, slug: already.slug } };
+      return { kind: "clarify", text: deps.copy.clarifySlug };
+    }
+    case "unlink_hackathon_topic": {
+      // Prefer the analysis linked to the current topic ("esta").
+      if (ctx.threadId !== null) {
+        const byThread = await deps.hackathonAnalysisRepo.findByThreadId(
+          ctx.teamId,
+          ctx.threadId,
+        );
+        if (byThread) {
+          return { kind: "ok", slots: { ...slots, slug: byThread.slug } };
+        }
+      }
+
+      // Reply-to the pinned (or General) analysis message → that hackathon.
+      if (ctx.replyToMessageId !== null) {
+        const byMessage = (await deps.hackathonAnalysisRepo.listByTeam(ctx.teamId)).find(
+          (row) =>
+            row.pinnedMessageId === ctx.replyToMessageId ||
+            row.generalMessageId === ctx.replyToMessageId,
+        );
+        if (byMessage?.threadId !== null && byMessage !== undefined) {
+          return { kind: "ok", slots: { ...slots, slug: byMessage.slug } };
+        }
+      }
+
+      const query = slots.slug?.trim() || slots.targetName?.trim() || "";
+      const linkedRows = (await deps.hackathonAnalysisRepo.listByTeam(ctx.teamId)).filter(
+        (row) => row.threadId !== null,
+      );
+      const linked = linkedRows.map(analysisToMatchCandidate);
+
+      if (query !== "") {
+        const hits = matchHackathons(linked, query);
+        if (hits.length === 1) {
+          return { kind: "ok", slots: { ...slots, slug: hits[0]!.slug } };
+        }
+        if (hits.length > 1) {
+          return {
+            kind: "pick",
+            pickSlugs: hits.map((h) => h.slug),
+            labels: hits.map((h) => h.name),
+          };
+        }
+        const bySlug = await deps.hackathonAnalysisRepo.findBySlug(ctx.teamId, query);
+        if (bySlug && bySlug.threadId === null) {
+          return { kind: "clarify", text: deps.copy.hackathonNotLinked(bySlug.slug) };
+        }
+        if (bySlug === null && slots.slug) {
+          return { kind: "clarify", text: deps.copy.noAnalysis };
+        }
+        return { kind: "clarify", text: deps.copy.noLinkedMatch(query) };
+      }
+
+      // Bare "esta" / no name: if only one linked analysis exists for the team,
+      // that's what the user means — even when standing in another topic where
+      // they just re-showed it.
+      if (linked.length === 1) {
+        return { kind: "ok", slots: { ...slots, slug: linked[0]!.slug } };
+      }
+      if (linked.length > 1) {
+        return {
+          kind: "pick",
+          pickSlugs: linked.map((h) => h.slug),
+          labels: linked.map((h) => h.name),
+        };
+      }
+      if (ctx.threadId === null) {
+        return { kind: "clarify", text: deps.copy.clarifyThread };
+      }
+      return { kind: "clarify", text: deps.copy.noTopicAnalysis };
+    }
     case "request_hackathon_analysis":
       if (!slots.url) return { kind: "clarify", text: deps.copy.clarifyUrl };
       return { kind: "ok", slots };

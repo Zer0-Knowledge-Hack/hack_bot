@@ -38,10 +38,12 @@ import { changeRole } from "./change-role";
 import { linkRepoToTopic } from "./link-repo-to-topic";
 import { unlinkRepo } from "./unlink-repo";
 import { linkAnalysisToTopic } from "./link-analysis-to-topic";
+import { unlinkHackathonFromTopic } from "./unlink-hackathon-from-topic";
 import { requestHackathonAnalysis } from "./request-hackathon-analysis";
 import { participateInHackathon } from "./participate-in-hackathon";
 import { parseRepoReference } from "../github";
 import { assertSafeUrl } from "../hackathon/url";
+import { analysisCopy } from "../copy";
 import type { ProfileFieldName } from "../entities";
 
 export interface ExecuteNlMutationInput {
@@ -208,6 +210,23 @@ export async function executeNlMutation(
       return {
         replyText:
           linked.notes.length > 0 ? linked.notes.join("\n") : `Se vinculó ${slug} a este tema.`,
+      };
+    }
+    case "unlink_hackathon_topic": {
+      const result = await unlinkHackathonFromTopic(
+        {
+          teamId: input.teamId,
+          actorMembershipId: input.actorMembershipId,
+          chatId: input.chatId,
+          threadId: input.threadId,
+          slug: input.slots.slug?.trim(),
+        },
+        deps,
+      );
+      return {
+        replyText: result.topicClosed
+          ? analysisCopy.unlinkedTopicClosed(result.slug)
+          : analysisCopy.unlinkedTopic(result.slug),
       };
     }
     case "request_hackathon_analysis": {

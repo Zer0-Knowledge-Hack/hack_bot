@@ -19,6 +19,7 @@ export const NL_INTENT_IDS = [
   "list_hackathons",
   "show_hackathon",
   "link_hackathon_topic",
+  "unlink_hackathon_topic",
   "request_hackathon_analysis",
   "show_topic_hackathon",
   "participate_hackathon",
@@ -47,6 +48,7 @@ export const NL_MUTATE_INTENTS = new Set<NlIntentId>([
   "link_repo",
   "unlink_repo",
   "link_hackathon_topic",
+  "unlink_hackathon_topic",
   "request_hackathon_analysis",
   "participate_hackathon",
 ]);
@@ -59,6 +61,8 @@ export type NlSlots = {
   profileField?: "full_name" | "emails" | "social_links" | "github_username";
   profileValue?: string;
   targetName?: string;
+  // Pending multi-match pick for unlink (and later other slug intents).
+  pickSlugs?: string[];
 };
 
 export interface IntentClassifierInput {
@@ -145,6 +149,12 @@ function parseSlots(raw: unknown): NlSlots {
   }
   if (typeof obj.targetName === "string" && obj.targetName.trim() !== "") {
     slots.targetName = obj.targetName.trim();
+  }
+  if (Array.isArray(obj.pickSlugs)) {
+    const pickSlugs = obj.pickSlugs.filter(
+      (item): item is string => typeof item === "string" && item.trim() !== "",
+    );
+    if (pickSlugs.length > 0) slots.pickSlugs = pickSlugs.map((s) => s.trim());
   }
   return slots;
 }

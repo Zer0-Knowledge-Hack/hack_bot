@@ -160,6 +160,17 @@ export function createD1HackathonAnalysisRepo(db: D1Database): HackathonAnalysis
       ]);
     },
 
+    async clearTopicLink(teamId: TeamId, analysisId: string): Promise<void> {
+      await db
+        .prepare(
+          `UPDATE hackathon_analyses
+            SET thread_id = NULL, pinned_message_id = NULL
+            WHERE team_id = ? AND id = ?`,
+        )
+        .bind(teamId, analysisId)
+        .run();
+    },
+
     // hackathon-participation: single conditional UPDATE, so of two racing
     // claims exactly one changes a row. `thread_id IS ?` matches null as
     // well as a concrete stale id.

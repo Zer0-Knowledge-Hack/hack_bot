@@ -454,6 +454,13 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
         existing.pinnedMessageId = pinnedMessageId;
       }
     },
+    clearTopicLink: async (teamId: TeamId, analysisId: string) => {
+      const existing = rows.find((r) => r.teamId === teamId && r.id === analysisId);
+      if (existing) {
+        existing.threadId = null;
+        existing.pinnedMessageId = null;
+      }
+    },
   };
 }
 
@@ -516,6 +523,10 @@ export function fakeNlConfirmationRepo(): NlConfirmationRepo & {
       if (!row || row.consumedAt !== null || row.expiresAt <= now) return false;
       row.consumedAt = now;
       return true;
+    },
+    updateSlots: async (id, slots) => {
+      const row = rows.find((r) => r.id === id);
+      if (row && row.consumedAt === null) row.slots = { ...slots };
     },
   };
 }
@@ -616,12 +627,14 @@ export function fakeChatPublisher(
   pinned: number[];
   unpinned: number[];
   cleared: Array<{ chatId: number; messageId: number }>;
+  edited: Array<{ chatId: number; messageId: number; text: string; options?: PostOptions }>;
 } {
   const posted: Array<{ chatId: number; threadId: number | null; text: string }> = [];
   const postOptions: Array<PostOptions | undefined> = [];
   const pinned: number[] = [];
   const unpinned: number[] = [];
   const cleared: Array<{ chatId: number; messageId: number }> = [];
+  const edited: Array<{ chatId: number; messageId: number; text: string; options?: PostOptions }> = [];
   let nextMessageId = 1;
   return {
     posted,
@@ -629,6 +642,7 @@ export function fakeChatPublisher(
     pinned,
     unpinned,
     cleared,
+    edited,
     post: async (chatId: number, threadId: number | null, text: string, options?: PostOptions) => {
       if (opts.throws) {
         throw new PublishFailedError("sendMessage failed", opts.failureClass ?? "rejected");
@@ -642,6 +656,12 @@ export function fakeChatPublisher(
         throw new PublishFailedError("editMessageReplyMarkup failed", opts.failureClass ?? "rejected");
       }
       cleared.push({ chatId, messageId });
+    },
+    editMessage: async (chatId, messageId, text, options) => {
+      if (opts.throws) {
+        throw new PublishFailedError("editMessageText failed", opts.failureClass ?? "rejected");
+      }
+      edited.push({ chatId, messageId, text, options });
     },
     pin: async (_chatId: number, messageId: number) => {
       pinned.push(messageId);
@@ -661,12 +681,18 @@ export function fakeForumTopicManager(
   opts: { create?: TopicCreateStep[] } = {},
 ): ForumTopicManager & {
   created: Array<{ chatId: number; name: string; iconEmoji?: string; fallbackName?: string }>;
+  closed: Array<{ chatId: number; threadId: number }>;
+  reopened: Array<{ chatId: number; threadId: number }>;
 } {
   const created: Array<{ chatId: number; name: string; iconEmoji?: string; fallbackName?: string }> = [];
+  const closed: Array<{ chatId: number; threadId: number }> = [];
+  const reopened: Array<{ chatId: number; threadId: number }> = [];
   let createIdx = 0;
   let nextThreadId = 1000;
   return {
     created,
+    closed,
+    reopened,
     create: async (chatId: number, name: string, hint?: TopicCreateOptions) => {
       created.push({ chatId, name, ...hint });
       const script = opts.create;
@@ -676,6 +702,12 @@ export function fakeForumTopicManager(
         throw new ForumTopicCreateError("createForumTopic failed", step.fails);
       }
       return step ? step.threadId : nextThreadId++;
+    },
+    close: async (chatId: number, threadId: number) => {
+      closed.push({ chatId, threadId });
+    },
+    reopen: async (chatId: number, threadId: number) => {
+      reopened.push({ chatId, threadId });
     },
   };
 }

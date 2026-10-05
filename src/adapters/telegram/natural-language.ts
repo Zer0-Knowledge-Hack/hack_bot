@@ -26,7 +26,10 @@ import type {
   TeamRepo,
 } from "../../domain/ports";
 import { handleNaturalLanguage } from "../../domain/usecases/handle-natural-language";
-import { resolveNlConfirmation } from "../../domain/usecases/resolve-nl-confirmation";
+import {
+  resolveNlConfirmation,
+  resolveNlPick,
+} from "../../domain/usecases/resolve-nl-confirmation";
 import {
   ROLE_LABELS,
   commonCopy,
@@ -42,6 +45,7 @@ import {
 import {
   NL_CONFIRM_NO_PREFIX,
   NL_CONFIRM_OK_PREFIX,
+  NL_PICK_PREFIX,
 } from "./chat-publisher";
 import { isPrivateChat } from "./team-picker";
 import { callbackCallerLocation } from "./context";
@@ -143,7 +147,12 @@ function nlCopyBag() {
     clarifyTopic: nlCopy.clarifyTopic,
     noTopicAnalysis: nlCopy.noTopicAnalysis,
     noAnalysis: nlCopy.noAnalysis,
-    dataChannelOnly: nlCopy.dataChannelOnly,
+    hackathonNotLinked: nlCopy.hackathonNotLinked,
+    unlinkWrongTopic: nlCopy.unlinkWrongTopic,
+    unlinkWrongTopicMany: nlCopy.unlinkWrongTopicMany,
+    pickUnlink: nlCopy.pickUnlink,
+    noLinkedMatch: nlCopy.noLinkedMatch,
+    dataChannelOnly: profileCopy.dataChannelOnly,
     profileDataChannelOnly: nlConfirmCopy.profileDataChannelOnly,
     clarifyMembership: nlConfirmCopy.clarifyMembership,
     clarifyRepo: nlConfirmCopy.clarifyRepo,
@@ -177,6 +186,7 @@ function nlCopyBag() {
 
 const NL_OK = new RegExp(`^${NL_CONFIRM_OK_PREFIX}([0-9a-fA-F-]{8,64})$`);
 const NL_NO = new RegExp(`^${NL_CONFIRM_NO_PREFIX}([0-9a-fA-F-]{8,64})$`);
+const NL_PICK = new RegExp(`^${NL_PICK_PREFIX}([0-9a-fA-F-]{8,64}):(\\d+)$`);
 
 export function registerNlConfirmCallbacks(bot: Bot, deps: NaturalLanguageDeps): void {
   bot.callbackQuery(NL_OK, async (ctx) => {
@@ -185,6 +195,51 @@ export function registerNlConfirmCallbacks(bot: Bot, deps: NaturalLanguageDeps):
   bot.callbackQuery(NL_NO, async (ctx) => {
     await handleNlCallback(ctx, deps, "cancel");
   });
+  bot.callbackQuery(NL_PICK, async (ctx) => {
+    await handleNlPickCallback(ctx, deps);
+  });
+}
+
+async function handleNlPickCallback(ctx: Context, deps: NaturalLanguageDeps): Promise<void> {
+  const data = ctx.callbackQuery?.data ?? "";
+  const match = NL_PICK.exec(data);
+  const confirmationId = match?.[1];
+  const pickIndex = match?.[2] !== undefined ? Number(match[2]) : NaN;
+  const loc = callbackCallerLocation(ctx);
+  try {
+    await ctx.answerCallbackQuery();
+  } catch {
+    /* best-effort */
+  }
+  if (!confirmationId || !loc || !Number.isFinite(pickIndex)) return;
+
+  try {
+    const copy = nlCopyBag();
+    const result = await resolveNlPick(
+      {
+        chatId: loc.chatId,
+        callerTelegramUserId: loc.userId,
+        confirmationId,
+        pickIndex,
+        callbackMessageId: ctx.callbackQuery?.message?.message_id ?? null,
+      },
+      {
+        ...deps,
+        copy: copy.resolveCopy,
+        confirmPrompt: copy.confirmPrompt,
+        confirmSummaries: copy.confirmSummaries,
+      },
+    );
+    if (result.kind === "reply") {
+      await ctx.reply(result.text);
+    }
+  } catch (err) {
+    deps.logger.log({
+      event: "nl-pick-callback",
+      outcome: "error",
+      errorCode: errorCodeOf(err),
+    });
+  }
 }
 
 async function handleNlCallback(

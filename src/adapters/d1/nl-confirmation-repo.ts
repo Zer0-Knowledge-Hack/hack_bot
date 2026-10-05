@@ -6,6 +6,8 @@ import {
 import { asMembershipId, asTeamId } from "../../domain/ids";
 import type { NlConfirmationRepo } from "../../domain/ports";
 
+import type { NlSlots } from "../../domain/nl/intents";
+
 interface ConfirmationRow {
   id: string;
   team_id: string;
@@ -98,6 +100,13 @@ export function createD1NlConfirmationRepo(db: D1Database): NlConfirmationRepo {
     async cancel(id: string, now: number): Promise<boolean> {
       // Same CAS as tryConsume: marks consumed without execute.
       return this.tryConsume(id, now);
+    },
+
+    async updateSlots(id: string, slots: NlSlots): Promise<void> {
+      await db
+        .prepare("UPDATE nl_confirmations SET slots_json = ? WHERE id = ? AND consumed_at IS NULL")
+        .bind(JSON.stringify(slots), id)
+        .run();
     },
   };
 }

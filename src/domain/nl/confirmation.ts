@@ -14,6 +14,7 @@ export type NlMutateIntentId =
   | "link_repo"
   | "unlink_repo"
   | "link_hackathon_topic"
+  | "unlink_hackathon_topic"
   | "request_hackathon_analysis"
   | "participate_hackathon";
 
@@ -45,7 +46,34 @@ export function parseNlSlotsJson(raw: string): NlSlots {
     if (value === null || typeof value !== "object" || Array.isArray(value)) {
       return {};
     }
-    return value as NlSlots;
+    const obj = value as Record<string, unknown>;
+    const slots: NlSlots = {};
+    if (typeof obj.slug === "string" && obj.slug.trim() !== "") slots.slug = obj.slug.trim();
+    if (typeof obj.url === "string" && obj.url.trim() !== "") slots.url = obj.url.trim();
+    if (typeof obj.repo === "string" && obj.repo.trim() !== "") slots.repo = obj.repo.trim();
+    if (typeof obj.membershipId === "string" && obj.membershipId.trim() !== "") {
+      slots.membershipId = obj.membershipId.trim();
+    }
+    if (
+      typeof obj.profileField === "string" &&
+      (obj.profileField === "full_name" ||
+        obj.profileField === "emails" ||
+        obj.profileField === "social_links" ||
+        obj.profileField === "github_username")
+    ) {
+      slots.profileField = obj.profileField;
+    }
+    if (typeof obj.profileValue === "string") slots.profileValue = obj.profileValue;
+    if (typeof obj.targetName === "string" && obj.targetName.trim() !== "") {
+      slots.targetName = obj.targetName.trim();
+    }
+    if (Array.isArray(obj.pickSlugs)) {
+      const pickSlugs = obj.pickSlugs.filter(
+        (item): item is string => typeof item === "string" && item.trim() !== "",
+      );
+      if (pickSlugs.length > 0) slots.pickSlugs = pickSlugs.map((s) => s.trim());
+    }
+    return slots;
   } catch {
     return {};
   }

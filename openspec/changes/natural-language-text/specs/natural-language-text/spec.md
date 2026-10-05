@@ -43,7 +43,7 @@ The system MUST accept natural-language handling only in group or supergroup cha
 
 ### Requirement: Closed Intent Coverage
 
-The system MUST classify eligible Spanish utterances into a closed intent set that covers every existing group capability: `help`, `setup_team`, `join_team`, `bind_data_channel`, `show_profiles`, `set_profile_field`, `promote_member`, `demote_member`, `link_repo`, `unlink_repo`, `list_repos`, `list_hackathons`, `show_hackathon`, `link_hackathon_topic`, `request_hackathon_analysis`, `show_topic_hackathon`, `participate_hackathon`, and `unknown`. Each non-`help`/`unknown` intent MUST dispatch to the same domain use case (or equivalent path) the matching slash command uses today, with the same authorization rules.
+The system MUST classify eligible Spanish utterances into a closed intent set that covers every existing group capability: `help`, `setup_team`, `join_team`, `bind_data_channel`, `show_profiles`, `set_profile_field`, `promote_member`, `demote_member`, `link_repo`, `unlink_repo`, `list_repos`, `list_hackathons`, `show_hackathon`, `link_hackathon_topic`, `unlink_hackathon_topic`, `request_hackathon_analysis`, `show_topic_hackathon`, `participate_hackathon`, and `unknown`. Each non-`help`/`unknown` intent MUST dispatch to the same domain use case (or equivalent path) the matching slash command uses today, with the same authorization rules.
 
 #### Scenario: List hackathons via NL
 

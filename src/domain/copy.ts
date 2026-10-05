@@ -59,6 +59,9 @@ export const analysisCopy = {
   replacedLink: (slug: string) => `Se reemplazó el vínculo anterior del tema (era ${slug}).`,
   movedLink: "Se movió el vínculo de este análisis desde otro tema.",
   pinFailed: "No se pudo fijar el mensaje; se publicó sin fijar.",
+  unlinkedTopic: (slug: string) => `Se desvinculó ${slug} de este tema.`,
+  unlinkedTopicClosed: (slug: string) =>
+    `Se desvinculó ${slug} de este tema y se cerró el tema.`,
 };
 
 // hackathon-participation replies composed by the domain. A null link (chat

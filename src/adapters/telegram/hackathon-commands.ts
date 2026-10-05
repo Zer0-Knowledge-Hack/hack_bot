@@ -1,5 +1,11 @@
 import type { Bot, Context } from "grammy";
-import { NotFoundError, UnsafeUrlError } from "../../domain/errors";
+import { analysisCopy } from "../../domain/copy";
+import {
+  AnalysisNotFoundError,
+  NotFoundError,
+  UnauthorizedError,
+  UnsafeUrlError,
+} from "../../domain/errors";
 import { classifyHackathonArgument, parseJoinArgument } from "../../domain/hackathon/argument";
 import { assertSafeUrl } from "../../domain/hackathon/url";
 import type {
@@ -22,6 +28,7 @@ import { listAnalyses } from "../../domain/usecases/list-analyses";
 import { requestHackathonAnalysis } from "../../domain/usecases/request-hackathon-analysis";
 import { showAnalysis } from "../../domain/usecases/show-analysis";
 import { showTopicAnalysis } from "../../domain/usecases/show-topic-analysis";
+import { unlinkHackathonFromTopic } from "../../domain/usecases/unlink-hackathon-from-topic";
 import { commonCopy, hackathonCopy, participateCopy } from "./copy";
 import { runCommand } from "./command-outcome";
 import type { DomainErrorReasons, DomainErrorReplies } from "./command-outcome";
@@ -157,6 +164,52 @@ export function registerHackathonCommands(bot: Bot, deps: HackathonCommandDeps):
           deps,
         );
         return { okReply: result.replyText, teamId: team.id };
+      },
+    );
+  });
+
+  // Admin-only unlink of the hackathon linked to the current forum topic,
+  // then best-effort close the topic (same thread id for a later reopen).
+  bot.command("unlinkhackathon", async (ctx) => {
+    const loc = await requireGroupCaller(ctx, deps, "unlink-hackathon");
+    if (!loc) return;
+    if (loc.threadId === null) {
+      deps.logger.log({
+        event: "unlink-hackathon",
+        outcome: "refused",
+        errorCode: "MissingThread",
+      });
+      await ctx.reply(hackathonCopy.unlinkTopicUsage);
+      return;
+    }
+    await runCommand(
+      {
+        event: "unlink-hackathon",
+        logger: deps.logger,
+        reply: (text) => ctx.reply(text),
+        errorReplies: {
+          ...ERROR_REPLIES,
+          UnauthorizedError: hackathonCopy.unlinkTopicAdminOnly,
+          AnalysisNotFoundError: hackathonCopy.noTopicLink,
+        },
+      },
+      async () => {
+        const { team, membership } = await resolveMember(deps, loc);
+        const result = await unlinkHackathonFromTopic(
+          {
+            teamId: team.id,
+            actorMembershipId: membership.id,
+            chatId: loc.chatId,
+            threadId: loc.threadId,
+          },
+          deps,
+        );
+        return {
+          okReply: result.topicClosed
+            ? analysisCopy.unlinkedTopicClosed(result.slug)
+            : analysisCopy.unlinkedTopic(result.slug),
+          teamId: team.id,
+        };
       },
     );
   });

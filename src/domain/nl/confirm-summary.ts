@@ -11,6 +11,7 @@ export interface NlConfirmSummaries {
   link_repo: (repo: string) => string;
   unlink_repo: (repo: string) => string;
   link_hackathon_topic: (slug: string) => string;
+  unlink_hackathon_topic: (slug: string) => string;
   request_hackathon_analysis: string;
   participate_hackathon: (slug: string) => string;
 }
@@ -40,6 +41,8 @@ export function confirmSummaryFor(
       return slots.repo ? summaries.unlink_repo(slots.repo) : null;
     case "link_hackathon_topic":
       return slots.slug ? summaries.link_hackathon_topic(slots.slug) : null;
+    case "unlink_hackathon_topic":
+      return slots.slug ? summaries.unlink_hackathon_topic(slots.slug) : null;
     case "request_hackathon_analysis":
       return slots.url ? summaries.request_hackathon_analysis : null;
     case "participate_hackathon":

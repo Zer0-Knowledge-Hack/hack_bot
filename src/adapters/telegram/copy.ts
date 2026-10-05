@@ -30,6 +30,10 @@ export const hackathonCopy = {
     "No se pudo iniciar el análisis; inténtalo de nuevo en un minuto. No se contó en el límite diario.",
   notConfigured: analysisCopy.notConfigured,
   publishFailed: "No se pudo publicar en este chat ahora mismo. Inténtalo de nuevo en un minuto.",
+  unlinkTopicUsage: "Ejecuta /unlinkhackathon dentro del tema vinculado al hackathon.",
+  unlinkTopicAdminOnly:
+    "Solo un administrador del equipo puede desvincular un hackathon del tema.",
+  noTopicLink: "Este tema no tiene un hackathon vinculado.",
 };
 
 // Roles are exposed to users only through this exhaustive map, so a new Role
@@ -147,6 +151,15 @@ export const nlCopy = {
     "Esa consulta aplica dentro de un tema con un hackathon vinculado. Entrá al tema y pedímelo de nuevo.",
   noTopicAnalysis:
     "Este tema no tiene un hackathon vinculado. Pedí la lista con «hackathons» o usá /hackathons.",
+  hackathonNotLinked: (slug: string) =>
+    `«${slug}» no está vinculado a ningún tema. Pedí la lista con «hackathons».`,
+  unlinkWrongTopic: (slug: string) =>
+    `Este tema no tiene un hackathon vinculado. El vinculado ahora es «${slug}»: andá a ese tema y pedí desvincular, o pedime «desvincula ${slug}».`,
+  unlinkWrongTopicMany: (slugs: string) =>
+    `Este tema no tiene un hackathon vinculado. Los vinculados son: ${slugs}. Andá a ese tema o pedime desvincular con el nombre.`,
+  pickUnlink: "¿Cuál desvinculo? Elegí una opción:",
+  noLinkedMatch: (query: string) =>
+    `No encontré un hackathon vinculado que coincida con «${query}». Pedí la lista con «hackathons».`,
   noAnalysis: hackathonCopy.noAnalysis,
   dataChannelOnly: profileCopy.dataChannelOnly,
 };
@@ -180,6 +193,7 @@ export const nlConfirmCopy = {
     link_repo: (repo: string) => `vincular ${repo} a este tema`,
     unlink_repo: (repo: string) => `desvincular ${repo}`,
     link_hackathon_topic: (slug: string) => `vincular el hackathon ${slug} a este tema`,
+    unlink_hackathon_topic: (slug: string) => `desvincular el hackathon ${slug} de este tema`,
     request_hackathon_analysis: "lanzar un análisis nuevo de hackathon",
     participate_hackathon: (slug: string) => `participar en ${slug}`,
   },
