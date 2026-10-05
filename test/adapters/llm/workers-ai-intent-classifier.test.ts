@@ -96,6 +96,35 @@ describe("createWorkersAiIntentClassifier", () => {
     );
   });
 
+  it("disables thinking for GLM model ids only", async () => {
+    const glmInputs: Record<string, unknown>[] = [];
+    const otherInputs: Record<string, unknown>[] = [];
+    const ok = {
+      response: JSON.stringify({ intent: "help", confidence: 0.9, slots: {} }),
+    };
+
+    await createWorkersAiIntentClassifier({
+      modelId: "@cf/zai-org/glm-4.7-flash",
+      run: async (_model, inputs) => {
+        glmInputs.push(inputs);
+        return ok;
+      },
+    }).classify(baseInput("ayuda"), neverAborts());
+
+    await createWorkersAiIntentClassifier({
+      modelId: VALID_MODEL,
+      run: async (_model, inputs) => {
+        otherInputs.push(inputs);
+        return ok;
+      },
+    }).classify(baseInput("ayuda"), neverAborts());
+
+    expect(glmInputs[0]).toMatchObject({
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    expect(otherInputs[0]).not.toHaveProperty("chat_template_kwargs");
+  });
+
   it("never logs the utterance (no console side effects with user text)", async () => {
     const logs: unknown[] = [];
     const original = console.log;

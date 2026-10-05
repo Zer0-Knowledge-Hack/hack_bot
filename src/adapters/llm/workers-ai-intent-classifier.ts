@@ -14,6 +14,17 @@ const QUOTA_ERROR_PATTERN = /quota|rate.?limit|429/i;
 const TEMPERATURE = 0;
 const MAX_TOKENS = 400;
 
+// Same GLM override as workers-ai-extractor: default thinking burns max_tokens
+// and leaves message.content null / truncated. Qwen breaks if thinking is
+// forced off — only apply to @cf/zai-org/glm-* ids.
+const GLM_MODEL_PREFIX = "@cf/zai-org/glm-";
+
+function modelInputOverrides(modelId: string): Record<string, unknown> {
+  return modelId.startsWith(GLM_MODEL_PREFIX)
+    ? { chat_template_kwargs: { enable_thinking: false } }
+    : {};
+}
+
 export type WorkersAiRun = (
   model: string,
   inputs: Record<string, unknown>,
@@ -30,6 +41,8 @@ Reply with ONLY a JSON object: {"intent":"<id>","confidence":0.0-1.0,"slots":{..
 Allowed intent ids: ${NL_INTENT_IDS.join(", ")}.
 Slots (optional strings): slug, url, repo, membershipId, profileField, profileValue, targetName.
 profileField must be one of: full_name, emails, social_links, github_username.
+For hackathon names in natural language (e.g. "BNB Chain", "Meta VR"), put the human name in targetName — do NOT invent slugs.
+In a forum topic, "esta/este hackathon" with no name → unlink_hackathon_topic or link_hackathon_topic with empty slug/targetName (topic context).
 If unsure, use intent "unknown" with low confidence. Never invent intents.`;
 
 function isQuotaExhausted(err: unknown): boolean {
@@ -127,7 +140,12 @@ export function createWorkersAiIntentClassifier(
           Promise.resolve(
             run(
               modelId,
-              { messages, temperature: TEMPERATURE, max_tokens: MAX_TOKENS },
+              {
+                messages,
+                temperature: TEMPERATURE,
+                max_tokens: MAX_TOKENS,
+                ...modelInputOverrides(modelId),
+              },
               { signal },
             ),
           ),
