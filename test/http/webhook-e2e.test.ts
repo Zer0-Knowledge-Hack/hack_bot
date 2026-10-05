@@ -266,3 +266,123 @@ describe("POST /telegram/webhook — response policy (RES-001 / RES-002)", () =>
     consoleSpy.mockRestore();
   });
 });
+
+describe("POST /telegram/webhook — nl: callbacks (natural-language-text)", () => {
+  async function seedNlConfirm(opts: {
+    teamId: string;
+    membershipId: string;
+    chatId: number;
+    userId: number;
+    confirmId: string;
+    messageId: number;
+  }) {
+    await env.DB.prepare(
+      "INSERT INTO teams (id, telegram_chat_id, created_at) VALUES (?, ?, ?)",
+    )
+      .bind(opts.teamId, opts.chatId, 0)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO members (id, telegram_user_id, created_at) VALUES (?, ?, ?)",
+    )
+      .bind(`member-${opts.teamId}`, opts.userId, 0)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO memberships (id, team_id, member_id, role, joined_at) VALUES (?, ?, ?, ?, ?)",
+    )
+      .bind(opts.membershipId, opts.teamId, `member-${opts.teamId}`, "member", 0)
+      .run();
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO nl_confirmations
+        (id, team_id, chat_id, thread_id, actor_membership_id, intent, slots_json,
+         confirm_message_id, expires_at, consumed_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        opts.confirmId,
+        opts.teamId,
+        opts.chatId,
+        null,
+        opts.membershipId,
+        "join_team",
+        "{}",
+        opts.messageId,
+        now + 600_000,
+        null,
+        now,
+      )
+      .run();
+  }
+
+  function groupCallback(chatId: number, userId: number, data: string, messageId: number) {
+    return {
+      update_id: nextUpdateId++,
+      callback_query: {
+        id: `cb-${nextUpdateId}`,
+        from: { id: userId, is_bot: false, first_name: "User" },
+        chat_instance: "e2e",
+        data,
+        message: {
+          message_id: messageId,
+          date: 0,
+          chat: { id: chatId, type: "supergroup", title: "E2E group" },
+        },
+      },
+    };
+  }
+
+  it("routes nl:ok through composition and consumes the confirmation", async () => {
+    const calls = stubTelegramApi();
+    const chatId = 555_100;
+    const userId = 900_100;
+    const confirmId = "11111111-2222-3333-4444-555555555555";
+    await seedNlConfirm({
+      teamId: "team-nl-e2e-ok",
+      membershipId: "mem-nl-e2e-ok",
+      chatId,
+      userId,
+      confirmId,
+      messageId: 7001,
+    });
+
+    const res = await post(groupCallback(chatId, userId, `nl:ok:${confirmId}`, 7001));
+
+    expect(res.status).toBe(200);
+    expect(calls.some((c) => c.method === "answerCallbackQuery")).toBe(true);
+    expect(calls.some((c) => c.method === "sendMessage")).toBe(true);
+
+    const row = await env.DB.prepare(
+      "SELECT consumed_at FROM nl_confirmations WHERE id = ?",
+    )
+      .bind(confirmId)
+      .first<{ consumed_at: number | null }>();
+    expect(row?.consumed_at).not.toBeNull();
+  });
+
+  it("ignores an unrecognized nl: payload without consuming", async () => {
+    const calls = stubTelegramApi();
+    const chatId = 555_101;
+    const userId = 900_101;
+    const confirmId = "22222222-2222-3333-4444-555555555555";
+    await seedNlConfirm({
+      teamId: "team-nl-e2e-ign",
+      membershipId: "mem-nl-e2e-ign",
+      chatId,
+      userId,
+      confirmId,
+      messageId: 7002,
+    });
+
+    const res = await post(groupCallback(chatId, userId, "nl:weird:payload", 7002));
+
+    expect(res.status).toBe(200);
+    expect(calls.some((c) => c.method === "answerCallbackQuery")).toBe(false);
+
+    const row = await env.DB.prepare(
+      "SELECT consumed_at FROM nl_confirmations WHERE id = ?",
+    )
+      .bind(confirmId)
+      .first<{ consumed_at: number | null }>();
+    expect(row?.consumed_at).toBeNull();
+  });
+});

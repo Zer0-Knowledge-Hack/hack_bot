@@ -150,3 +150,37 @@ export const nlCopy = {
   noAnalysis: hackathonCopy.noAnalysis,
   dataChannelOnly: profileCopy.dataChannelOnly,
 };
+
+export const nlConfirmButtons = {
+  confirm: "Confirmar",
+  cancel: "Cancelar",
+};
+
+export const nlConfirmCopy = {
+  hint: "También podés responder sí o cancelar a este mensaje.",
+  cancelled: "Listo, cancelé la acción.",
+  busy: "Esa confirmación ya se usó o expiró.",
+  wrongActor: "Solo quien pidió la acción puede confirmarla.",
+  lexiconHint: "Respondé sí o cancelar, o usá el botón.",
+  profileDataChannelOnly:
+    "Pedí el cambio de perfil en el canal de datos del equipo (no acá).",
+  clarifyMembership: "¿A qué miembro? Respondé citando su mensaje o pasando el id de membresía.",
+  clarifyRepo: "¿Qué repositorio? Pasame owner/repo.",
+  clarifyUrl: "¿Qué URL del hackathon querés analizar?",
+  clarifyThread: "Esa acción necesita correrse dentro del tema correspondiente.",
+  confirmPrompt: (summary: string) =>
+    `¿Confirmás ${summary}?\nTambién podés responder sí o cancelar a este mensaje.`,
+  summaries: {
+    setup_team: "registrar este grupo como equipo",
+    join_team: "unirte a este equipo",
+    bind_data_channel: "usar este tema como canal de datos",
+    set_profile_field: (field: string) => `actualizar tu campo de perfil «${field}»`,
+    promote_member: (id: string) => `promover a ${id} a administrador`,
+    demote_member: (id: string) => `dejar a ${id} como miembro`,
+    link_repo: (repo: string) => `vincular ${repo} a este tema`,
+    unlink_repo: (repo: string) => `desvincular ${repo}`,
+    link_hackathon_topic: (slug: string) => `vincular el hackathon ${slug} a este tema`,
+    request_hackathon_analysis: "lanzar un análisis nuevo de hackathon",
+    participate_hackathon: (slug: string) => `participar en ${slug}`,
+  },
+};

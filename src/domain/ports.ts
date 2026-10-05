@@ -16,6 +16,7 @@ import type { MemberId, MembershipId, TeamId } from "./ids";
 import type { Role } from "./entities";
 import type { ExtractionAttemptDiagnostics, LlmParseFailureCode } from "./errors";
 import type { IntentClassifierInput, IntentResult } from "./nl/intents";
+import type { NlConfirmation } from "./nl/confirmation";
 
 // Every tenant-scoped method takes TeamId as its first parameter. This is a
 // deliberate design constraint (see design.md "Tenancy") that makes
@@ -346,6 +347,19 @@ export interface IntentClassifier {
   classify(input: IntentClassifierInput, signal: AbortSignal): Promise<IntentResult>;
 }
 
+// Pending NL mutate confirmations (design.md "Interfaces / Contracts").
+// tryConsume / cancel are CAS: win only when consumed_at IS NULL and not expired.
+export interface NlConfirmationRepo {
+  create(row: NlConfirmation): Promise<void>;
+  findById(id: string): Promise<NlConfirmation | null>;
+  findByConfirmMessage(
+    chatId: number,
+    confirmMessageId: number,
+  ): Promise<NlConfirmation | null>;
+  tryConsume(id: string, now: number): Promise<boolean>;
+  cancel(id: string, now: number): Promise<boolean>;
+}
+
 // Public GitHub repo metadata used to enrich a suggested repo (design.md
 // "Data Flow": "repoLinks+metadata"). The adapter (src/adapters/github/
 // repo-metadata.ts, PR8) is the only implementation; wiring this into
@@ -379,9 +393,11 @@ export interface ForumTopicManager {
 // Semantic post options (hackathon-participation design.md decision 1): the
 // domain never builds a keyboard. `participateSlug` asks the adapter to
 // attach the participation button for that analysis; the label and the
-// callback encoding stay in the adapter.
+// callback encoding stay in the adapter. `nlConfirmId` attaches Confirm /
+// Cancel buttons for a pending NL mutate confirmation (`nl:ok:` / `nl:no:`).
 export interface PostOptions {
   participateSlug?: string;
+  nlConfirmId?: string;
 }
 
 // design.md "Interfaces / Contracts". `post` returns the new message id

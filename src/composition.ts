@@ -7,6 +7,7 @@ import { createD1AnalysisJobRepo } from "./adapters/d1/analysis-job-repo";
 import { createD1AnalysisQuota } from "./adapters/d1/analysis-quota";
 import { createD1HackathonAnalysisRepo } from "./adapters/d1/hackathon-analysis-repo";
 import { createD1NlClassifyQuota } from "./adapters/d1/nl-classify-quota";
+import { createD1NlConfirmationRepo } from "./adapters/d1/nl-confirmation-repo";
 import { createStaticFetcher } from "./adapters/http/safe-fetcher";
 import { createQueueAnalysisJobQueue } from "./adapters/queue/analysis-job-queue";
 import { createWorkersAiExtractor } from "./adapters/llm/workers-ai-extractor";
@@ -125,6 +126,7 @@ export function buildBot(env: Env) {
     idGen,
     logger,
     nlClassifyQuota: createD1NlClassifyQuota(env.DB),
+    nlConfirmationRepo: createD1NlConfirmationRepo(env.DB),
     intentClassifier: createWorkersAiIntentClassifier({
       run: (model, inputs, options) => env.AI.run(model, inputs, options),
       modelId: nlModelPrimary,

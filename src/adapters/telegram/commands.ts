@@ -25,6 +25,7 @@ import type {
   MemberRepo,
   MembershipRepo,
   NlClassifyQuota,
+  NlConfirmationRepo,
   ProfileRepo,
   RepoTopicLinkRepo,
   TeamRepo,
@@ -82,6 +83,7 @@ export interface CommandDeps extends HackathonCommandDeps {
   idGen: IdGen;
   logger: Logger;
   nlClassifyQuota: NlClassifyQuota;
+  nlConfirmationRepo: NlConfirmationRepo;
   intentClassifier: IntentClassifier;
   nlModelPrimary: string;
 }

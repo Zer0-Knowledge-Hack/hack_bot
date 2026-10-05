@@ -44,6 +44,7 @@ import type {
   MemberRepo,
   MembershipRepo,
   NlClassifyQuota,
+  NlConfirmationRepo,
   PageFetcher,
   PostOptions,
   ProfileRepo,
@@ -53,11 +54,12 @@ import type {
   TopicCreateFailure,
 } from "../../src/domain/ports";
 import type { MemberId, MembershipId, TeamId } from "../../src/domain/ids";
-import { stubNlIntent } from "../../src/domain/nl/eligibility";
 import type {
   IntentClassifierInput,
   IntentResult,
 } from "../../src/domain/nl/intents";
+import type { NlConfirmation } from "../../src/domain/nl/confirmation";
+import { stubNlIntent } from "../../src/domain/nl/eligibility";
 
 // In-memory fakes for domain tests. Pure Vitest, no Workers runtime needed —
 // this proves the domain layer has zero infrastructure dependencies.
@@ -487,6 +489,33 @@ export function fakeNlClassifyQuota(
     reserve: async (teamId, dayUtc, cap) => {
       reserved.push({ teamId, dayUtc, cap });
       return opts.allow ?? true;
+    },
+  };
+}
+
+export function fakeNlConfirmationRepo(): NlConfirmationRepo & {
+  rows: NlConfirmation[];
+} {
+  const rows: NlConfirmation[] = [];
+  return {
+    rows,
+    create: async (row) => {
+      rows.push({ ...row, slots: { ...row.slots } });
+    },
+    findById: async (id) => rows.find((r) => r.id === id) ?? null,
+    findByConfirmMessage: async (chatId, confirmMessageId) =>
+      rows.find((r) => r.chatId === chatId && r.confirmMessageId === confirmMessageId) ?? null,
+    tryConsume: async (id, now) => {
+      const row = rows.find((r) => r.id === id);
+      if (!row || row.consumedAt !== null || row.expiresAt <= now) return false;
+      row.consumedAt = now;
+      return true;
+    },
+    cancel: async (id, now) => {
+      const row = rows.find((r) => r.id === id);
+      if (!row || row.consumedAt !== null || row.expiresAt <= now) return false;
+      row.consumedAt = now;
+      return true;
     },
   };
 }

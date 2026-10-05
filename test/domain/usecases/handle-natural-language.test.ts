@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSafeLogger } from "../../../src/adapters/log/safe-logger";
-import { commonCopy, nlCopy, profileCopy } from "../../../src/adapters/telegram/copy";
+import { commonCopy, nlConfirmCopy, nlCopy, profileCopy } from "../../../src/adapters/telegram/copy";
 import { asMemberId, asMembershipId, asTeamId } from "../../../src/domain/ids";
 import { NL_CLASSIFY_DAILY_CAP } from "../../../src/domain/nl/intents";
 import {
@@ -9,15 +9,24 @@ import {
   type NlCopyBag,
 } from "../../../src/domain/usecases/handle-natural-language";
 import {
+  fakeAnalysisJobQueue,
+  fakeAnalysisJobRepo,
+  fakeAnalysisQuota,
+  fakeChatAdminChecker,
+  fakeChatPublisher,
   fakeClock,
+  fakeForumTopicManager,
   fakeGithubOrgClaimRepo,
   fakeHackathonAnalysisRepo,
+  fakeIdGen,
   fakeIntentClassifier,
   fakeMemberRepo,
   fakeMembershipRepo,
   fakeNlClassifyQuota,
+  fakeNlConfirmationRepo,
   fakeProfileRepo,
   fakeRepoTopicLinkRepo,
+  fakeSleep,
   fakeTeamRepo,
 } from "../../fakes";
 
@@ -28,12 +37,28 @@ const COPY: NlCopyBag = {
   classifyFailed: nlCopy.classifyFailed,
   quota: nlCopy.quota,
   notMember: commonCopy.notMember,
-  mutateDeferred: nlCopy.mutateDeferred,
   clarifySlug: nlCopy.clarifySlug,
   clarifyTopic: nlCopy.clarifyTopic,
   noTopicAnalysis: nlCopy.noTopicAnalysis,
   noAnalysis: nlCopy.noAnalysis,
   dataChannelOnly: profileCopy.dataChannelOnly,
+  profileDataChannelOnly: nlConfirmCopy.profileDataChannelOnly,
+  clarifyMembership: nlConfirmCopy.clarifyMembership,
+  clarifyRepo: nlConfirmCopy.clarifyRepo,
+  clarifyUrl: nlConfirmCopy.clarifyUrl,
+  clarifyThread: nlConfirmCopy.clarifyThread,
+  lexiconHint: nlConfirmCopy.lexiconHint,
+  confirmPrompt: nlConfirmCopy.confirmPrompt,
+  confirmSummaries: nlConfirmCopy.summaries,
+  resolveCopy: {
+    cancelled: nlConfirmCopy.cancelled,
+    busy: nlConfirmCopy.busy,
+    wrongActor: nlConfirmCopy.wrongActor,
+    notMember: commonCopy.notMember,
+    errorReplies: {
+      AlreadyExistsError: "Ya eres miembro de este equipo.",
+    },
+  },
 };
 
 function seedMemberTeam(
@@ -68,6 +93,7 @@ function seedMemberTeam(
     role: "member",
     joinedAt: 0,
   });
+  return { teamId, membershipId };
 }
 
 function makeDeps(
@@ -81,7 +107,9 @@ function makeDeps(
   const memberRepo = fakeMemberRepo();
   const membershipRepo = fakeMembershipRepo(memberRepo);
   const nlClassifyQuota = fakeNlClassifyQuota({ allow: overrides.quotaAllow ?? true });
+  const nlConfirmationRepo = fakeNlConfirmationRepo();
   const intentClassifier = fakeIntentClassifier(overrides.intent);
+  const chatPublisher = fakeChatPublisher();
   const deps: HandleNaturalLanguageDeps = {
     teamRepo,
     memberRepo,
@@ -90,9 +118,18 @@ function makeDeps(
     hackathonAnalysisRepo: fakeHackathonAnalysisRepo(),
     repoTopicLinkRepo: fakeRepoTopicLinkRepo(),
     githubOrgClaimRepo: fakeGithubOrgClaimRepo(),
+    analysisQuota: fakeAnalysisQuota(),
+    analysisJobRepo: fakeAnalysisJobRepo(),
+    analysisJobQueue: fakeAnalysisJobQueue(),
+    chatAdminChecker: fakeChatAdminChecker([]),
+    chatPublisher,
+    forumTopicManager: fakeForumTopicManager(),
     nlClassifyQuota,
+    nlConfirmationRepo,
     intentClassifier,
+    sleep: fakeSleep(),
     clock: fakeClock(),
+    idGen: fakeIdGen(),
     logger: createSafeLogger(),
     nlModelPrimary: overrides.nlModelPrimary ?? "@cf/test/model",
     copy: COPY,
@@ -104,7 +141,9 @@ function makeDeps(
     deps,
     repos: { teamRepo, memberRepo, membershipRepo },
     nlClassifyQuota,
+    nlConfirmationRepo,
     intentClassifier,
+    chatPublisher,
   };
 }
 
@@ -200,60 +239,107 @@ describe("handleNaturalLanguage", () => {
     ).toEqual({ kind: "reply", text: COPY.unknown });
   });
 
-  it("dispatches list_hackathons via listAnalyses", async () => {
-    const { deps, repos } = makeDeps({
-      intent: async () => ({ intent: "list_hackathons", confidence: 0.9, slots: {} }),
+  it("creates a confirmation for join_team without executing join", async () => {
+    const { deps, repos, nlConfirmationRepo, chatPublisher } = makeDeps({
+      intent: async () => ({ intent: "join_team", confidence: 0.9, slots: {} }),
     });
     seedMemberTeam(repos);
+    const before = repos.membershipRepo.rows.length;
     const result = await handleNaturalLanguage(
       {
         chatId: 10,
         threadId: null,
         callerTelegramUserId: 20,
-        classifiedText: "listá hackathons",
+        classifiedText: "quiero unirme",
       },
       deps,
     );
+    expect(result).toEqual({ kind: "done" });
+    expect(nlConfirmationRepo.rows).toHaveLength(1);
+    expect(nlConfirmationRepo.rows[0]?.intent).toBe("join_team");
+    expect(chatPublisher.posted[0]?.text).toContain("unirte");
+    expect(chatPublisher.posted[0]?.text).toContain("sí");
+    expect(chatPublisher.postOptions[0]?.nlConfirmId).toBe(nlConfirmationRepo.rows[0]?.id);
+    expect(repos.membershipRepo.rows).toHaveLength(before);
+  });
+
+  it("refuses set_profile_field outside the data channel without a confirmation", async () => {
+    const { deps, repos, nlConfirmationRepo } = makeDeps({
+      intent: async () => ({
+        intent: "set_profile_field",
+        confidence: 0.9,
+        slots: { profileField: "full_name", profileValue: "secret-name" },
+      }),
+    });
+    seedMemberTeam(repos, { chatId: 10, userId: 20, dataTopicThreadId: 55 });
+    expect(
+      await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: null,
+          callerTelegramUserId: 20,
+          classifiedText: "poné mi nombre",
+        },
+        deps,
+      ),
+    ).toEqual({ kind: "reply", text: COPY.profileDataChannelOnly });
+    expect(nlConfirmationRepo.rows).toHaveLength(0);
+  });
+
+  it("confirm text for set_profile_field omits the profile value", async () => {
+    const secret = "secret-pii-value";
+    const { deps, repos, chatPublisher, nlConfirmationRepo } = makeDeps({
+      intent: async () => ({
+        intent: "set_profile_field",
+        confidence: 0.9,
+        slots: { profileField: "full_name", profileValue: secret },
+      }),
+    });
+    seedMemberTeam(repos, { chatId: 10, userId: 20, dataTopicThreadId: 55 });
+    await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: 55,
+        callerTelegramUserId: 20,
+        classifiedText: "mi nombre es X",
+      },
+      deps,
+    );
+    expect(chatPublisher.posted[0]?.text).not.toContain(secret);
+    expect(chatPublisher.posted[0]?.text).toContain("full_name");
+    expect(nlConfirmationRepo.rows[0]?.slots.profileValue).toBe(secret);
+  });
+
+  it("resolves sí reply to a pending confirm without classifying", async () => {
+    const { deps, repos, nlConfirmationRepo, intentClassifier } = makeDeps();
+    const { membershipId, teamId } = seedMemberTeam(repos);
+    nlConfirmationRepo.rows.push({
+      id: "conf-reply",
+      teamId,
+      chatId: 10,
+      threadId: null,
+      actorMembershipId: membershipId,
+      intent: "join_team",
+      slots: {},
+      confirmMessageId: 77,
+      expiresAt: deps.clock.now() + 60_000,
+      consumedAt: null,
+      createdAt: deps.clock.now(),
+    });
+
+    const result = await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "sí",
+        replyToMessageId: 77,
+      },
+      deps,
+    );
+    expect(intentClassifier.calls).toHaveLength(0);
     expect(result.kind).toBe("reply");
-    if (result.kind === "reply") {
-      expect(result.text.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("asks for slug when show_hackathon has no slot", async () => {
-    const { deps, repos } = makeDeps({
-      intent: async () => ({ intent: "show_hackathon", confidence: 0.9, slots: {} }),
-    });
-    seedMemberTeam(repos);
-    expect(
-      await handleNaturalLanguage(
-        {
-          chatId: 10,
-          threadId: null,
-          callerTelegramUserId: 20,
-          classifiedText: "mostrá el hack",
-        },
-        deps,
-      ),
-    ).toEqual({ kind: "reply", text: COPY.clarifySlug });
-  });
-
-  it("defers mutate intents until confirm PR", async () => {
-    const { deps, repos } = makeDeps({
-      intent: async () => ({ intent: "join_team", confidence: 0.9, slots: {} }),
-    });
-    seedMemberTeam(repos);
-    expect(
-      await handleNaturalLanguage(
-        {
-          chatId: 10,
-          threadId: null,
-          callerTelegramUserId: 20,
-          classifiedText: "quiero unirme",
-        },
-        deps,
-      ),
-    ).toEqual({ kind: "reply", text: COPY.mutateDeferred });
+    expect(nlConfirmationRepo.rows[0]?.consumedAt).not.toBeNull();
   });
 
   it("refuses show_profiles outside the data channel", async () => {
@@ -272,5 +358,153 @@ describe("handleNaturalLanguage", () => {
         deps,
       ),
     ).toEqual({ kind: "reply", text: COPY.dataChannelOnly });
+  });
+
+  it("promote_member with explicit membershipId creates a confirmation", async () => {
+    const targetId = "mem-target";
+    const { deps, repos, nlConfirmationRepo, chatPublisher } = makeDeps({
+      intent: async () => ({
+        intent: "promote_member",
+        confidence: 0.9,
+        slots: { membershipId: targetId },
+      }),
+    });
+    seedMemberTeam(repos);
+    repos.memberRepo.rows.push({
+      id: asMemberId("member-target"),
+      telegramUserId: 30,
+      createdAt: 0,
+    });
+    repos.membershipRepo.rows.push({
+      id: asMembershipId(targetId),
+      teamId: asTeamId("team-nl"),
+      memberId: asMemberId("member-target"),
+      role: "member",
+      joinedAt: 0,
+    });
+
+    const result = await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "promové a ese",
+      },
+      deps,
+    );
+    expect(result).toEqual({ kind: "done" });
+    expect(nlConfirmationRepo.rows[0]?.slots.membershipId).toBe(targetId);
+    expect(chatPublisher.posted[0]?.text).toContain(targetId);
+    expect(chatPublisher.posted[0]?.text).toContain("administrador");
+  });
+
+  it("promote_member resolves reply-to-user membership without guessing names", async () => {
+    const { deps, repos, nlConfirmationRepo } = makeDeps({
+      intent: async () => ({
+        intent: "promote_member",
+        confidence: 0.9,
+        slots: {},
+      }),
+    });
+    seedMemberTeam(repos);
+    repos.memberRepo.rows.push({
+      id: asMemberId("member-target"),
+      telegramUserId: 30,
+      createdAt: 0,
+    });
+    repos.membershipRepo.rows.push({
+      id: asMembershipId("mem-target"),
+      teamId: asTeamId("team-nl"),
+      memberId: asMemberId("member-target"),
+      role: "member",
+      joinedAt: 0,
+    });
+
+    await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "promovelo",
+        replyFromUserId: 30,
+      },
+      deps,
+    );
+    expect(nlConfirmationRepo.rows[0]?.slots.membershipId).toBe("mem-target");
+  });
+
+  it("promote_member clarifies when target is missing or not a team member", async () => {
+    const { deps, repos, nlConfirmationRepo } = makeDeps({
+      intent: async () => ({
+        intent: "promote_member",
+        confidence: 0.9,
+        slots: {},
+      }),
+    });
+    seedMemberTeam(repos);
+
+    expect(
+      await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: null,
+          callerTelegramUserId: 20,
+          classifiedText: "promové a alguien",
+        },
+        deps,
+      ),
+    ).toEqual({ kind: "reply", text: COPY.clarifyMembership });
+    expect(nlConfirmationRepo.rows).toHaveLength(0);
+
+    expect(
+      await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: null,
+          callerTelegramUserId: 20,
+          classifiedText: "promovelo",
+          replyFromUserId: 999,
+        },
+        deps,
+      ),
+    ).toEqual({ kind: "reply", text: COPY.clarifyMembership });
+    expect(nlConfirmationRepo.rows).toHaveLength(0);
+  });
+
+  it("demote_member resolves reply-to-user the same way", async () => {
+    const { deps, repos, nlConfirmationRepo, chatPublisher } = makeDeps({
+      intent: async () => ({
+        intent: "demote_member",
+        confidence: 0.9,
+        slots: {},
+      }),
+    });
+    seedMemberTeam(repos);
+    repos.memberRepo.rows.push({
+      id: asMemberId("member-admin2"),
+      telegramUserId: 31,
+      createdAt: 0,
+    });
+    repos.membershipRepo.rows.push({
+      id: asMembershipId("mem-admin2"),
+      teamId: asTeamId("team-nl"),
+      memberId: asMemberId("member-admin2"),
+      role: "admin",
+      joinedAt: 0,
+    });
+
+    await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "degrada a este",
+        replyFromUserId: 31,
+      },
+      deps,
+    );
+    expect(nlConfirmationRepo.rows[0]?.intent).toBe("demote_member");
+    expect(nlConfirmationRepo.rows[0]?.slots.membershipId).toBe("mem-admin2");
+    expect(chatPublisher.posted[0]?.text).toContain("miembro");
   });
 });

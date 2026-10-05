@@ -8,25 +8,30 @@ import {
   UnauthorizedError,
 } from "../errors";
 import { asMembershipId, type MembershipId, type TeamId } from "../ids";
+import { confirmSummaryFor, type NlConfirmSummaries } from "../nl/confirm-summary";
+import { isNlMutateIntentId, type NlMutateIntentId } from "../nl/confirmation";
 import {
   confidenceBucket,
   NL_CLASSIFY_DAILY_CAP,
   NL_CLASSIFY_TIMEOUT_MS,
-  NL_MUTATE_INTENTS,
   utcDayOf,
   type IntentResult,
   type NlIntentId,
   type NlSlots,
 } from "../nl/intents";
+import { matchConfirmLexicon } from "../nl/lexicon";
 import type {
+  ChatPublisher,
   Clock,
   GithubOrgClaimRepo,
   HackathonAnalysisRepo,
+  IdGen,
   IntentClassifier,
   Logger,
   MemberRepo,
   MembershipRepo,
   NlClassifyQuota,
+  NlConfirmationRepo,
   ProfileRepo,
   RepoTopicLinkRepo,
   TeamRepo,
@@ -34,6 +39,12 @@ import type {
 import { listAnalyses } from "./list-analyses";
 import { listRepoLinks } from "./list-repo-links";
 import { readProfiles } from "./read-profiles";
+import {
+  createNlConfirmation,
+  resolveNlConfirmation,
+  type ResolveNlConfirmationCopy,
+  type ResolveNlConfirmationDeps,
+} from "./resolve-nl-confirmation";
 import { showAnalysis } from "./show-analysis";
 import { showTopicAnalysis } from "./show-topic-analysis";
 
@@ -44,12 +55,20 @@ export interface NlCopyBag {
   classifyFailed: string;
   quota: string;
   notMember: string;
-  mutateDeferred: string;
   clarifySlug: string;
   clarifyTopic: string;
   noTopicAnalysis: string;
   noAnalysis: string;
   dataChannelOnly: string;
+  profileDataChannelOnly: string;
+  clarifyMembership: string;
+  clarifyRepo: string;
+  clarifyUrl: string;
+  clarifyThread: string;
+  lexiconHint: string;
+  confirmPrompt: (summary: string) => string;
+  confirmSummaries: NlConfirmSummaries;
+  resolveCopy: ResolveNlConfirmationCopy;
 }
 
 export interface HandleNaturalLanguageInput {
@@ -57,10 +76,13 @@ export interface HandleNaturalLanguageInput {
   threadId: number | null;
   callerTelegramUserId: number;
   classifiedText: string;
-  dataTopicThreadId?: number | null; // filled after team resolve; optional hint
+  // When the user replied to a bot message — used for confirm lexicon path.
+  replyToMessageId?: number | null;
+  // When the user replied to another user — promote/demote target hint.
+  replyFromUserId?: number | null;
 }
 
-export interface HandleNaturalLanguageDeps {
+export interface HandleNaturalLanguageDeps extends Omit<ResolveNlConfirmationDeps, "copy"> {
   teamRepo: TeamRepo;
   memberRepo: MemberRepo;
   membershipRepo: MembershipRepo;
@@ -69,8 +91,11 @@ export interface HandleNaturalLanguageDeps {
   repoTopicLinkRepo: RepoTopicLinkRepo;
   githubOrgClaimRepo: GithubOrgClaimRepo;
   nlClassifyQuota: NlClassifyQuota;
+  nlConfirmationRepo: NlConfirmationRepo;
   intentClassifier: IntentClassifier;
+  chatPublisher: ChatPublisher;
   clock: Clock;
+  idGen: IdGen;
   logger: Logger;
   nlModelPrimary: string;
   copy: NlCopyBag;
@@ -84,11 +109,11 @@ export interface HandleNaturalLanguageDeps {
 
 export type HandleNaturalLanguageResult =
   | { kind: "ignore" }
+  | { kind: "done" }
   | { kind: "reply"; text: string };
 
 const EVENT = "nl-handle";
 
-// PR2: classify + read intents. Mutate intents reply with deferred copy until PR3.
 export async function handleNaturalLanguage(
   input: HandleNaturalLanguageInput,
   deps: HandleNaturalLanguageDeps,
@@ -100,6 +125,30 @@ export async function handleNaturalLanguage(
   if (!member) return { kind: "reply", text: deps.copy.notMember };
   const membership = await deps.membershipRepo.getByMember(team.id, member.id);
   if (!membership) return { kind: "reply", text: deps.copy.notMember };
+
+  // Reply-to-confirm: lexicon path, no classify / no quota (design.md step 5).
+  if (input.replyToMessageId != null) {
+    const pending = await deps.nlConfirmationRepo.findByConfirmMessage(
+      input.chatId,
+      input.replyToMessageId,
+    );
+    if (pending) {
+      const action = matchConfirmLexicon(input.classifiedText);
+      if (!action) {
+        return { kind: "reply", text: deps.copy.lexiconHint };
+      }
+      return resolveNlConfirmation(
+        {
+          chatId: input.chatId,
+          callerTelegramUserId: input.callerTelegramUserId,
+          confirmationId: pending.id,
+          action,
+          callbackMessageId: pending.confirmMessageId,
+        },
+        { ...deps, copy: deps.copy.resolveCopy },
+      );
+    }
+  }
 
   const modelId = deps.nlModelPrimary.trim();
   if (modelId === "") {
@@ -159,13 +208,14 @@ export async function handleNaturalLanguage(
     reason: `intent:${classified.intent}:${confidenceBucket(classified.confidence)}`,
   });
 
-  return dispatchReadOrDeferred(classified, {
+  return dispatchIntent(classified, {
     teamId: team.id,
     actorMembershipId: membership.id,
     chatId: input.chatId,
     threadId: input.threadId,
     callerTelegramUserId: input.callerTelegramUserId,
     inDataChannel,
+    replyFromUserId: input.replyFromUserId ?? null,
   }, deps);
 }
 
@@ -206,9 +256,10 @@ interface DispatchCtx {
   threadId: number | null;
   callerTelegramUserId: number;
   inDataChannel: boolean;
+  replyFromUserId: number | null;
 }
 
-async function dispatchReadOrDeferred(
+async function dispatchIntent(
   classified: IntentResult,
   ctx: DispatchCtx,
   deps: HandleNaturalLanguageDeps,
@@ -218,8 +269,8 @@ async function dispatchReadOrDeferred(
   if (intent === "help") return { kind: "reply", text: deps.copy.help };
   if (intent === "unknown") return { kind: "reply", text: deps.copy.unknown };
 
-  if (NL_MUTATE_INTENTS.has(intent)) {
-    return { kind: "reply", text: deps.copy.mutateDeferred };
+  if (isNlMutateIntentId(intent)) {
+    return dispatchMutate(intent, slots, ctx, deps);
   }
 
   try {
@@ -249,6 +300,105 @@ async function dispatchReadOrDeferred(
     }
   } catch (err) {
     return mapReadError(err, intent, ctx.teamId, deps);
+  }
+}
+
+async function dispatchMutate(
+  intent: NlMutateIntentId,
+  slots: NlSlots,
+  ctx: DispatchCtx,
+  deps: HandleNaturalLanguageDeps,
+): Promise<HandleNaturalLanguageResult> {
+  if (intent === "set_profile_field" && !ctx.inDataChannel) {
+    return { kind: "reply", text: deps.copy.profileDataChannelOnly };
+  }
+
+  const resolvedSlots = await resolveMutateSlots(intent, slots, ctx, deps);
+  if (resolvedSlots.kind === "clarify") {
+    return { kind: "reply", text: resolvedSlots.text };
+  }
+
+  const summary = confirmSummaryFor(intent, resolvedSlots.slots, deps.copy.confirmSummaries);
+  if (!summary) {
+    return { kind: "reply", text: deps.copy.unknown };
+  }
+
+  // Never put profileValue into confirm text (only slots_json after create).
+  return createNlConfirmation(
+    {
+      teamId: ctx.teamId,
+      chatId: ctx.chatId,
+      threadId: ctx.threadId,
+      actorMembershipId: ctx.actorMembershipId,
+      intent,
+      slots: resolvedSlots.slots,
+      confirmText: deps.copy.confirmPrompt(summary),
+    },
+    deps,
+  );
+}
+
+type ResolveSlotsResult =
+  | { kind: "ok"; slots: NlSlots }
+  | { kind: "clarify"; text: string };
+
+async function resolveMutateSlots(
+  intent: NlMutateIntentId,
+  slots: NlSlots,
+  ctx: DispatchCtx,
+  deps: HandleNaturalLanguageDeps,
+): Promise<ResolveSlotsResult> {
+  switch (intent) {
+    case "setup_team":
+    case "join_team":
+      return { kind: "ok", slots };
+    case "bind_data_channel":
+      if (ctx.threadId === null) return { kind: "clarify", text: deps.copy.clarifyThread };
+      return { kind: "ok", slots };
+    case "set_profile_field":
+      if (!slots.profileField || slots.profileValue === undefined) {
+        return { kind: "clarify", text: deps.copy.unknown };
+      }
+      return { kind: "ok", slots };
+    case "promote_member":
+    case "demote_member": {
+      if (slots.membershipId) return { kind: "ok", slots };
+      if (ctx.replyFromUserId != null) {
+        const targetMember = await deps.memberRepo.findByTelegramUserId(ctx.replyFromUserId);
+        if (!targetMember) return { kind: "clarify", text: deps.copy.clarifyMembership };
+        const targetMembership = await deps.membershipRepo.getByMember(
+          ctx.teamId,
+          targetMember.id,
+        );
+        if (!targetMembership) return { kind: "clarify", text: deps.copy.clarifyMembership };
+        return {
+          kind: "ok",
+          slots: { ...slots, membershipId: targetMembership.id },
+        };
+      }
+      return { kind: "clarify", text: deps.copy.clarifyMembership };
+    }
+    case "link_repo":
+      if (ctx.threadId === null) return { kind: "clarify", text: deps.copy.clarifyThread };
+      if (!slots.repo) return { kind: "clarify", text: deps.copy.clarifyRepo };
+      return { kind: "ok", slots };
+    case "unlink_repo":
+      if (!slots.repo) return { kind: "clarify", text: deps.copy.clarifyRepo };
+      return { kind: "ok", slots };
+    case "link_hackathon_topic":
+      if (ctx.threadId === null) return { kind: "clarify", text: deps.copy.clarifyThread };
+      if (!slots.slug) return { kind: "clarify", text: deps.copy.clarifySlug };
+      return { kind: "ok", slots };
+    case "request_hackathon_analysis":
+      if (!slots.url) return { kind: "clarify", text: deps.copy.clarifyUrl };
+      return { kind: "ok", slots };
+    case "participate_hackathon":
+      if (!slots.slug) return { kind: "clarify", text: deps.copy.clarifySlug };
+      return { kind: "ok", slots };
+    default: {
+      const _exhaustive: never = intent;
+      return _exhaustive;
+    }
   }
 }
 

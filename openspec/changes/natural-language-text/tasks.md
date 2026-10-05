@@ -53,21 +53,21 @@ Each PR independently keeps `npm test` green. Migration 0005 is additive.
 
 ## Phase 3: Confirmations and Mutate Intents (PR3)
 
-- [ ] 3.1 RED: D1 `nl_confirmations` — create, find by `(chat_id, confirm_message_id)`, `tryConsume` CAS, cancel, expiry.
-- [ ] 3.2 GREEN: `NlConfirmationRepo` port + D1 adapter + fakes.
-- [ ] 3.3 RED: lexicon tests — yes/cancel normalization (`sí`→`si`, accents, trailing punctuation); non-lexicon reply to confirm does not consume.
-- [ ] 3.4 RED: mutate path — classification of mutate intent creates confirmation and does **not** call use case; confirm text includes `confirmHint`; profile value absent from confirm text.
-- [ ] 3.5 RED: `set_profile_field` outside data channel → refuse, no confirmation; inside data channel → confirmation then `updateProfileField` on yes.
-- [ ] 3.6 RED: confirm via `nl:ok` / `nl:no` callbacks; wrong actor refused; second consume noops; expired soft refusal.
-- [ ] 3.6a RED: **concurrent dual confirm** — pending row; simultaneous `nl:ok` callback and affirmative reply; use case invoked at most once; loser is busy/noop after CAS.
-- [ ] 3.7 RED: confirm via reply `sí` / `cancelar` to confirm message; **no classifier call**; same-actor rule.
-- [ ] 3.7a RED: `promote_member` / `demote_member` slot resolution — explicit `membershipId` → confirm; reply-to-user who is a team member → that membership; missing/ambiguous → clarify, no confirmation, never guess.
-- [ ] 3.7b RED: `set_profile_field` confirmation stores value only in `slots_json`; confirm/success copy and logs omit the value; after consume/cancel/expiry the row cannot be re-confirmed (TTL ≤10m assertion in D1 tests).
-- [ ] 3.8 RED: each mutate intent dispatches once after confirm to the existing use case (`setupTeam`, `joinTeam`, `bindDataChannel`, `changeRole`, `linkRepoToTopic`, `unlinkRepo`, `linkAnalysisToTopic`, `requestHackathonAnalysis`, `participateInHackathon`, `updateProfileField`) with permission errors mapped like commands.
-- [ ] 3.9 GREEN: `ChatPublisher` NL confirm keyboard (semantic options), `nl:` callback registration, reply-to-confirm branch before classify, copy table, composition wiring.
-- [ ] 3.10 RED: http/webhook e2e — `nl:` routed; unrecognized prefix ignored; eligible NL still routed.
-- [ ] 3.11 Extend catalog-language tests for all new NL strings.
-- [ ] 3.12 Run `npm test` and `npm run typecheck`.
+- [x] 3.1 RED: D1 `nl_confirmations` — create, find by `(chat_id, confirm_message_id)`, `tryConsume` CAS, cancel, expiry.
+- [x] 3.2 GREEN: `NlConfirmationRepo` port + D1 adapter + fakes.
+- [x] 3.3 RED: lexicon tests — yes/cancel normalization (`sí`→`si`, accents, trailing punctuation); non-lexicon reply to confirm does not consume.
+- [x] 3.4 RED: mutate path — classification of mutate intent creates confirmation and does **not** call use case; confirm text includes `confirmHint`; profile value absent from confirm text.
+- [x] 3.5 RED: `set_profile_field` outside data channel → refuse, no confirmation; inside data channel → confirmation then `updateProfileField` on yes.
+- [x] 3.6 RED: confirm via `nl:ok` / `nl:no` callbacks; wrong actor refused; second consume noops; expired soft refusal.
+- [x] 3.6a RED: **concurrent dual confirm** — pending row; simultaneous `nl:ok` callback and affirmative reply; use case invoked at most once; loser is busy/noop after CAS.
+- [x] 3.7 RED: confirm via reply `sí` / `cancelar` to confirm message; **no classifier call**; same-actor rule.
+- [x] 3.7a RED: `promote_member` / `demote_member` slot resolution — explicit `membershipId` → confirm; reply-to-user who is a team member → that membership; missing/ambiguous → clarify, no confirmation, never guess.
+- [x] 3.7b RED: `set_profile_field` confirmation stores value only in `slots_json`; confirm/success copy and logs omit the value; after consume/cancel/expiry the row cannot be re-confirmed (TTL ≤10m assertion in D1 tests).
+- [x] 3.8 RED: each mutate intent dispatches once after confirm to the existing use case (`setupTeam`, `joinTeam`, `bindDataChannel`, `changeRole`, `linkRepoToTopic`, `unlinkRepo`, `linkAnalysisToTopic`, `requestHackathonAnalysis`, `participateInHackathon`, `updateProfileField`) with permission errors mapped like commands.
+- [x] 3.9 GREEN: `ChatPublisher` NL confirm keyboard (semantic options), `nl:` callback registration, reply-to-confirm branch before classify, copy table, composition wiring.
+- [x] 3.10 RED: http/webhook e2e — `nl:` routed; unrecognized prefix ignored; eligible NL still routed.
+- [x] 3.11 Extend catalog-language tests for all new NL strings.
+- [x] 3.12 Run `npm test` and `npm run typecheck`.
 
 ## Phase 4: Operator Step and Final Verification (after PR3)
 
