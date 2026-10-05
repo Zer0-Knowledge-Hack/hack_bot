@@ -746,4 +746,236 @@ describe("handleNaturalLanguage", () => {
       "BNB Hack Tokenized",
     ]);
   });
+
+  it("lists hackathons via NL the same way as /hackathons", async () => {
+    const { deps, repos } = makeDeps({
+      intent: async () => ({ intent: "list_hackathons", confidence: 0.95, slots: {} }),
+    });
+    const { teamId } = seedMemberTeam(repos);
+    repos.hackathonAnalysisRepo.rows.push({
+      id: "a-list",
+      teamId,
+      slug: "meridian",
+      sourceUrl: "https://example.com/meridian",
+      normalizedUrl: "https://example.com/meridian",
+      fields: {
+        name: { value: "Meridian", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: { value: "2026-12-01", snippet: "", confidence: 0.8 },
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    const result = await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "qué hackathons tenemos",
+      },
+      deps,
+    );
+    expect(result.kind).toBe("reply");
+    if (result.kind !== "reply") return;
+    expect(result.text).toContain("meridian");
+    expect(result.text).toContain("Meridian");
+  });
+
+  it("shows an analysis by slug via NL without linking", async () => {
+    const { deps, repos } = makeDeps({
+      intent: async () => ({
+        intent: "show_hackathon",
+        confidence: 0.95,
+        slots: { slug: "meridian" },
+      }),
+    });
+    const { teamId } = seedMemberTeam(repos);
+    repos.hackathonAnalysisRepo.rows.push({
+      id: "a-show",
+      teamId,
+      slug: "meridian",
+      sourceUrl: "https://example.com/meridian",
+      normalizedUrl: "https://example.com/meridian",
+      fields: {
+        name: { value: "Meridian Hack", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    const result = await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "mostrá meridian",
+      },
+      deps,
+    );
+    expect(result.kind).toBe("reply");
+    if (result.kind !== "reply") return;
+    expect(result.text).toContain("meridian");
+    expect(result.text).toContain("Meridian Hack");
+    expect(repos.hackathonAnalysisRepo.rows[0]?.threadId).toBeNull();
+  });
+
+  it("resolves cancelar reply to a pending confirm without classifying or executing", async () => {
+    const { deps, repos, nlConfirmationRepo, intentClassifier } = makeDeps();
+    const { membershipId, teamId } = seedMemberTeam(repos);
+    nlConfirmationRepo.rows.push({
+      id: "conf-cancel",
+      teamId,
+      chatId: 10,
+      threadId: null,
+      actorMembershipId: membershipId,
+      intent: "join_team",
+      slots: {},
+      confirmMessageId: 91,
+      expiresAt: deps.clock.now() + 60_000,
+      consumedAt: null,
+      createdAt: deps.clock.now(),
+    });
+    const before = repos.membershipRepo.rows.length;
+
+    const result = await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "cancelar",
+        replyToMessageId: 91,
+      },
+      deps,
+    );
+    expect(intentClassifier.calls).toHaveLength(0);
+    expect(result).toEqual({ kind: "reply", text: nlConfirmCopy.cancelled });
+    expect(nlConfirmationRepo.rows[0]?.consumedAt).not.toBeNull();
+    expect(repos.membershipRepo.rows).toHaveLength(before);
+  });
+
+  it("refuses an expired confirmation without executing the mutate", async () => {
+    const { deps, repos, nlConfirmationRepo, intentClassifier } = makeDeps();
+    const { membershipId, teamId } = seedMemberTeam(repos);
+    nlConfirmationRepo.rows.push({
+      id: "conf-expired",
+      teamId,
+      chatId: 10,
+      threadId: null,
+      actorMembershipId: membershipId,
+      intent: "join_team",
+      slots: {},
+      confirmMessageId: 92,
+      expiresAt: deps.clock.now() - 1,
+      consumedAt: null,
+      createdAt: deps.clock.now() - 600_000,
+    });
+    const before = repos.membershipRepo.rows.length;
+
+    const result = await handleNaturalLanguage(
+      {
+        chatId: 10,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "sí",
+        replyToMessageId: 92,
+      },
+      deps,
+    );
+    expect(intentClassifier.calls).toHaveLength(0);
+    expect(result).toEqual({ kind: "reply", text: nlConfirmCopy.busy });
+    expect(nlConfirmationRepo.rows[0]?.consumedAt).toBeNull();
+    expect(repos.membershipRepo.rows).toHaveLength(before);
+  });
+
+  it("runs participateInHackathon once after NL confirm for an admin", async () => {
+    const chatId = -1001234567890;
+    const { deps, repos, nlConfirmationRepo, intentClassifier, chatPublisher } = makeDeps();
+    const { membershipId, teamId } = seedMemberTeam(repos, { chatId, userId: 20 });
+    const membership = repos.membershipRepo.rows.find((row) => row.id === membershipId);
+    if (membership) membership.role = "admin";
+    repos.hackathonAnalysisRepo.rows.push({
+      id: "a-join",
+      teamId,
+      slug: "meridian",
+      sourceUrl: "https://example.com/meridian",
+      normalizedUrl: "https://example.com/meridian",
+      fields: {
+        name: { value: "Meridian", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: null,
+      pinnedMessageId: null,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+    nlConfirmationRepo.rows.push({
+      id: "conf-join",
+      teamId,
+      chatId,
+      threadId: null,
+      actorMembershipId: membershipId,
+      intent: "participate_hackathon",
+      slots: { slug: "meridian" },
+      confirmMessageId: 93,
+      expiresAt: deps.clock.now() + 60_000,
+      consumedAt: null,
+      createdAt: deps.clock.now(),
+    });
+
+    const result = await handleNaturalLanguage(
+      {
+        chatId,
+        threadId: null,
+        callerTelegramUserId: 20,
+        classifiedText: "sí",
+        replyToMessageId: 93,
+      },
+      deps,
+    );
+    expect(intentClassifier.calls).toHaveLength(0);
+    expect(result.kind).toBe("reply");
+    if (result.kind !== "reply") return;
+    expect(result.text.length).toBeGreaterThan(0);
+    expect(nlConfirmationRepo.rows[0]?.consumedAt).not.toBeNull();
+    expect(repos.hackathonAnalysisRepo.rows[0]?.threadId).not.toBeNull();
+    expect(chatPublisher.posted.some((p) => p.threadId !== null)).toBe(true);
+  });
 });

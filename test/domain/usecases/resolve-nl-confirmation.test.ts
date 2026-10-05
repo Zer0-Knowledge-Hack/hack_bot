@@ -115,4 +115,81 @@ describe("resolveNlConfirmation — concurrent dual confirm (task 3.6a)", () => 
     expect(busy).toHaveLength(1);
     expect(won).toHaveLength(1);
   });
+
+  it("replies busy and executes nothing when the confirmation is expired", async () => {
+    const teamRepo = fakeTeamRepo();
+    const memberRepo = fakeMemberRepo();
+    const membershipRepo = fakeMembershipRepo(memberRepo);
+    const nlConfirmationRepo = fakeNlConfirmationRepo();
+    const chatPublisher = fakeChatPublisher();
+    const clock = fakeClock();
+    const teamId = asTeamId("team-exp");
+    const membershipId = asMembershipId("mem-exp");
+    const memberId = asMemberId("u-exp");
+
+    teamRepo.rows.push({ id: teamId, chatId: 10, dataTopicThreadId: null, createdAt: 0 });
+    memberRepo.rows.push({ id: memberId, telegramUserId: 20, createdAt: 0 });
+    membershipRepo.rows.push({
+      id: membershipId,
+      teamId,
+      memberId,
+      role: "member",
+      joinedAt: 0,
+    });
+    nlConfirmationRepo.rows.push({
+      id: "conf-exp",
+      teamId,
+      chatId: 10,
+      threadId: null,
+      actorMembershipId: membershipId,
+      intent: "join_team",
+      slots: {},
+      confirmMessageId: 44,
+      expiresAt: clock.now() - 1,
+      consumedAt: null,
+      createdAt: clock.now() - 600_000,
+    });
+    const before = membershipRepo.rows.length;
+
+    const result = await resolveNlConfirmation(
+      {
+        chatId: 10,
+        callerTelegramUserId: 20,
+        confirmationId: "conf-exp",
+        action: "yes",
+        callbackMessageId: 44,
+      },
+      {
+        teamRepo,
+        memberRepo,
+        membershipRepo,
+        profileRepo: fakeProfileRepo(),
+        hackathonAnalysisRepo: fakeHackathonAnalysisRepo(),
+        repoTopicLinkRepo: fakeRepoTopicLinkRepo(),
+        githubOrgClaimRepo: fakeGithubOrgClaimRepo(),
+        analysisQuota: fakeAnalysisQuota(),
+        analysisJobRepo: fakeAnalysisJobRepo(),
+        analysisJobQueue: fakeAnalysisJobQueue(),
+        chatAdminChecker: fakeChatAdminChecker([]),
+        chatPublisher,
+        forumTopicManager: fakeForumTopicManager(),
+        nlConfirmationRepo,
+        sleep: fakeSleep(),
+        clock,
+        idGen: fakeIdGen(),
+        logger: createSafeLogger(),
+        copy: {
+          cancelled: nlConfirmCopy.cancelled,
+          busy: nlConfirmCopy.busy,
+          wrongActor: nlConfirmCopy.wrongActor,
+          notMember: commonCopy.notMember,
+          errorReplies: { AlreadyExistsError: joinCopy.alreadyMember },
+        },
+      },
+    );
+
+    expect(result).toEqual({ kind: "reply", text: nlConfirmCopy.busy });
+    expect(nlConfirmationRepo.rows[0]?.consumedAt).toBeNull();
+    expect(membershipRepo.rows).toHaveLength(before);
+  });
 });
