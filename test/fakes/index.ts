@@ -40,8 +40,10 @@ import type {
   Logger,
   LlmExtractor,
   LlmOutputMeta,
+  IntentClassifier,
   MemberRepo,
   MembershipRepo,
+  NlClassifyQuota,
   PageFetcher,
   PostOptions,
   ProfileRepo,
@@ -51,6 +53,11 @@ import type {
   TopicCreateFailure,
 } from "../../src/domain/ports";
 import type { MemberId, MembershipId, TeamId } from "../../src/domain/ids";
+import { stubNlIntent } from "../../src/domain/nl/eligibility";
+import type {
+  IntentClassifierInput,
+  IntentResult,
+} from "../../src/domain/nl/intents";
 
 // In-memory fakes for domain tests. Pure Vitest, no Workers runtime needed —
 // this proves the domain layer has zero infrastructure dependencies.
@@ -465,6 +472,38 @@ export function fakeAnalysisQuota(
     },
     release: async (team: TeamId, day: string, jobId: string, refund: boolean) => {
       released.push({ team, day, jobId, refund });
+    },
+  };
+}
+
+export function fakeNlClassifyQuota(
+  opts: { allow?: boolean } = {},
+): NlClassifyQuota & {
+  reserved: Array<{ teamId: TeamId; dayUtc: string; cap: number }>;
+} {
+  const reserved: Array<{ teamId: TeamId; dayUtc: string; cap: number }> = [];
+  return {
+    reserved,
+    reserve: async (teamId, dayUtc, cap) => {
+      reserved.push({ teamId, dayUtc, cap });
+      return opts.allow ?? true;
+    },
+  };
+}
+
+export function fakeIntentClassifier(
+  classifyFn?: (
+    input: IntentClassifierInput,
+  ) => IntentResult | Promise<IntentResult>,
+): IntentClassifier & { calls: IntentClassifierInput[] } {
+  const calls: IntentClassifierInput[] = [];
+  return {
+    calls,
+    classify: async (input) => {
+      calls.push(input);
+      if (classifyFn) return classifyFn(input);
+      const intent = stubNlIntent(input.text);
+      return { intent, confidence: 0.9, slots: {} };
     },
   };
 }

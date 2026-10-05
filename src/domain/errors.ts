@@ -181,6 +181,17 @@ export class ExtractionFailedError extends DomainError {
 // Taxonomy": `llm:quota`). Never retried within the same job.
 export class LlmQuotaExceededError extends DomainError {}
 
+// NL IntentClassifier failed (bad model output shape, transport error, or
+// timeout). Mapped to Spanish "no pude interpretar" — never logs utterance.
+export class IntentClassificationError extends DomainError {
+  readonly kind: "timeout" | "model-error" | "bad-output";
+
+  constructor(message: string, kind: IntentClassificationError["kind"]) {
+    super(message);
+    this.kind = kind;
+  }
+}
+
 // `AnalysisJobQueue.enqueue` failed (design.md "Error Taxonomy":
 // `queue:send-failed`). The caller (requestHackathonAnalysis, PR3) refunds
 // the reserved cap slot on this error.

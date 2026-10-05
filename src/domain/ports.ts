@@ -15,6 +15,7 @@ import type { RepoFullName } from "./github";
 import type { MemberId, MembershipId, TeamId } from "./ids";
 import type { Role } from "./entities";
 import type { ExtractionAttemptDiagnostics, LlmParseFailureCode } from "./errors";
+import type { IntentClassifierInput, IntentResult } from "./nl/intents";
 
 // Every tenant-scoped method takes TeamId as its first parameter. This is a
 // deliberate design constraint (see design.md "Tenancy") that makes
@@ -331,6 +332,18 @@ export interface AnalysisJobRepo {
 // Throws QueueSendFailedError (design.md "Interfaces / Contracts").
 export interface AnalysisJobQueue {
   enqueue(message: AnalysisJobMessage): Promise<void>;
+}
+
+// Natural-language-text (design.md "Interfaces / Contracts"). Soft cap of
+// successful classify calls per team per UTC day; enforced before AI.
+export interface NlClassifyQuota {
+  reserve(teamId: TeamId, dayUtc: string, cap: number): Promise<boolean>;
+}
+
+// Closed-enum intent classification (separate from LlmExtractor). Throws
+// IntentClassificationError | ConfigError | LlmQuotaExceededError.
+export interface IntentClassifier {
+  classify(input: IntentClassifierInput, signal: AbortSignal): Promise<IntentResult>;
 }
 
 // Public GitHub repo metadata used to enrich a suggested repo (design.md
