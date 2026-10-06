@@ -387,7 +387,11 @@ export async function resolveNlPick(
         /* ignore */
       }
       // Retire the pick row so sí / nl:ok cannot race a second mutate.
-      await deps.nlConfirmationRepo.cancel(pending.id, now);
+      // If cancel loses a race, do not mint another confirmable row.
+      const cancelled = await deps.nlConfirmationRepo.cancel(pending.id, now);
+      if (!cancelled) {
+        return { kind: "reply", text: deps.copy.busy };
+      }
       return createNlConfirmation(
         {
           teamId: pending.teamId,
