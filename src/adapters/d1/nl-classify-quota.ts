@@ -1,10 +1,6 @@
 import type { TeamId } from "../../domain/ids";
 import type { NlClassifyQuota } from "../../domain/ports";
 
-interface QuotaRow {
-  count: number;
-}
-
 // Soft per-team daily classify counter (design.md decision 8). Separate from
 // hackathon analysis quota. Returns false when the cap would be exceeded.
 export function createD1NlClassifyQuota(db: D1Database): NlClassifyQuota {
@@ -21,18 +17,10 @@ export function createD1NlClassifyQuota(db: D1Database): NlClassifyQuota {
         .bind(teamId, dayUtc, cap);
 
       const result = await stmt.run();
-      if ((result.meta.changes ?? 0) === 1) {
-        return true;
-      }
-
-      // Cap already reached (or conflict with no update). Confirm via read.
-      const row = await db
-        .prepare(
-          "SELECT count FROM nl_classify_quota WHERE team_id = ? AND day_utc = ?",
-        )
-        .bind(teamId, dayUtc)
-        .first<QuotaRow>();
-      return row !== null && row.count < cap;
+      // Fail closed: only a successful reservation (exactly one row change)
+      // grants a classify slot. Never infer allowance from a follow-up read —
+      // that path could fail-open when the UPDATE did not apply.
+      return (result.meta.changes ?? 0) === 1;
     },
   };
 }

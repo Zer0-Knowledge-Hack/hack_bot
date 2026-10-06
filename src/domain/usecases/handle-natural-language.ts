@@ -390,7 +390,14 @@ async function resolveMutateSlots(
       return { kind: "ok", slots };
     case "promote_member":
     case "demote_member": {
-      if (slots.membershipId) return { kind: "ok", slots };
+      if (slots.membershipId) {
+        const target = await deps.membershipRepo.get(
+          ctx.teamId,
+          asMembershipId(slots.membershipId),
+        );
+        if (!target) return { kind: "clarify", text: deps.copy.clarifyMembership };
+        return { kind: "ok", slots };
+      }
       if (ctx.replyFromUserId != null) {
         const targetMember = await deps.memberRepo.findByTelegramUserId(ctx.replyFromUserId);
         if (!targetMember) return { kind: "clarify", text: deps.copy.clarifyMembership };
@@ -421,35 +428,14 @@ async function resolveMutateSlots(
       return { kind: "clarify", text: deps.copy.clarifySlug };
     }
     case "unlink_hackathon_topic": {
-      // Prefer the analysis linked to the current topic ("esta").
-      if (ctx.threadId !== null) {
-        const byThread = await deps.hackathonAnalysisRepo.findByThreadId(
-          ctx.teamId,
-          ctx.threadId,
-        );
-        if (byThread) {
-          return { kind: "ok", slots: { ...slots, slug: byThread.slug } };
-        }
-      }
-
-      // Reply-to the pinned (or General) analysis message → that hackathon.
-      if (ctx.replyToMessageId !== null) {
-        const byMessage = (await deps.hackathonAnalysisRepo.listByTeam(ctx.teamId)).find(
-          (row) =>
-            row.pinnedMessageId === ctx.replyToMessageId ||
-            row.generalMessageId === ctx.replyToMessageId,
-        );
-        if (byMessage?.threadId !== null && byMessage !== undefined) {
-          return { kind: "ok", slots: { ...slots, slug: byMessage.slug } };
-        }
-      }
-
       const query = slots.slug?.trim() || slots.targetName?.trim() || "";
       const linkedRows = (await deps.hackathonAnalysisRepo.listByTeam(ctx.teamId)).filter(
         (row) => row.threadId !== null,
       );
       const linked = linkedRows.map(analysisToMatchCandidate);
 
+      // Named unlink: match by name/slug among linked analyses. Do NOT prefer
+      // the current topic link — that overrode an explicit target (review R3).
       if (query !== "") {
         const hits = matchHackathons(linked, query);
         if (hits.length === 1) {
@@ -472,9 +458,30 @@ async function resolveMutateSlots(
         return { kind: "clarify", text: deps.copy.noLinkedMatch(query) };
       }
 
-      // Bare "esta" / no name: if only one linked analysis exists for the team,
-      // that's what the user means — even when standing in another topic where
-      // they just re-showed it.
+      // Bare "esta" / no name: prefer the analysis linked to the current topic.
+      if (ctx.threadId !== null) {
+        const byThread = await deps.hackathonAnalysisRepo.findByThreadId(
+          ctx.teamId,
+          ctx.threadId,
+        );
+        if (byThread) {
+          return { kind: "ok", slots: { ...slots, slug: byThread.slug } };
+        }
+      }
+
+      // Reply-to the pinned (or General) analysis message → that hackathon.
+      if (ctx.replyToMessageId !== null) {
+        const byMessage = linkedRows.find(
+          (row) =>
+            row.pinnedMessageId === ctx.replyToMessageId ||
+            row.generalMessageId === ctx.replyToMessageId,
+        );
+        if (byMessage) {
+          return { kind: "ok", slots: { ...slots, slug: byMessage.slug } };
+        }
+      }
+
+      // Sole linked analysis for the team (even from another topic after a re-show).
       if (linked.length === 1) {
         return { kind: "ok", slots: { ...slots, slug: linked[0]!.slug } };
       }

@@ -38,6 +38,9 @@ export interface ResolveNlConfirmationCopy {
   busy: string;
   wrongActor: string;
   notMember: string;
+  // Shown after CAS consume when the mutate fails with an unmapped error —
+  // never leave the user with cleared buttons and no reply.
+  executeFailed: string;
   // Fixed Spanish refusals keyed by domain error name (adapter-supplied).
   errorReplies: Record<string, string>;
 }
@@ -66,7 +69,7 @@ export async function resolveNlConfirmation(
   deps: ResolveNlConfirmationDeps,
 ): Promise<ResolveNlConfirmationResult> {
   const pending = await loadPending(input, deps);
-  if (!pending) {
+  if (!pending || pending.chatId !== input.chatId) {
     return { kind: "reply", text: deps.copy.busy };
   }
 
@@ -137,25 +140,19 @@ export async function resolveNlConfirmation(
     });
     return { kind: "reply", text: result.replyText };
   } catch (err) {
+    // Confirmation is already consumed — always reply so the user is not stuck
+    // with cleared buttons and a silent webhook 200.
     const errorCode = mapMutationErrorToCode(err);
-    const reply = deps.copy.errorReplies[errorCode];
-    if (reply !== undefined) {
-      deps.logger.log({
-        event: EVENT,
-        outcome: "refused",
-        errorCode,
-        teamId: pending.teamId,
-        reason: pending.intent,
-      });
-      return { kind: "reply", text: reply };
-    }
+    const mapped = deps.copy.errorReplies[errorCode];
+    const reply = mapped ?? deps.copy.executeFailed;
     deps.logger.log({
       event: EVENT,
-      outcome: "error",
+      outcome: mapped !== undefined ? "refused" : "error",
       errorCode,
       teamId: pending.teamId,
+      reason: pending.intent,
     });
-    throw err;
+    return { kind: "reply", text: reply };
   }
 }
 
@@ -372,8 +369,6 @@ export async function resolveNlPick(
   const summary = confirmSummaryFor(pending.intent, nextSlots, deps.confirmSummaries);
   if (!summary) return { kind: "reply", text: deps.copy.busy };
 
-  await deps.nlConfirmationRepo.updateSlots(pending.id, nextSlots);
-
   const confirmText = deps.confirmPrompt(summary);
   const messageId = pending.confirmMessageId ?? input.callbackMessageId;
   if (messageId !== null) {
@@ -381,12 +376,18 @@ export async function resolveNlPick(
       await deps.chatPublisher.editMessage(pending.chatId, messageId, confirmText, {
         nlConfirmId: pending.id,
       });
+      // Persist the chosen slug only after the message is a Confirm/Cancel
+      // challenge — otherwise a failed edit + createNlConfirmation left two
+      // confirmable rows (double execute).
+      await deps.nlConfirmationRepo.updateSlots(pending.id, nextSlots);
     } catch {
       try {
         await deps.chatPublisher.clearButtons(pending.chatId, messageId);
       } catch {
         /* ignore */
       }
+      // Retire the pick row so sí / nl:ok cannot race a second mutate.
+      await deps.nlConfirmationRepo.cancel(pending.id, now);
       return createNlConfirmation(
         {
           teamId: pending.teamId,
@@ -400,6 +401,8 @@ export async function resolveNlPick(
         deps,
       );
     }
+  } else {
+    await deps.nlConfirmationRepo.updateSlots(pending.id, nextSlots);
   }
 
   deps.logger.log({

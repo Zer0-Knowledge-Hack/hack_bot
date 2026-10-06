@@ -37,6 +37,7 @@ import {
   joinCopy,
   nlConfirmCopy,
   nlCopy,
+  participateCopy,
   profileCopy,
   repoCopy,
   roleCopy,
@@ -166,6 +167,7 @@ function nlCopyBag() {
       busy: nlConfirmCopy.busy,
       wrongActor: nlConfirmCopy.wrongActor,
       notMember: commonCopy.notMember,
+      executeFailed: nlConfirmCopy.executeFailed,
       errorReplies: {
         UnauthorizedError: roleCopy.adminOnly,
         NotFoundError: commonCopy.notMember,
@@ -179,6 +181,10 @@ function nlCopyBag() {
         AnalysisBusyError: hackathonCopy.busy,
         QueueSendFailedError: hackathonCopy.queueSendFailed,
         ConfigError: hackathonCopy.notConfigured,
+        TopicRightsMissingError: participateCopy.noRights,
+        ChatNotForumError: participateCopy.notForum,
+        TopicCreationFailedError: participateCopy.createFailed,
+        TopicCreationUncertainError: participateCopy.createUncertain,
       },
     },
   };
@@ -239,6 +245,11 @@ async function handleNlPickCallback(ctx: Context, deps: NaturalLanguageDeps): Pr
       outcome: "error",
       errorCode: errorCodeOf(err),
     });
+    try {
+      await ctx.reply(nlConfirmCopy.executeFailed);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -286,6 +297,11 @@ async function handleNlCallback(
       outcome: "error",
       errorCode: errorCodeOf(err),
     });
+    try {
+      await ctx.reply(nlConfirmCopy.executeFailed);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -362,6 +378,11 @@ export function registerNaturalLanguage(bot: Bot, deps: NaturalLanguageDeps): vo
         errorCode: errorCodeOf(err),
         reason: "nl-handler-failed",
       });
+      try {
+        await ctx.reply(nlConfirmCopy.executeFailed);
+      } catch {
+        /* ignore */
+      }
     }
   });
 }

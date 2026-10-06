@@ -60,6 +60,7 @@ const COPY: NlCopyBag = {
     busy: nlConfirmCopy.busy,
     wrongActor: nlConfirmCopy.wrongActor,
     notMember: commonCopy.notMember,
+    executeFailed: nlConfirmCopy.executeFailed,
     errorReplies: {
       AlreadyExistsError: "Ya eres miembro de este equipo.",
     },
@@ -676,6 +677,33 @@ describe("handleNaturalLanguage", () => {
       createdAt: 0,
       updatedAt: 0,
     });
+    // Current topic is linked to a *different* hackathon — named target must win.
+    repos.hackathonAnalysisRepo.rows.push({
+      id: "a-other",
+      teamId: asTeamId("team-nl"),
+      slug: "other-hack",
+      sourceUrl: "https://example.com/other",
+      normalizedUrl: "https://example.com/other",
+      fields: {
+        name: { value: "Other", snippet: "", confidence: 0.9 },
+        format: null,
+        location: null,
+        teamSize: null,
+        submissionDeadline: null,
+        startDate: null,
+        endDate: null,
+        resultsDate: null,
+        prizes: null,
+        tracks: null,
+        eligibility: null,
+      },
+      suggestedRepos: [],
+      threadId: 77,
+      pinnedMessageId: 2,
+      generalMessageId: null,
+      createdAt: 0,
+      updatedAt: 0,
+    });
 
     await handleNaturalLanguage(
       {
@@ -687,6 +715,30 @@ describe("handleNaturalLanguage", () => {
       deps,
     );
     expect(nlConfirmationRepo.rows[0]?.slots.slug).toBe("bnb-linked");
+  });
+
+  it("promote_member clarifies when membershipId is not on this team", async () => {
+    const { deps, repos, nlConfirmationRepo } = makeDeps({
+      intent: async () => ({
+        intent: "promote_member",
+        confidence: 0.9,
+        slots: { membershipId: "mem-foreign" },
+      }),
+    });
+    seedMemberTeam(repos);
+
+    expect(
+      await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: null,
+          callerTelegramUserId: 20,
+          classifiedText: "promové a ese",
+        },
+        deps,
+      ),
+    ).toEqual({ kind: "reply", text: COPY.clarifyMembership });
+    expect(nlConfirmationRepo.rows).toHaveLength(0);
   });
 
   it("unlink_hackathon_topic offers pick buttons when several names match", async () => {

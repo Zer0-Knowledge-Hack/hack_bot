@@ -174,6 +174,7 @@ export const nlConfirmCopy = {
   cancelled: "Listo, cancelé la acción.",
   busy: "Esa confirmación ya se usó o expiró.",
   wrongActor: "Solo quien pidió la acción puede confirmarla.",
+  executeFailed: "No pude completar la acción. Probá de nuevo en un momento.",
   lexiconHint: "Respondé sí o cancelar, o usá el botón.",
   profileDataChannelOnly:
     "Pedí el cambio de perfil en el canal de datos del equipo (no acá).",

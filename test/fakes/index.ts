@@ -618,6 +618,8 @@ export function fakeChatPublisher(
     failureClass?: AlertSendFailureClass;
     // clearButtons fails (participation: a button-clear failure is ignored).
     clearThrows?: boolean;
+    // editMessage fails (NL pick → confirm fallback path).
+    editThrows?: boolean;
   } = {},
 ): ChatPublisher & {
   posted: Array<{ chatId: number; threadId: number | null; text: string }>;
@@ -658,7 +660,7 @@ export function fakeChatPublisher(
       cleared.push({ chatId, messageId });
     },
     editMessage: async (chatId, messageId, text, options) => {
-      if (opts.throws) {
+      if (opts.throws || opts.editThrows) {
         throw new PublishFailedError("editMessageText failed", opts.failureClass ?? "rejected");
       }
       edited.push({ chatId, messageId, text, options });
