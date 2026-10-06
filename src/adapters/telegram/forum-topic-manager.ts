@@ -80,5 +80,21 @@ export function createTelegramForumTopicManager(api: Api): ForumTopicManager {
         throw new ForumTopicCreateError("createForumTopic failed", classifyCreateFailure(err));
       }
     },
+
+    async close(chatId, threadId) {
+      try {
+        await api.closeForumTopic(chatId, threadId, topicSignal());
+      } catch (err) {
+        throw new ForumTopicCreateError("closeForumTopic failed", classifyCreateFailure(err));
+      }
+    },
+
+    async reopen(chatId, threadId) {
+      try {
+        await api.reopenForumTopic(chatId, threadId, topicSignal());
+      } catch (err) {
+        throw new ForumTopicCreateError("reopenForumTopic failed", classifyCreateFailure(err));
+      }
+    },
   };
 }

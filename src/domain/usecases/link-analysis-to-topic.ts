@@ -5,6 +5,7 @@ import type { HackathonAnalysis } from "../entities";
 import type { MembershipId, TeamId } from "../ids";
 import type {
   ChatPublisher,
+  ForumTopicManager,
   HackathonAnalysisRepo,
   Logger,
   MembershipRepo,
@@ -25,6 +26,7 @@ export interface LinkAnalysisToTopicDeps {
   membershipRepo: MembershipRepo;
   hackathonAnalysisRepo: HackathonAnalysisRepo;
   chatPublisher: ChatPublisher;
+  forumTopicManager: ForumTopicManager;
   logger: Logger;
 }
 
@@ -83,7 +85,10 @@ export interface PostAnalysisAndLinkTopicInput {
 export type PostAnalysisAndLinkTopicDeps = Pick<
   LinkAnalysisToTopicDeps,
   "hackathonAnalysisRepo" | "chatPublisher" | "logger"
-> & { sleep?: Sleep };
+> & {
+  sleep?: Sleep;
+  forumTopicManager?: ForumTopicManager;
+};
 
 // The permission-free core (design.md "Pin Behavior": "a `/hackathon <url>`
 // run inside a topic now links and pins from the consumer"). Reused by
@@ -97,6 +102,11 @@ export async function postAnalysisAndLinkTopic(
   const { teamId, chatId, threadId, analysis, pinDelayMs } = input;
   const notes: string[] = [];
 
+  // A previously unlinked topic may still be closed in Telegram; reopen
+  // best-effort so the post is not refused.
+  if (deps.forumTopicManager) {
+    await safeReopen(chatId, threadId, teamId, deps);
+  }
   // spec: "Topic already holds a different analysis" — move the link,
   // unpinning whichever other analysis currently occupies this topic. The
   // displaced row's own D1 link/pin columns are cleared atomically below
@@ -187,6 +197,26 @@ async function safeUnpin(
       outcome: "error",
       errorCode: err instanceof Error ? err.name : "UnknownError",
       reason: "unpin-failed",
+    });
+  }
+}
+
+async function safeReopen(
+  chatId: number,
+  threadId: number,
+  teamId: TeamId,
+  deps: Pick<PostAnalysisAndLinkTopicDeps, "forumTopicManager" | "logger">,
+): Promise<void> {
+  if (!deps.forumTopicManager) return;
+  try {
+    await deps.forumTopicManager.reopen(chatId, threadId);
+  } catch (err) {
+    deps.logger.log({
+      event: "hackathon-link",
+      teamId,
+      outcome: "error",
+      errorCode: err instanceof Error ? err.name : "UnknownError",
+      reason: "reopen-topic-failed",
     });
   }
 }

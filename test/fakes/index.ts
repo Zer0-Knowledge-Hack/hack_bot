@@ -40,8 +40,11 @@ import type {
   Logger,
   LlmExtractor,
   LlmOutputMeta,
+  IntentClassifier,
   MemberRepo,
   MembershipRepo,
+  NlClassifyQuota,
+  NlConfirmationRepo,
   PageFetcher,
   PostOptions,
   ProfileRepo,
@@ -51,6 +54,12 @@ import type {
   TopicCreateFailure,
 } from "../../src/domain/ports";
 import type { MemberId, MembershipId, TeamId } from "../../src/domain/ids";
+import type {
+  IntentClassifierInput,
+  IntentResult,
+} from "../../src/domain/nl/intents";
+import type { NlConfirmation } from "../../src/domain/nl/confirmation";
+import { stubNlIntent } from "../../src/domain/nl/eligibility";
 
 // In-memory fakes for domain tests. Pure Vitest, no Workers runtime needed —
 // this proves the domain layer has zero infrastructure dependencies.
@@ -445,6 +454,13 @@ export function fakeHackathonAnalysisRepo(): HackathonAnalysisRepo & {
         existing.pinnedMessageId = pinnedMessageId;
       }
     },
+    clearTopicLink: async (teamId: TeamId, analysisId: string) => {
+      const existing = rows.find((r) => r.teamId === teamId && r.id === analysisId);
+      if (existing) {
+        existing.threadId = null;
+        existing.pinnedMessageId = null;
+      }
+    },
   };
 }
 
@@ -465,6 +481,69 @@ export function fakeAnalysisQuota(
     },
     release: async (team: TeamId, day: string, jobId: string, refund: boolean) => {
       released.push({ team, day, jobId, refund });
+    },
+  };
+}
+
+export function fakeNlClassifyQuota(
+  opts: { allow?: boolean } = {},
+): NlClassifyQuota & {
+  reserved: Array<{ teamId: TeamId; dayUtc: string; cap: number }>;
+} {
+  const reserved: Array<{ teamId: TeamId; dayUtc: string; cap: number }> = [];
+  return {
+    reserved,
+    reserve: async (teamId, dayUtc, cap) => {
+      reserved.push({ teamId, dayUtc, cap });
+      return opts.allow ?? true;
+    },
+  };
+}
+
+export function fakeNlConfirmationRepo(): NlConfirmationRepo & {
+  rows: NlConfirmation[];
+} {
+  const rows: NlConfirmation[] = [];
+  return {
+    rows,
+    create: async (row) => {
+      rows.push({ ...row, slots: { ...row.slots } });
+    },
+    findById: async (id) => rows.find((r) => r.id === id) ?? null,
+    findByConfirmMessage: async (chatId, confirmMessageId) =>
+      rows.find((r) => r.chatId === chatId && r.confirmMessageId === confirmMessageId) ?? null,
+    tryConsume: async (id, now) => {
+      const row = rows.find((r) => r.id === id);
+      if (!row || row.consumedAt !== null || row.expiresAt <= now) return false;
+      row.consumedAt = now;
+      return true;
+    },
+    cancel: async (id, now) => {
+      const row = rows.find((r) => r.id === id);
+      if (!row || row.consumedAt !== null || row.expiresAt <= now) return false;
+      row.consumedAt = now;
+      return true;
+    },
+    updateSlots: async (id, slots) => {
+      const row = rows.find((r) => r.id === id);
+      if (row && row.consumedAt === null) row.slots = { ...slots };
+    },
+  };
+}
+
+export function fakeIntentClassifier(
+  classifyFn?: (
+    input: IntentClassifierInput,
+  ) => IntentResult | Promise<IntentResult>,
+): IntentClassifier & { calls: IntentClassifierInput[] } {
+  const calls: IntentClassifierInput[] = [];
+  return {
+    calls,
+    classify: async (input) => {
+      calls.push(input);
+      if (classifyFn) return classifyFn(input);
+      const intent = stubNlIntent(input.text);
+      return { intent, confidence: 0.9, slots: {} };
     },
   };
 }
@@ -539,6 +618,8 @@ export function fakeChatPublisher(
     failureClass?: AlertSendFailureClass;
     // clearButtons fails (participation: a button-clear failure is ignored).
     clearThrows?: boolean;
+    // editMessage fails (NL pick → confirm fallback path).
+    editThrows?: boolean;
   } = {},
 ): ChatPublisher & {
   posted: Array<{ chatId: number; threadId: number | null; text: string }>;
@@ -548,12 +629,14 @@ export function fakeChatPublisher(
   pinned: number[];
   unpinned: number[];
   cleared: Array<{ chatId: number; messageId: number }>;
+  edited: Array<{ chatId: number; messageId: number; text: string; options?: PostOptions }>;
 } {
   const posted: Array<{ chatId: number; threadId: number | null; text: string }> = [];
   const postOptions: Array<PostOptions | undefined> = [];
   const pinned: number[] = [];
   const unpinned: number[] = [];
   const cleared: Array<{ chatId: number; messageId: number }> = [];
+  const edited: Array<{ chatId: number; messageId: number; text: string; options?: PostOptions }> = [];
   let nextMessageId = 1;
   return {
     posted,
@@ -561,6 +644,7 @@ export function fakeChatPublisher(
     pinned,
     unpinned,
     cleared,
+    edited,
     post: async (chatId: number, threadId: number | null, text: string, options?: PostOptions) => {
       if (opts.throws) {
         throw new PublishFailedError("sendMessage failed", opts.failureClass ?? "rejected");
@@ -574,6 +658,12 @@ export function fakeChatPublisher(
         throw new PublishFailedError("editMessageReplyMarkup failed", opts.failureClass ?? "rejected");
       }
       cleared.push({ chatId, messageId });
+    },
+    editMessage: async (chatId, messageId, text, options) => {
+      if (opts.throws || opts.editThrows) {
+        throw new PublishFailedError("editMessageText failed", opts.failureClass ?? "rejected");
+      }
+      edited.push({ chatId, messageId, text, options });
     },
     pin: async (_chatId: number, messageId: number) => {
       pinned.push(messageId);
@@ -593,12 +683,18 @@ export function fakeForumTopicManager(
   opts: { create?: TopicCreateStep[] } = {},
 ): ForumTopicManager & {
   created: Array<{ chatId: number; name: string; iconEmoji?: string; fallbackName?: string }>;
+  closed: Array<{ chatId: number; threadId: number }>;
+  reopened: Array<{ chatId: number; threadId: number }>;
 } {
   const created: Array<{ chatId: number; name: string; iconEmoji?: string; fallbackName?: string }> = [];
+  const closed: Array<{ chatId: number; threadId: number }> = [];
+  const reopened: Array<{ chatId: number; threadId: number }> = [];
   let createIdx = 0;
   let nextThreadId = 1000;
   return {
     created,
+    closed,
+    reopened,
     create: async (chatId: number, name: string, hint?: TopicCreateOptions) => {
       created.push({ chatId, name, ...hint });
       const script = opts.create;
@@ -608,6 +704,12 @@ export function fakeForumTopicManager(
         throw new ForumTopicCreateError("createForumTopic failed", step.fails);
       }
       return step ? step.threadId : nextThreadId++;
+    },
+    close: async (chatId: number, threadId: number) => {
+      closed.push({ chatId, threadId });
+    },
+    reopen: async (chatId: number, threadId: number) => {
+      reopened.push({ chatId, threadId });
     },
   };
 }

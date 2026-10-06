@@ -6,9 +6,12 @@ import { createRenderedFetcher, type BrowserLaunch } from "./adapters/browser/re
 import { createD1AnalysisJobRepo } from "./adapters/d1/analysis-job-repo";
 import { createD1AnalysisQuota } from "./adapters/d1/analysis-quota";
 import { createD1HackathonAnalysisRepo } from "./adapters/d1/hackathon-analysis-repo";
+import { createD1NlClassifyQuota } from "./adapters/d1/nl-classify-quota";
+import { createD1NlConfirmationRepo } from "./adapters/d1/nl-confirmation-repo";
 import { createStaticFetcher } from "./adapters/http/safe-fetcher";
 import { createQueueAnalysisJobQueue } from "./adapters/queue/analysis-job-queue";
 import { createWorkersAiExtractor } from "./adapters/llm/workers-ai-extractor";
+import { createWorkersAiIntentClassifier } from "./adapters/llm/workers-ai-intent-classifier";
 import { createD1DmSelectionRepo } from "./adapters/d1/dm-selection-repo";
 import { createD1GithubOrgClaimRepo } from "./adapters/d1/github-org-claim-repo";
 import { createD1MemberRepo } from "./adapters/d1/member-repo";
@@ -101,6 +104,7 @@ export function buildBot(env: Env) {
   // QueueSendFailedError refusal on `/hackathon <url>` only, never as a
   // broken bot).
   const analysisJobQueue = createQueueAnalysisJobQueue(env.HACKATHON_QUEUE);
+  const nlModelPrimary = env.NL_MODEL_PRIMARY?.trim() ?? "";
 
   registerCommands(bot, {
     teamRepo,
@@ -121,6 +125,13 @@ export function buildBot(env: Env) {
     clock,
     idGen,
     logger,
+    nlClassifyQuota: createD1NlClassifyQuota(env.DB),
+    nlConfirmationRepo: createD1NlConfirmationRepo(env.DB),
+    intentClassifier: createWorkersAiIntentClassifier({
+      run: (model, inputs, options) => env.AI.run(model, inputs, options),
+      modelId: nlModelPrimary,
+    }),
+    nlModelPrimary,
   });
 
   return bot;

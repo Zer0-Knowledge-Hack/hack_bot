@@ -27,6 +27,9 @@ describe("migrations/0001_init.sql", () => {
       "hackathon_analysis_usage",
       "members",
       "memberships",
+      // nl_classify_quota + nl_confirmations: migrations/0005_natural_language_text.sql
+      "nl_classify_quota",
+      "nl_confirmations",
       "profile_fields",
       "repo_topic_links",
       "teams",
@@ -473,5 +476,99 @@ describe("migrations/0004_hackathon_participation.sql", () => {
       .first<{ general_message_id: number | null; topic_claim_until: number }>();
 
     expect(row).toEqual({ general_message_id: null, topic_claim_until: 0 });
+  });
+});
+
+// migrations/0005_natural_language_text.sql
+describe("migrations/0005_natural_language_text.sql", () => {
+  async function seedTeamAndMembership(teamId: string, membershipId: string, chatId: number) {
+    await env.DB.prepare(
+      "INSERT INTO teams (id, telegram_chat_id, created_at) VALUES (?, ?, ?)",
+    )
+      .bind(teamId, chatId, 0)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO members (id, telegram_user_id, created_at) VALUES (?, ?, ?)",
+    )
+      .bind(`member-${teamId}`, chatId, 0)
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO memberships (id, team_id, member_id, role, joined_at) VALUES (?, ?, ?, ?, ?)",
+    )
+      .bind(membershipId, teamId, `member-${teamId}`, "admin", 0)
+      .run();
+  }
+
+  it("creates nl_classify_quota with (team_id, day_utc) primary key", async () => {
+    await seedTeamAndMembership("team-nl-q", "mem-nl-q", 800);
+    await env.DB.prepare(
+      "INSERT INTO nl_classify_quota (team_id, day_utc, count) VALUES (?, ?, ?)",
+    )
+      .bind("team-nl-q", "2026-10-05", 1)
+      .run();
+    const row = await env.DB.prepare(
+      "SELECT count FROM nl_classify_quota WHERE team_id = ? AND day_utc = ?",
+    )
+      .bind("team-nl-q", "2026-10-05")
+      .first<{ count: number }>();
+    expect(row?.count).toBe(1);
+  });
+
+  it("rejects nl_classify_quota day_utc that is not 10 characters", async () => {
+    await seedTeamAndMembership("team-nl-day", "mem-nl-day", 801);
+    await expect(
+      env.DB.prepare(
+        "INSERT INTO nl_classify_quota (team_id, day_utc, count) VALUES (?, ?, ?)",
+      )
+        .bind("team-nl-day", "2026-10", 1)
+        .run(),
+    ).rejects.toThrow(/CHECK/i);
+  });
+
+  it("creates nl_confirmations and enforces unique (chat_id, confirm_message_id)", async () => {
+    await seedTeamAndMembership("team-nl-c", "mem-nl-c", 802);
+    await env.DB.prepare(
+      `INSERT INTO nl_confirmations
+        (id, team_id, chat_id, thread_id, actor_membership_id, intent, slots_json,
+         confirm_message_id, expires_at, consumed_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        "conf-1",
+        "team-nl-c",
+        802,
+        null,
+        "mem-nl-c",
+        "join_team",
+        "{}",
+        42,
+        1_000,
+        null,
+        0,
+      )
+      .run();
+
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO nl_confirmations
+          (id, team_id, chat_id, thread_id, actor_membership_id, intent, slots_json,
+           confirm_message_id, expires_at, consumed_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          "conf-2",
+          "team-nl-c",
+          802,
+          null,
+          "mem-nl-c",
+          "join_team",
+          "{}",
+          42,
+          1_000,
+          null,
+          0,
+        )
+        .run(),
+    ).rejects.toThrow(/UNIQUE/i);
   });
 });

@@ -13,6 +13,7 @@ import type { HackathonAnalysis } from "../../../src/domain/entities";
 import { asMemberId, asMembershipId, asTeamId } from "../../../src/domain/ids";
 import {
   fakeChatPublisher,
+  fakeForumTopicManager,
   fakeHackathonAnalysisRepo,
   fakeLogger,
   fakeMemberRepo,
@@ -30,6 +31,7 @@ function makeDeps() {
     membershipRepo,
     hackathonAnalysisRepo: fakeHackathonAnalysisRepo(),
     chatPublisher: fakeChatPublisher(),
+    forumTopicManager: fakeForumTopicManager(),
     logger: fakeLogger(),
   };
 }

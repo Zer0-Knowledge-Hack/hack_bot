@@ -30,6 +30,10 @@ export const hackathonCopy = {
     "No se pudo iniciar el análisis; inténtalo de nuevo en un minuto. No se contó en el límite diario.",
   notConfigured: analysisCopy.notConfigured,
   publishFailed: "No se pudo publicar en este chat ahora mismo. Inténtalo de nuevo en un minuto.",
+  unlinkTopicUsage: "Ejecuta /unlinkhackathon dentro del tema vinculado al hackathon.",
+  unlinkTopicAdminOnly:
+    "Solo un administrador del equipo puede desvincular un hackathon del tema.",
+  noTopicLink: "Este tema no tiene un hackathon vinculado.",
 };
 
 // Roles are exposed to users only through this exhaustive map, so a new Role
@@ -126,4 +130,72 @@ export const participateCopy = {
   createFailed: "Telegram rechazó la creación del tema. Inténtalo de nuevo en un minuto.",
   createUncertain:
     "No se pudo confirmar si se creó el tema. Revisa la lista de temas antes de volver a intentarlo.",
+};
+
+// natural-language-text replies (design.md "Copy Table").
+export const nlCopy = {
+  help:
+    "Podés hablarme en el grupo @mencionándome o respondiendo a un mensaje mío (en el chat general o en un tema). Pedime «ayuda» para ver este texto. Los comandos con / siguen funcionando (por ejemplo /hackathons).",
+  unknown:
+    "No te entendí. Pedime «ayuda» para ver cómo hablarme, o usá un comando con /.",
+  notConfigured:
+    "El lenguaje natural no está configurado todavía. Usá los comandos con /.",
+  classifyFailed:
+    "No pude interpretar eso ahora. Probá de nuevo en un momento, o usá un comando con /.",
+  quota:
+    "Llegamos al límite diario de mensajes en lenguaje natural para este equipo. Mañana se reinicia (UTC), o usá un comando con /.",
+  mutateDeferred:
+    "Esa acción todavía necesita confirmación (próximamente). Por ahora usá el comando con / correspondiente.",
+  clarifySlug: "¿De qué hackathon? Decime el slug (o mirá /hackathons).",
+  clarifyTopic:
+    "Esa consulta aplica dentro de un tema con un hackathon vinculado. Entrá al tema y pedímelo de nuevo.",
+  noTopicAnalysis:
+    "Este tema no tiene un hackathon vinculado. Pedí la lista con «hackathons» o usá /hackathons.",
+  hackathonNotLinked: (slug: string) =>
+    `«${slug}» no está vinculado a ningún tema. Pedí la lista con «hackathons».`,
+  unlinkWrongTopic: (slug: string) =>
+    `Este tema no tiene un hackathon vinculado. El vinculado ahora es «${slug}»: andá a ese tema y pedí desvincular, o pedime «desvincula ${slug}».`,
+  unlinkWrongTopicMany: (slugs: string) =>
+    `Este tema no tiene un hackathon vinculado. Los vinculados son: ${slugs}. Andá a ese tema o pedime desvincular con el nombre.`,
+  pickUnlink: "¿Cuál desvinculo? Elegí una opción:",
+  noLinkedMatch: (query: string) =>
+    `No encontré un hackathon vinculado que coincida con «${query}». Pedí la lista con «hackathons».`,
+  noAnalysis: hackathonCopy.noAnalysis,
+  dataChannelOnly: profileCopy.dataChannelOnly,
+};
+
+export const nlConfirmButtons = {
+  confirm: "Confirmar",
+  cancel: "Cancelar",
+};
+
+export const nlConfirmCopy = {
+  hint: "También podés responder sí o cancelar a este mensaje.",
+  cancelled: "Listo, cancelé la acción.",
+  busy: "Esa confirmación ya se usó o expiró.",
+  wrongActor: "Solo quien pidió la acción puede confirmarla.",
+  executeFailed: "No pude completar la acción. Probá de nuevo en un momento.",
+  lexiconHint: "Respondé sí o cancelar, o usá el botón.",
+  profileDataChannelOnly:
+    "Pedí el cambio de perfil en el canal de datos del equipo (no acá).",
+  clarifyMembership: "¿A qué miembro? Respondé citando su mensaje o pasando el id de membresía.",
+  clarifyRepo: "¿Qué repositorio? Pasame owner/repo.",
+  clarifyUrl: "¿Qué URL del hackathon querés analizar?",
+  clarifyThread: "Esa acción necesita correrse dentro del tema correspondiente.",
+  confirmPrompt: (summary: string) =>
+    `¿Confirmás ${summary}?\nTambién podés responder sí o cancelar a este mensaje.`,
+  summaries: {
+    setup_team: "registrar este grupo como equipo",
+    join_team: "unirte a este equipo",
+    bind_data_channel: "usar este tema como canal de datos",
+    set_profile_field: (field: string) => `actualizar tu campo de perfil «${field}»`,
+    promote_member: (id: string) => `promover a ${id} a administrador`,
+    demote_member: (id: string) => `dejar a ${id} como miembro`,
+    link_repo: (repo: string) => `vincular ${repo} a este tema`,
+    unlink_repo: (repo: string) => `desvincular ${repo}`,
+    link_hackathon_topic: (slug: string) => `vincular el hackathon ${slug} a este tema`,
+    unlink_hackathon_topic: (slug: string) => `desvincular el hackathon ${slug} de este tema`,
+    request_hackathon_analysis: "lanzar un análisis nuevo de hackathon",
+    participate_hackathon: (slug: string) => `participar en ${slug}`,
+  },
 };

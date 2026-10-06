@@ -15,6 +15,8 @@ import type { RepoFullName } from "./github";
 import type { MemberId, MembershipId, TeamId } from "./ids";
 import type { Role } from "./entities";
 import type { ExtractionAttemptDiagnostics, LlmParseFailureCode } from "./errors";
+import type { IntentClassifierInput, IntentResult, NlSlots } from "./nl/intents";
+import type { NlConfirmation } from "./nl/confirmation";
 
 // Every tenant-scoped method takes TeamId as its first parameter. This is a
 // deliberate design constraint (see design.md "Tenancy") that makes
@@ -270,6 +272,8 @@ export interface HackathonAnalysisRepo {
     threadId: number,
     pinnedMessageId: number | null,
   ): Promise<void>;
+  // Clears the topic link on one analysis (unlink hackathon from topic).
+  clearTopicLink(teamId: TeamId, analysisId: string): Promise<void>;
   // hackathon-participation (design.md decision 3): compare-and-set claim on
   // topic creation. Wins only when the row still holds `expectedThreadId`
   // (null, or the stale id whose verifying post reported the thread gone) and
@@ -333,6 +337,33 @@ export interface AnalysisJobQueue {
   enqueue(message: AnalysisJobMessage): Promise<void>;
 }
 
+// Natural-language-text (design.md "Interfaces / Contracts"). Soft cap of
+// successful classify calls per team per UTC day; enforced before AI.
+export interface NlClassifyQuota {
+  reserve(teamId: TeamId, dayUtc: string, cap: number): Promise<boolean>;
+}
+
+// Closed-enum intent classification (separate from LlmExtractor). Throws
+// IntentClassificationError | ConfigError | LlmQuotaExceededError.
+export interface IntentClassifier {
+  classify(input: IntentClassifierInput, signal: AbortSignal): Promise<IntentResult>;
+}
+
+// Pending NL mutate confirmations (design.md "Interfaces / Contracts").
+// tryConsume / cancel are CAS: win only when consumed_at IS NULL and not expired.
+export interface NlConfirmationRepo {
+  create(row: NlConfirmation): Promise<void>;
+  findById(id: string): Promise<NlConfirmation | null>;
+  findByConfirmMessage(
+    chatId: number,
+    confirmMessageId: number,
+  ): Promise<NlConfirmation | null>;
+  tryConsume(id: string, now: number): Promise<boolean>;
+  cancel(id: string, now: number): Promise<boolean>;
+  // Replace slots on a still-pending confirmation (disambiguation → confirm).
+  updateSlots(id: string, slots: NlSlots): Promise<void>;
+}
+
 // Public GitHub repo metadata used to enrich a suggested repo (design.md
 // "Data Flow": "repoLinks+metadata"). The adapter (src/adapters/github/
 // repo-metadata.ts, PR8) is the only implementation; wiring this into
@@ -361,14 +392,21 @@ export interface TopicCreateOptions {
 
 export interface ForumTopicManager {
   create(chatId: number, name: string, options?: TopicCreateOptions): Promise<number>;
+  // Best-effort close/reopen of an existing forum topic (same thread id).
+  close(chatId: number, threadId: number): Promise<void>;
+  reopen(chatId: number, threadId: number): Promise<void>;
 }
 
 // Semantic post options (hackathon-participation design.md decision 1): the
 // domain never builds a keyboard. `participateSlug` asks the adapter to
 // attach the participation button for that analysis; the label and the
-// callback encoding stay in the adapter.
+// callback encoding stay in the adapter. `nlConfirmId` attaches Confirm /
+// Cancel buttons for a pending NL mutate confirmation (`nl:ok:` / `nl:no:`).
 export interface PostOptions {
   participateSlug?: string;
+  nlConfirmId?: string;
+  // Disambiguation buttons: `nl:p:<id>:<index>` (≤64 bytes with UUID id).
+  nlPick?: { confirmId: string; labels: string[] };
 }
 
 // design.md "Interfaces / Contracts". `post` returns the new message id
@@ -381,6 +419,12 @@ export interface ChatPublisher {
     text: string,
     options?: PostOptions,
   ): Promise<number>;
+  editMessage(
+    chatId: number,
+    messageId: number,
+    text: string,
+    options?: PostOptions,
+  ): Promise<void>;
   pin(chatId: number, messageId: number): Promise<void>;
   unpin(chatId: number, messageId: number): Promise<void>;
   // Removes the inline keyboard from a message (throws PublishFailedError).
