@@ -10,6 +10,8 @@ import type {
   DmSelection,
   RepoTopicLink,
   Team,
+  FeedbackNote,
+  FeedbackStatus,
 } from "./entities";
 import type { RepoFullName } from "./github";
 import type { MemberId, MembershipId, TeamId } from "./ids";
@@ -430,3 +432,23 @@ export interface ChatPublisher {
   // Removes the inline keyboard from a message (throws PublishFailedError).
   clearButtons(chatId: number, messageId: number): Promise<void>;
 }
+
+// --- Feedback Inbox ports ---
+
+export interface FeedbackFilter {
+  repoHint?: string;
+  status?: FeedbackStatus;
+  since?: number;
+  limit?: number;
+}
+
+export interface FeedbackRepo {
+  save(teamId: TeamId, note: FeedbackNote): Promise<void>;
+  list(teamId: TeamId, filter?: FeedbackFilter): Promise<FeedbackNote[]>;
+  updateStatus(teamId: TeamId, noteIds: string[], status: FeedbackStatus): Promise<void>;
+}
+
+export interface SpeechToText {
+  transcribe(audioBuffer: ArrayBuffer, signal?: AbortSignal): Promise<string>;
+}
+
