@@ -107,3 +107,42 @@ export const githubCopy = {
   reviewerLabel: "Revisor:",
   byLabel: "Por:",
 };
+
+export function formatShortDate(timestampMs: number): string {
+  const d = new Date(timestampMs);
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${day}/${month}`;
+}
+
+export function formatFeedbackDateSpan(startDate: number | null, endDate: number | null): string {
+  if (startDate === null || endDate === null) return "";
+  const startStr = formatShortDate(startDate);
+  const endStr = formatShortDate(endDate);
+  if (startStr === endStr) {
+    return `del ${startStr}`;
+  }
+  return `entre el ${startStr} y el ${endStr}`;
+}
+
+export const feedbackCopy = {
+  recorded: (repo?: string | null): string =>
+    repo ? `✅ Nota guardada en el buzón para ${repo}.` : "✅ Nota guardada en el buzón.",
+  empty: "No hay observaciones pendientes en el buzón.",
+  noSynthesis: "No hay observaciones pendientes para resumir.",
+  archived: (count: number): string =>
+    count === 1 ? "1 observación archivada." : `${count} observaciones archivadas.`,
+  voiceFailed:
+    "No pude entender el mensaje de voz. Por favor intenta de nuevo o escribe tu mensaje.",
+  summaryHeader: (count: number, dateSpan: string, repo?: string | null): string => {
+    const countPart = count === 1 ? "1 observación" : `${count} observaciones`;
+    const repoPart = repo ? ` para ${repo}` : "";
+    const spanPart = dateSpan ? ` ${dateSpan}` : "";
+    return `📋 Resumen de ${countPart}${repoPart}${spanPart}:`;
+  },
+  noteLine: (id: string, dateStr: string, text: string, repo?: string | null, isVoice = false): string => {
+    const prefix = isVoice ? "🎙️ " : "";
+    const repoPart = repo ? `[${repo}] ` : "";
+    return `• (${id.slice(0, 6)}) ${prefix}${repoPart}${dateStr}: ${text}`;
+  },
+};
