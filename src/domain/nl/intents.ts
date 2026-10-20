@@ -23,6 +23,10 @@ export const NL_INTENT_IDS = [
   "request_hackathon_analysis",
   "show_topic_hackathon",
   "participate_hackathon",
+  "capture_feedback",
+  "list_feedback",
+  "summarize_feedback",
+  "archive_feedback",
   "unknown",
 ] as const;
 
@@ -35,6 +39,8 @@ export const NL_READ_INTENTS = new Set<NlIntentId>([
   "list_hackathons",
   "show_hackathon",
   "show_topic_hackathon",
+  "list_feedback",
+  "summarize_feedback",
   "unknown",
 ]);
 
@@ -61,6 +67,9 @@ export type NlSlots = {
   profileField?: "full_name" | "emails" | "social_links" | "github_username";
   profileValue?: string;
   targetName?: string;
+  feedbackText?: string;
+  noteIds?: string[];
+  since?: number;
   // Pending multi-match pick for unlink (and later other slug intents).
   pickSlugs?: string[];
 };
@@ -149,6 +158,18 @@ function parseSlots(raw: unknown): NlSlots {
   }
   if (typeof obj.targetName === "string" && obj.targetName.trim() !== "") {
     slots.targetName = obj.targetName.trim();
+  }
+  if (typeof obj.feedbackText === "string" && obj.feedbackText.trim() !== "") {
+    slots.feedbackText = obj.feedbackText.trim();
+  }
+  if (Array.isArray(obj.noteIds)) {
+    const noteIds = obj.noteIds.filter(
+      (item): item is string => typeof item === "string" && item.trim() !== "",
+    );
+    if (noteIds.length > 0) slots.noteIds = noteIds.map((s) => s.trim());
+  }
+  if (typeof obj.since === "number" && Number.isFinite(obj.since)) {
+    slots.since = obj.since;
   }
   if (Array.isArray(obj.pickSlugs)) {
     const pickSlugs = obj.pickSlugs.filter(

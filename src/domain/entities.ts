@@ -185,3 +185,19 @@ export type ClaimResult =
 // value; `src/index.ts`'s `queue()` handler maps this to `msg.ack()` or
 // `msg.retry()` and never throws.
 export type JobOutcome = { kind: "ack" } | { kind: "retry"; delaySeconds: number };
+
+export type FeedbackStatus = "inbox" | "triaged" | "archived";
+export type FeedbackSource = "text" | "voice";
+
+export interface FeedbackNote {
+  id: string;
+  teamId: TeamId;
+  authorMembershipId: MembershipId;
+  repoHint: string | null;
+  rawText: string;
+  sourceType: FeedbackSource;
+  status: FeedbackStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+

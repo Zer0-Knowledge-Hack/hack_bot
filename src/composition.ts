@@ -8,10 +8,14 @@ import { createD1AnalysisQuota } from "./adapters/d1/analysis-quota";
 import { createD1HackathonAnalysisRepo } from "./adapters/d1/hackathon-analysis-repo";
 import { createD1NlClassifyQuota } from "./adapters/d1/nl-classify-quota";
 import { createD1NlConfirmationRepo } from "./adapters/d1/nl-confirmation-repo";
+import { createD1FeedbackRepo } from "./adapters/d1/feedback-repo";
 import { createStaticFetcher } from "./adapters/http/safe-fetcher";
 import { createQueueAnalysisJobQueue } from "./adapters/queue/analysis-job-queue";
 import { createWorkersAiExtractor } from "./adapters/llm/workers-ai-extractor";
 import { createWorkersAiIntentClassifier } from "./adapters/llm/workers-ai-intent-classifier";
+import { createWorkersAiWhisper } from "./adapters/llm/workers-ai-whisper";
+import { createWorkersAiFeedbackSynthesizer } from "./adapters/llm/workers-ai-feedback-synthesizer";
+import { createTelegramVoiceDownloader } from "./adapters/telegram/voice";
 import { createD1DmSelectionRepo } from "./adapters/d1/dm-selection-repo";
 import { createD1GithubOrgClaimRepo } from "./adapters/d1/github-org-claim-repo";
 import { createD1MemberRepo } from "./adapters/d1/member-repo";
@@ -106,6 +110,16 @@ export function buildBot(env: Env) {
   const analysisJobQueue = createQueueAnalysisJobQueue(env.HACKATHON_QUEUE);
   const nlModelPrimary = env.NL_MODEL_PRIMARY?.trim() ?? "";
 
+  const feedbackRepo = createD1FeedbackRepo(env.DB);
+  const speechToText = createWorkersAiWhisper({
+    run: (model, inputs, options) => env.AI.run(model, inputs, options),
+  });
+  const voiceDownloader = createTelegramVoiceDownloader(bot.api, env.BOT_TOKEN);
+  const feedbackSynthesizer = createWorkersAiFeedbackSynthesizer({
+    run: (model, inputs, options) => env.AI.run(model, inputs, options),
+    modelId: nlModelPrimary,
+  });
+
   registerCommands(bot, {
     teamRepo,
     memberRepo,
@@ -132,6 +146,10 @@ export function buildBot(env: Env) {
       modelId: nlModelPrimary,
     }),
     nlModelPrimary,
+    feedbackRepo,
+    speechToText,
+    voiceDownloader,
+    feedbackSynthesizer,
   });
 
   return bot;

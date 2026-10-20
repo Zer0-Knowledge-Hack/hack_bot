@@ -15,6 +15,8 @@ describe("migrations/0001_init.sql", () => {
     expect(names).toEqual([
       "audit_log",
       "dm_selections",
+      // feedback_notes: migrations/0006_feedback_inbox.sql
+      "feedback_notes",
       // github_org_claims and repo_topic_links: migrations/0002_github_alerts.sql
       // (PR2 covers their own FK/UNIQUE/CHECK migration tests).
       "github_org_claims",
@@ -570,5 +572,47 @@ describe("migrations/0005_natural_language_text.sql", () => {
         )
         .run(),
     ).rejects.toThrow(/UNIQUE/i);
+  });
+
+  it("creates feedback_notes and enforces status check and fk", async () => {
+    await seedTeamAndMembership("team-fb-mig", "mem-fb-mig", 9999);
+    await env.DB.prepare(
+      `INSERT INTO feedback_notes
+        (id, team_id, author_membership_id, repo_hint, raw_text, source_type, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        "note-mig-1",
+        "team-fb-mig",
+        "mem-fb-mig",
+        "org/repo",
+        "Test note",
+        "text",
+        "inbox",
+        1000,
+        1000,
+      )
+      .run();
+
+    // Invalid status CHECK constraint
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO feedback_notes
+          (id, team_id, author_membership_id, repo_hint, raw_text, source_type, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+        .bind(
+          "note-mig-2",
+          "team-fb-mig",
+          "mem-fb-mig",
+          "org/repo",
+          "Test note",
+          "text",
+          "invalid_status",
+          1000,
+          1000,
+        )
+        .run(),
+    ).rejects.toThrow(/CHECK/i);
   });
 });

@@ -39,8 +39,12 @@ export interface WorkersAiIntentClassifierOptions {
 const SYSTEM_PROMPT = `You classify Spanish Telegram messages for a hackathon team bot.
 Reply with ONLY a JSON object: {"intent":"<id>","confidence":0.0-1.0,"slots":{...}}.
 Allowed intent ids: ${NL_INTENT_IDS.join(", ")}.
-Slots (optional strings): slug, url, repo, membershipId, profileField, profileValue, targetName.
+Slots (optional strings): slug, url, repo, membershipId, profileField, profileValue, targetName, feedbackText, noteIds.
 profileField must be one of: full_name, emails, social_links, github_username.
+For bug reports, issues, user feedback, or observations (e.g. "anota este bug en puls3: ...", "feedback de la demo: ..."), use intent "capture_feedback", with slots: repo (optional repo name), feedbackText (the raw observation text).
+For listing feedback/bugs (e.g. "listar feedback", "qué bugs hay pendientes"), use intent "list_feedback", with slots: repo (optional).
+For summarizing feedback/bugs (e.g. "resumen del feedback", "sintetizar notas de puls3"), use intent "summarize_feedback", with slots: repo (optional).
+For archiving/triaging feedback (e.g. "marcar feedback como procesado", "archivar notas"), use intent "archive_feedback".
 For hackathon names in natural language (e.g. "BNB Chain", "Meta VR"), put the human name in targetName — do NOT invent slugs.
 In a forum topic, "esta/este hackathon" with no name → unlink_hackathon_topic or link_hackathon_topic with empty slug/targetName (topic context).
 If unsure, use intent "unknown" with low confidence. Never invent intents.`;
