@@ -18,6 +18,7 @@ import type {
   ChatAdminChecker,
   Clock,
   DmSelectionRepo,
+  FeedbackRepo,
   GithubOrgClaimRepo,
   IdGen,
   IntentClassifier,
@@ -28,8 +29,11 @@ import type {
   NlConfirmationRepo,
   ProfileRepo,
   RepoTopicLinkRepo,
+  SpeechToText,
   TeamRepo,
 } from "../../domain/ports";
+import type { FeedbackSynthesizer } from "../../domain/usecases/synthesize-feedback";
+import type { VoiceDownloader } from "./voice";
 import { callerLocation, resolveGroupMembership } from "./context";
 import type { CallerLocation } from "./context";
 import { runCommand } from "./command-outcome";
@@ -86,6 +90,10 @@ export interface CommandDeps extends HackathonCommandDeps {
   nlConfirmationRepo: NlConfirmationRepo;
   intentClassifier: IntentClassifier;
   nlModelPrimary: string;
+  feedbackRepo?: FeedbackRepo;
+  feedbackSynthesizer?: FeedbackSynthesizer;
+  speechToText?: SpeechToText;
+  voiceDownloader?: VoiceDownloader;
 }
 
 const profileFields = new Set<ProfileFieldName>([

@@ -10,6 +10,8 @@ import type {
   AnalysisJobMessage,
   AuditDraft,
   ClaimResult,
+  FeedbackNote,
+  FeedbackStatus,
   HackathonAnalysis,
   Member,
   Membership,
@@ -29,6 +31,8 @@ import type {
   ChatAdminChecker,
   ChatPublisher,
   Clock,
+  FeedbackFilter,
+  FeedbackRepo,
   ForumTopicManager,
   Sleep,
   TopicCreateOptions,
@@ -746,4 +750,32 @@ export function fakeSleep(onSleep?: (ms: number) => void): Sleep & { calls: numb
     onSleep?.(ms);
   };
   return Object.assign(sleep, { calls });
+}
+
+export function fakeFeedbackRepo(): FeedbackRepo & { rows: FeedbackNote[] } {
+  const rows: FeedbackNote[] = [];
+  return {
+    rows,
+    save: async (teamId, note) => {
+      rows.push(note);
+    },
+    list: async (teamId, filter) => {
+      return rows
+        .filter((r) => r.teamId === teamId)
+        .filter((r) => (filter?.status ? r.status === filter.status : true))
+        .filter((r) => (filter?.repoHint ? r.repoHint === filter.repoHint : true))
+        .filter((r) => (filter?.since ? r.createdAt >= filter.since : true))
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, filter?.limit ?? 50);
+    },
+    updateStatus: async (teamId, noteIds, status) => {
+      const idSet = new Set(noteIds);
+      for (const row of rows) {
+        if (row.teamId === teamId && idSet.has(row.id)) {
+          row.status = status;
+          row.updatedAt = Date.now();
+        }
+      }
+    },
+  };
 }

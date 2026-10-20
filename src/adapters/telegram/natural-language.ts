@@ -1,5 +1,5 @@
 import type { Bot, Context, NextFunction } from "grammy";
-import type { Membership, ProfileField, RepoTopicLink } from "../../domain/entities";
+import type { FeedbackNote, Membership, ProfileField, RepoTopicLink } from "../../domain/entities";
 import type { MembershipId, TeamId } from "../../domain/ids";
 import { isEligibleNlMessage } from "../../domain/nl/eligibility";
 import { joinLinesWithinLimit } from "../../domain/text-limit";
@@ -10,6 +10,7 @@ import type {
   ChatAdminChecker,
   ChatPublisher,
   Clock,
+  FeedbackRepo,
   ForumTopicManager,
   GithubOrgClaimRepo,
   HackathonAnalysisRepo,
@@ -23,8 +24,19 @@ import type {
   ProfileRepo,
   RepoTopicLinkRepo,
   Sleep,
+  SpeechToText,
   TeamRepo,
 } from "../../domain/ports";
+import type {
+  FeedbackSynthesizer,
+  SynthesizedFeedbackSummary,
+} from "../../domain/usecases/synthesize-feedback";
+import {
+  feedbackCopy,
+  formatFeedbackDateSpan,
+  formatShortDate,
+} from "../../domain/copy";
+import type { VoiceDownloader } from "./voice";
 import { handleNaturalLanguage } from "../../domain/usecases/handle-natural-language";
 import {
   resolveNlConfirmation,
@@ -76,6 +88,10 @@ export interface NaturalLanguageDeps {
   idGen: IdGen;
   logger: Logger;
   nlModelPrimary: string;
+  speechToText?: SpeechToText;
+  voiceDownloader?: VoiceDownloader;
+  feedbackRepo?: FeedbackRepo;
+  feedbackSynthesizer?: FeedbackSynthesizer;
 }
 
 function errorCodeOf(err: unknown): string {
@@ -136,6 +152,36 @@ function formatProfiles(
   return `${profileCopy.teamHeader(teamId)}\n${memberships.map((m) => formatMemberBlock(m, fields)).join("\n\n")}`;
 }
 
+function formatFeedbackList(notes: FeedbackNote[]): string {
+  if (notes.length === 0) {
+    return feedbackCopy.empty;
+  }
+  const lines = notes.map((n) =>
+    feedbackCopy.noteLine(
+      n.id,
+      formatShortDate(n.createdAt),
+      n.rawText,
+      n.repoHint,
+      n.sourceType === "voice",
+    ),
+  );
+  const header = `📥 Observaciones pendientes (${notes.length}):`;
+  return joinLinesWithinLimit([header, ...lines], REPLY_MAX, feedbackCopy.empty);
+}
+
+function formatFeedbackSummary(summary: SynthesizedFeedbackSummary): string {
+  if (summary.totalNotes === 0) {
+    return feedbackCopy.noSynthesis;
+  }
+  const dateSpan = formatFeedbackDateSpan(summary.startDate, summary.endDate);
+  const header = feedbackCopy.summaryHeader(summary.totalNotes, dateSpan, summary.repoHint);
+  const full = `${header}\n\n${summary.summaryText}`;
+  if (full.length <= REPLY_MAX) {
+    return full;
+  }
+  return full.slice(0, REPLY_MAX - 3) + "…";
+}
+
 function nlCopyBag() {
   return {
     help: nlCopy.help,
@@ -162,6 +208,10 @@ function nlCopyBag() {
     lexiconHint: nlConfirmCopy.lexiconHint,
     confirmPrompt: nlConfirmCopy.confirmPrompt,
     confirmSummaries: nlConfirmCopy.summaries,
+    feedbackRecorded: feedbackCopy.recorded,
+    feedbackEmpty: feedbackCopy.empty,
+    feedbackNoSynthesis: feedbackCopy.noSynthesis,
+    feedbackArchived: feedbackCopy.archived,
     resolveCopy: {
       cancelled: nlConfirmCopy.cancelled,
       busy: nlConfirmCopy.busy,
@@ -363,6 +413,8 @@ export function registerNaturalLanguage(bot: Bot, deps: NaturalLanguageDeps): vo
           copy: nlCopyBag(),
           formatRepoLinks,
           formatProfiles,
+          formatFeedbackList,
+          formatFeedbackSummary,
         },
       );
       if (result.kind === "ignore") {
@@ -385,4 +437,100 @@ export function registerNaturalLanguage(bot: Bot, deps: NaturalLanguageDeps): vo
       }
     }
   });
+
+  bot.on("message:voice", async (ctx, next: NextFunction) => {
+    if (isPrivateChat(ctx) || !deps.speechToText || !deps.voiceDownloader) {
+      await next();
+      return;
+    }
+
+    const chatType = chatTypeOf(ctx);
+    const botUsername = bot.botInfo.username;
+    if (chatType === null || !botUsername) {
+      await next();
+      return;
+    }
+
+    const botId = bot.botInfo.id;
+    const replyFrom = ctx.message?.reply_to_message?.from;
+    const replyFromId = replyFrom?.id;
+    const isReplyToBot = replyFromId === botId;
+
+    const caption = ctx.message?.caption;
+    const eligibility = isEligibleNlMessage({
+      chatType,
+      text: caption ?? "",
+      botUsername,
+      botId,
+      isCommand: false,
+      replyFromBotId: isReplyToBot ? botId : null,
+    });
+
+    const inTopic = ctx.message?.message_thread_id !== undefined;
+    const eligibleVoice = eligibility.eligible || isReplyToBot || inTopic;
+
+    if (!eligibleVoice) {
+      await next();
+      return;
+    }
+
+    const loc = ctx.chat;
+    const from = ctx.from;
+    const voice = ctx.message?.voice;
+    if (!loc || !from || !voice) {
+      await next();
+      return;
+    }
+
+    try {
+      const audioBuffer = await deps.voiceDownloader.download(voice.file_id);
+      const transcript = await deps.speechToText.transcribe(audioBuffer);
+      if (!transcript.trim()) {
+        await ctx.reply(feedbackCopy.voiceFailed);
+        return;
+      }
+
+      const replyToMessageId = ctx.message?.reply_to_message?.message_id ?? null;
+      const replyFromUserId = replyFrom && !replyFrom.is_bot ? replyFrom.id : null;
+
+      const result = await handleNaturalLanguage(
+        {
+          chatId: loc.id,
+          threadId: ctx.message?.message_thread_id ?? null,
+          callerTelegramUserId: from.id,
+          classifiedText: transcript,
+          replyToMessageId,
+          replyFromUserId,
+          sourceType: "voice",
+        },
+        {
+          ...deps,
+          copy: nlCopyBag(),
+          formatRepoLinks,
+          formatProfiles,
+          formatFeedbackList,
+          formatFeedbackSummary,
+        },
+      );
+      if (result.kind === "ignore") {
+        await next();
+        return;
+      }
+      if (result.kind === "done") return;
+      await ctx.reply(result.text);
+    } catch (err) {
+      deps.logger.log({
+        event: "nl-voice",
+        outcome: "error",
+        errorCode: errorCodeOf(err),
+        reason: "nl-voice-handler-failed",
+      });
+      try {
+        await ctx.reply(feedbackCopy.voiceFailed);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
 }
+

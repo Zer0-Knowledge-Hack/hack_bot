@@ -1,4 +1,10 @@
-import type { Membership, ProfileField, RepoTopicLink } from "../entities";
+import type {
+  FeedbackNote,
+  FeedbackSource,
+  Membership,
+  ProfileField,
+  RepoTopicLink,
+} from "../entities";
 import {
   AnalysisNotFoundError,
   ConfigError,
@@ -23,6 +29,7 @@ import { matchConfirmLexicon } from "../nl/lexicon";
 import type {
   ChatPublisher,
   Clock,
+  FeedbackRepo,
   GithubOrgClaimRepo,
   HackathonAnalysisRepo,
   IdGen,
@@ -52,6 +59,15 @@ import {
 } from "../nl/hackathon-match";
 import { showAnalysis } from "./show-analysis";
 import { showTopicAnalysis } from "./show-topic-analysis";
+import { recordFeedback } from "./record-feedback";
+import { listFeedback } from "./list-feedback";
+import {
+  synthesizeFeedback,
+  type FeedbackSynthesizer,
+  type SynthesizedFeedbackSummary,
+} from "./synthesize-feedback";
+import { archiveFeedback } from "./archive-feedback";
+import { feedbackCopy, formatFeedbackDateSpan, formatShortDate } from "../copy";
 
 export interface NlCopyBag {
   help: string;
@@ -79,6 +95,10 @@ export interface NlCopyBag {
   confirmPrompt: (summary: string) => string;
   confirmSummaries: NlConfirmSummaries;
   resolveCopy: ResolveNlConfirmationCopy;
+  feedbackRecorded?: (repo?: string | null) => string;
+  feedbackEmpty?: string;
+  feedbackNoSynthesis?: string;
+  feedbackArchived?: (count: number) => string;
 }
 
 export interface HandleNaturalLanguageInput {
@@ -90,6 +110,7 @@ export interface HandleNaturalLanguageInput {
   replyToMessageId?: number | null;
   // When the user replied to another user — promote/demote target hint.
   replyFromUserId?: number | null;
+  sourceType?: FeedbackSource;
 }
 
 export interface HandleNaturalLanguageDeps extends Omit<ResolveNlConfirmationDeps, "copy"> {
@@ -115,6 +136,10 @@ export interface HandleNaturalLanguageDeps extends Omit<ResolveNlConfirmationDep
     fields: ProfileField[],
     teamId: TeamId,
   ) => string;
+  feedbackRepo?: FeedbackRepo;
+  feedbackSynthesizer?: FeedbackSynthesizer;
+  formatFeedbackList?: (notes: FeedbackNote[]) => string;
+  formatFeedbackSummary?: (summary: SynthesizedFeedbackSummary) => string;
 }
 
 export type HandleNaturalLanguageResult =
@@ -227,6 +252,8 @@ export async function handleNaturalLanguage(
     inDataChannel,
     replyFromUserId: input.replyFromUserId ?? null,
     replyToMessageId: input.replyToMessageId ?? null,
+    classifiedText: input.classifiedText,
+    sourceType: input.sourceType,
   }, deps);
 }
 
@@ -269,6 +296,8 @@ interface DispatchCtx {
   inDataChannel: boolean;
   replyFromUserId: number | null;
   replyToMessageId: number | null;
+  classifiedText: string;
+  sourceType?: FeedbackSource;
 }
 
 async function dispatchIntent(
@@ -307,6 +336,128 @@ async function dispatchIntent(
       }
       case "show_profiles":
         return await showProfiles(slots, ctx, deps);
+      case "capture_feedback": {
+        if (!deps.feedbackRepo) {
+          return { kind: "reply", text: deps.copy.notConfigured };
+        }
+        const textToSave = slots.feedbackText?.trim() || ctx.classifiedText.trim();
+        const note = await recordFeedback(
+          {
+            teamId: ctx.teamId,
+            authorMembershipId: ctx.actorMembershipId,
+            threadId: ctx.threadId,
+            rawText: textToSave,
+            repoHint: slots.repo,
+            sourceType: ctx.sourceType ?? "text",
+          },
+          {
+            feedbackRepo: deps.feedbackRepo,
+            repoTopicLinkRepo: deps.repoTopicLinkRepo,
+            idGen: deps.idGen,
+            clock: deps.clock,
+            logger: deps.logger,
+          },
+        );
+        const copyFn = deps.copy.feedbackRecorded ?? feedbackCopy.recorded;
+        return { kind: "reply", text: copyFn(note.repoHint) };
+      }
+      case "list_feedback": {
+        if (!deps.feedbackRepo) {
+          return { kind: "reply", text: deps.copy.notConfigured };
+        }
+        const notes = await listFeedback(
+          {
+            teamId: ctx.teamId,
+            threadId: ctx.threadId,
+            repoHint: slots.repo,
+            since: slots.since,
+          },
+          {
+            feedbackRepo: deps.feedbackRepo,
+            repoTopicLinkRepo: deps.repoTopicLinkRepo,
+          },
+        );
+        if (notes.length === 0) {
+          return { kind: "reply", text: deps.copy.feedbackEmpty ?? feedbackCopy.empty };
+        }
+        if (deps.formatFeedbackList) {
+          return { kind: "reply", text: deps.formatFeedbackList(notes) };
+        }
+        const lines = notes.map((n) =>
+          feedbackCopy.noteLine(
+            n.id,
+            formatShortDate(n.createdAt),
+            n.rawText,
+            n.repoHint,
+            n.sourceType === "voice",
+          ),
+        );
+        const header = `📥 Observaciones pendientes (${notes.length}):`;
+        return { kind: "reply", text: [header, ...lines].join("\n") };
+      }
+      case "summarize_feedback": {
+        if (!deps.feedbackRepo || !deps.feedbackSynthesizer) {
+          return { kind: "reply", text: deps.copy.notConfigured };
+        }
+        const summary = await synthesizeFeedback(
+          {
+            teamId: ctx.teamId,
+            threadId: ctx.threadId,
+            repoHint: slots.repo,
+            since: slots.since,
+          },
+          {
+            feedbackRepo: deps.feedbackRepo,
+            repoTopicLinkRepo: deps.repoTopicLinkRepo,
+            synthesizer: deps.feedbackSynthesizer,
+            logger: deps.logger,
+          },
+        );
+        if (summary.totalNotes === 0) {
+          return {
+            kind: "reply",
+            text: deps.copy.feedbackNoSynthesis ?? feedbackCopy.noSynthesis,
+          };
+        }
+        if (deps.formatFeedbackSummary) {
+          return { kind: "reply", text: deps.formatFeedbackSummary(summary) };
+        }
+        const dateSpan = formatFeedbackDateSpan(summary.startDate, summary.endDate);
+        const header = feedbackCopy.summaryHeader(summary.totalNotes, dateSpan, summary.repoHint);
+        return { kind: "reply", text: `${header}\n\n${summary.summaryText}` };
+      }
+      case "archive_feedback": {
+        if (!deps.feedbackRepo) {
+          return { kind: "reply", text: deps.copy.notConfigured };
+        }
+        let noteIds = slots.noteIds ?? [];
+        if (noteIds.length === 0) {
+          const pending = await listFeedback(
+            {
+              teamId: ctx.teamId,
+              threadId: ctx.threadId,
+              repoHint: slots.repo,
+            },
+            {
+              feedbackRepo: deps.feedbackRepo,
+              repoTopicLinkRepo: deps.repoTopicLinkRepo,
+            },
+          );
+          noteIds = pending.map((n) => n.id);
+        }
+        const result = await archiveFeedback(
+          {
+            teamId: ctx.teamId,
+            noteIds,
+          },
+          {
+            feedbackRepo: deps.feedbackRepo,
+            logger: deps.logger,
+          },
+        );
+        const copyFn = deps.copy.feedbackArchived ?? feedbackCopy.archived;
+        return { kind: "reply", text: copyFn(result.updatedCount) };
+      }
       default:
         return { kind: "reply", text: deps.copy.unknown };
     }

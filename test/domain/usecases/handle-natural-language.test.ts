@@ -28,6 +28,7 @@ import {
   fakeRepoTopicLinkRepo,
   fakeSleep,
   fakeTeamRepo,
+  fakeFeedbackRepo,
 } from "../../fakes";
 
 const COPY: NlCopyBag = {
@@ -117,6 +118,7 @@ function makeDeps(
   const intentClassifier = fakeIntentClassifier(overrides.intent);
   const chatPublisher = fakeChatPublisher();
   const hackathonAnalysisRepo = fakeHackathonAnalysisRepo();
+  const feedbackRepo = fakeFeedbackRepo();
   const deps: HandleNaturalLanguageDeps = {
     teamRepo,
     memberRepo,
@@ -143,10 +145,14 @@ function makeDeps(
     formatRepoLinks: (links) =>
       links.length === 0 ? "none" : links.map((l) => l.repoFullName).join(","),
     formatProfiles: (_m, _f, teamId) => `profiles:${teamId}`,
+    feedbackRepo,
+    feedbackSynthesizer: {
+      summarize: async (notes) => `Synthesized ${notes.length} notes`,
+    },
   };
   return {
     deps,
-    repos: { teamRepo, memberRepo, membershipRepo, hackathonAnalysisRepo },
+    repos: { teamRepo, memberRepo, membershipRepo, hackathonAnalysisRepo, feedbackRepo },
     nlClassifyQuota,
     nlConfirmationRepo,
     intentClassifier,
@@ -1029,5 +1035,147 @@ describe("handleNaturalLanguage", () => {
     expect(nlConfirmationRepo.rows[0]?.consumedAt).not.toBeNull();
     expect(repos.hackathonAnalysisRepo.rows[0]?.threadId).not.toBeNull();
     expect(chatPublisher.posted.some((p) => p.threadId !== null)).toBe(true);
+  });
+
+  describe("feedback intents", () => {
+    it("handles capture_feedback and stores note in inbox", async () => {
+      const { deps, repos } = makeDeps({
+        intent: () => ({
+          intent: "capture_feedback",
+          confidence: 0.9,
+          slots: { feedbackText: "El login falla con 500", repo: "org/puls3" },
+        }),
+      });
+      const { teamId } = seedMemberTeam(repos, { chatId: 10, userId: 20 });
+
+      const result = await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: null,
+          callerTelegramUserId: 20,
+          classifiedText: "encontré un bug: el login falla con 500 en org/puls3",
+        },
+        deps,
+      );
+
+      expect(result.kind).toBe("reply");
+      if (result.kind !== "reply") return;
+      expect(result.text).toContain("Nota guardada en el buzón");
+      expect(repos.feedbackRepo.rows).toHaveLength(1);
+      expect(repos.feedbackRepo.rows[0]?.rawText).toBe("El login falla con 500");
+      expect(repos.feedbackRepo.rows[0]?.repoHint).toBe("org/puls3");
+      expect(repos.feedbackRepo.rows[0]?.teamId).toBe(teamId);
+    });
+
+    it("handles list_feedback and returns active notes", async () => {
+      const { deps, repos } = makeDeps({
+        intent: () => ({
+          intent: "list_feedback",
+          confidence: 0.85,
+          slots: {},
+        }),
+      });
+      const { teamId, membershipId } = seedMemberTeam(repos, { chatId: 10, userId: 20 });
+      await repos.feedbackRepo.save(teamId, {
+        id: "note-1",
+        teamId,
+        authorMembershipId: membershipId,
+        repoHint: "org/puls3",
+        rawText: "El modal no cierra",
+        sourceType: "text",
+        status: "inbox",
+        createdAt: 1000,
+        updatedAt: 1000,
+      });
+
+      const result = await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: null,
+          callerTelegramUserId: 20,
+          classifiedText: "qué feedback hay",
+        },
+        deps,
+      );
+
+      expect(result.kind).toBe("reply");
+      if (result.kind !== "reply") return;
+      expect(result.text).toContain("Observaciones pendientes");
+      expect(result.text).toContain("El modal no cierra");
+    });
+
+    it("handles summarize_feedback and returns synthesis briefing", async () => {
+      const { deps, repos } = makeDeps({
+        intent: () => ({
+          intent: "summarize_feedback",
+          confidence: 0.85,
+          slots: {},
+        }),
+      });
+      const { teamId, membershipId } = seedMemberTeam(repos, { chatId: 10, userId: 20 });
+      await repos.feedbackRepo.save(teamId, {
+        id: "note-1",
+        teamId,
+        authorMembershipId: membershipId,
+        repoHint: "org/puls3",
+        rawText: "El modal no cierra",
+        sourceType: "text",
+        status: "inbox",
+        createdAt: 1000,
+        updatedAt: 1000,
+      });
+
+      const result = await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: null,
+          callerTelegramUserId: 20,
+          classifiedText: "resumen del feedback",
+        },
+        deps,
+      );
+
+      expect(result.kind).toBe("reply");
+      if (result.kind !== "reply") return;
+      expect(result.text).toContain("Resumen de 1 observación");
+      expect(result.text).toContain("Synthesized 1 notes");
+    });
+
+    it("handles archive_feedback and marks notes triaged", async () => {
+      const { deps, repos } = makeDeps({
+        intent: () => ({
+          intent: "archive_feedback",
+          confidence: 0.88,
+          slots: { noteIds: ["note-1"] },
+        }),
+      });
+      const { teamId, membershipId } = seedMemberTeam(repos, { chatId: 10, userId: 20 });
+      await repos.feedbackRepo.save(teamId, {
+        id: "note-1",
+        teamId,
+        authorMembershipId: membershipId,
+        repoHint: "org/puls3",
+        rawText: "El modal no cierra",
+        sourceType: "text",
+        status: "inbox",
+        createdAt: 1000,
+        updatedAt: 1000,
+      });
+
+      const result = await handleNaturalLanguage(
+        {
+          chatId: 10,
+          threadId: null,
+          callerTelegramUserId: 20,
+          classifiedText: "archiva note-1",
+        },
+        deps,
+      );
+
+      expect(result.kind).toBe("reply");
+      if (result.kind !== "reply") return;
+      expect(result.text).toContain("1 observación archivada");
+      expect(repos.feedbackRepo.rows[0]?.status).toBe("triaged");
+    });
   });
 });
